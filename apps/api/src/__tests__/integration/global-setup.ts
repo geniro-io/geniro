@@ -114,7 +114,9 @@ const sweepRuntimeContainers = async (
     return;
   }
 
-  const testEra = candidates.filter((c) => c.Created >= sessionStartedAtUnixSec);
+  const testEra = candidates.filter(
+    (c) => c.Created >= sessionStartedAtUnixSec,
+  );
   if (testEra.length === 0) {
     return;
   }
