@@ -1,6 +1,6 @@
 import { INestApplication } from '@nestjs/common';
 import { BaseException } from '@packages/common';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { AppContextStorage } from '../../../auth/app-context-storage';
 import { ReasoningEffort } from '../../../v1/agents/agents.types';
@@ -8,12 +8,19 @@ import { SimpleAgentSchemaType } from '../../../v1/agents/services/agents/simple
 import { CreateGraphDto } from '../../../v1/graphs/dto/graphs.dto';
 import { GraphStatus } from '../../../v1/graphs/graphs.types';
 import { GraphsService } from '../../../v1/graphs/services/graphs.service';
+import { LiteLlmClient } from '../../../v1/litellm/services/litellm.client';
 import { ProjectsDao } from '../../../v1/projects/dao/projects.dao';
 import { ThreadMessageDto } from '../../../v1/threads/dto/threads.dto';
+import { ThreadNameGeneratorService } from '../../../v1/threads/services/thread-name-generator.service';
 import { ThreadsService } from '../../../v1/threads/services/threads.service';
 import { ThreadStatus } from '../../../v1/threads/threads.types';
 import { waitForCondition } from '../helpers/graph-helpers';
 import { createTestProject } from '../helpers/test-context';
+import {
+  mockLiteLlmClient,
+  mockThreadNameGenerator,
+} from '../helpers/test-stubs';
+import { getMockLlm } from '../mocks/mock-llm';
 import { createTestModule } from '../setup';
 
 const TRIGGER_NODE_ID = 'trigger-1';
@@ -51,7 +58,14 @@ describe('Subagents Tool Integration Tests', () => {
   let testProjectId: string;
 
   beforeAll(async () => {
-    app = await createTestModule();
+    app = await createTestModule(async (m) =>
+      m
+        .overrideProvider(LiteLlmClient)
+        .useValue(mockLiteLlmClient)
+        .overrideProvider(ThreadNameGeneratorService)
+        .useValue(mockThreadNameGenerator)
+        .compile(),
+    );
     graphsService = app.get<GraphsService>(GraphsService);
     threadsService = app.get<ThreadsService>(ThreadsService);
 
@@ -83,6 +97,10 @@ describe('Subagents Tool Integration Tests', () => {
 
     await app.close();
   }, 300_000);
+
+  beforeEach(() => {
+    getMockLlm(app).reset();
+  });
 
   const cleanupGraph = async (id: string) => {
     try {
@@ -213,6 +231,61 @@ describe('Subagents Tool Integration Tests', () => {
     'should invoke subagent tool and produce result with streamed messages',
     { timeout: 300_000 },
     async () => {
+      const mockLlm = getMockLlm(app);
+
+      /**
+       * Multi-turn sequence using queueChat (FIFO):
+       *
+       * Parent agent turns:
+       *   Queue 0 — tool_search (subagents tools are deferred-loaded, parent must search first)
+       *   Queue 1 — subagents_run_task (subagents tool loaded, parent delegates task)
+       *
+       * SubAgent (system:simple) turns — shell tool is pre-configured, no tool_search needed:
+       *   Queue 2 — shell command (subagent executes the delegated task)
+       *   Queue 3 — text reply (subagent completes with a text result, no finish tool)
+       *
+       * Parent agent resumes:
+       *   Queue 4 — finish (parent reports subagent result and ends the thread)
+       */
+      mockLlm.queueChat({
+        kind: 'toolCall',
+        toolName: 'tool_search',
+        args: { query: 'subagents' },
+      });
+      mockLlm.queueChat({
+        kind: 'toolCall',
+        toolName: 'subagents_run_task',
+        args: {
+          agentId: 'system:simple',
+          task: 'Run "echo hello_from_subagent" in the shell and return the output.',
+          purpose: 'delegate echo task',
+        },
+      });
+      // SubAgent turn: run the shell command
+      mockLlm.queueChat({
+        kind: 'toolCall',
+        toolName: 'shell',
+        args: {
+          purpose: 'run echo command',
+          command: 'echo hello_from_subagent',
+        },
+      });
+      // SubAgent completes with a text result (no finish tool — SubAgent ends on text response)
+      mockLlm.queueChat({
+        kind: 'text',
+        content: 'The shell command output was: hello_from_subagent',
+      });
+      // Parent receives subagent result, calls finish
+      mockLlm.queueChat({
+        kind: 'toolCall',
+        toolName: 'finish',
+        args: {
+          purpose: 'done',
+          message: 'The shell command output was: hello_from_subagent',
+          needsMoreInfo: false,
+        },
+      });
+
       await ensureGraphRunning(graphId);
 
       const execution = await graphsService.executeTrigger(
@@ -279,6 +352,65 @@ describe('Subagents Tool Integration Tests', () => {
     'should include subagent token usage statistics in tool result',
     { timeout: 300_000 },
     async () => {
+      const mockLlm = getMockLlm(app);
+
+      /**
+       * Multi-turn sequence using queueChat (FIFO):
+       *
+       * Parent agent turns:
+       *   Queue 0 — tool_search (deferred loading)
+       *   Queue 1 — subagents_run_task (parent delegates)
+       *
+       * SubAgent (system:simple) turns:
+       *   Queue 2 — shell command (subagent runs pwd)
+       *   Queue 3 — text reply (subagent returns result)
+       *
+       * Parent agent resumes:
+       *   Queue 4 — finish
+       */
+      mockLlm.queueChat({
+        kind: 'toolCall',
+        toolName: 'tool_search',
+        args: { query: 'subagents' },
+      });
+      mockLlm.queueChat({
+        kind: 'toolCall',
+        toolName: 'subagents_run_task',
+        args: {
+          agentId: 'system:simple',
+          task: 'Run "pwd" in the shell and return the output.',
+          purpose: 'delegate pwd task',
+        },
+      });
+      // SubAgent turn: run pwd
+      mockLlm.queueChat({
+        kind: 'toolCall',
+        toolName: 'shell',
+        args: { purpose: 'run pwd', command: 'pwd' },
+      });
+      // SubAgent completes with text
+      mockLlm.queueChat({
+        kind: 'text',
+        content: 'The current directory is /runtime-workspace',
+        usage: {
+          inputTokens: 100,
+          outputTokens: 20,
+          totalTokens: 120,
+          cachedInputTokens: 0,
+          totalPrice: 0.001,
+        },
+      });
+      // Parent calls finish
+      mockLlm.queueChat({
+        kind: 'toolCall',
+        toolName: 'finish',
+        args: {
+          purpose: 'done',
+          message: 'The current directory is /runtime-workspace',
+          needsMoreInfo: false,
+        },
+      });
+
       await ensureGraphRunning(graphId);
 
       const execution = await graphsService.executeTrigger(

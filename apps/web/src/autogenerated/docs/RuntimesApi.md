@@ -2,10 +2,11 @@
 
 All URIs are relative to _http://localhost_
 
-| Method                          | HTTP request                    | Description |
-| ------------------------------- | ------------------------------- | ----------- |
-| [**checkHealth**](#checkhealth) | **GET** /api/v1/runtimes/health |             |
-| [**getRuntimes**](#getruntimes) | **GET** /api/v1/runtimes        |             |
+| Method                                  | HTTP request                        | Description |
+| --------------------------------------- | ----------------------------------- | ----------- |
+| [**checkHealth**](#checkhealth)         | **GET** /api/v1/runtimes/health     |             |
+| [**getRuntimeState**](#getruntimestate) | **GET** /api/v1/runtimes/{id}/state |             |
+| [**getRuntimes**](#getruntimes)         | **GET** /api/v1/runtimes            |             |
 
 # **checkHealth**
 
@@ -29,6 +30,50 @@ This endpoint does not have any parameters.
 ### Return type
 
 **RuntimeHealthDto**
+
+### Authorization
+
+[bearer](../README.md#bearer)
+
+### HTTP request headers
+
+- **Content-Type**: Not defined
+- **Accept**: application/json
+
+### HTTP response details
+
+| Status code | Description | Response headers |
+| ----------- | ----------- | ---------------- |
+| **200**     |             | -                |
+
+[[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
+
+# **getRuntimeState**
+
+> RuntimeInstanceStateDto getRuntimeState()
+
+### Example
+
+```typescript
+import { RuntimesApi, Configuration } from './api';
+
+const configuration = new Configuration();
+const apiInstance = new RuntimesApi(configuration);
+
+let id: string; // (default to undefined)
+
+const { status, data } = await apiInstance.getRuntimeState(id);
+```
+
+### Parameters
+
+| Name   | Type         | Description | Notes                 |
+| ------ | ------------ | ----------- | --------------------- |
+| **id** | [**string**] |             | defaults to undefined |
+
+### Return type
+
+**RuntimeInstanceStateDto**
 
 ### Authorization
 

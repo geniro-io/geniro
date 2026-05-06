@@ -14,7 +14,8 @@ import { ThreadsService } from '../../../v1/threads/services/threads.service';
 import { ThreadStatus } from '../../../v1/threads/threads.types';
 import { waitForCondition } from '../helpers/graph-helpers';
 import { createTestProject } from '../helpers/test-context';
-import { createTestModule } from '../setup';
+import { getMockRuntime } from '../mocks/mock-runtime';
+import { createTestModule, getMockLlm } from '../setup';
 
 const TRIGGER_NODE_ID = 'trigger-1';
 const AGENT_NODE_ID = 'agent-1';
@@ -290,14 +291,42 @@ describe('Graph Resources Integration Tests', () => {
       async () => {
         await ensureGraphRunning();
 
+        // The mocked LLM short-circuits to `finish` by default, so queue
+        // explicit replies that drive the agent through the shell tool.
+        const command = 'gh config get git_protocol; gh --version';
+        const mockLlm = getMockLlm(app);
+        mockLlm.queueChat({
+          kind: 'toolCall',
+          toolName: 'shell',
+          args: { purpose: 'run gh resource command', command },
+        });
+        mockLlm.queueChat({
+          kind: 'toolCall',
+          toolName: 'finish',
+          args: {
+            purpose: 'done',
+            message: 'Captured gh resource output',
+            needsMoreInfo: false,
+          },
+        });
+
+        // MockRuntime returns deterministic gh output; the test only verifies
+        // env propagation, so the values are minimal but match the assertions.
+        getMockRuntime(app).onExec(
+          { cmd: 'gh config get git_protocol' },
+          {
+            exitCode: 0,
+            stdout: 'https\ngh version 2.67.0 (mock)\n',
+            stderr: '',
+          },
+        );
+
         const execution = await graphsService.executeTrigger(
           contextDataStorage,
           resourceGraphId,
           TRIGGER_NODE_ID,
           {
-            messages: [
-              'Run this command: gh config get git_protocol; gh --version',
-            ],
+            messages: [`Run this command: ${command}`],
             async: true,
             threadSubId: uniqueThreadSubId('gh-resource'),
           },

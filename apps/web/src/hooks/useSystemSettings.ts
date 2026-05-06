@@ -38,6 +38,7 @@ export const useSystemSettings = () => {
 
   useEffect(() => {
     if (!cachedSettings) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot fetch on mount
       fetchSettings();
     }
   }, [fetchSettings]);

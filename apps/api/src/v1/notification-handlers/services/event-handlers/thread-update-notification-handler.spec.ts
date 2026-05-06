@@ -548,6 +548,75 @@ describe('ThreadUpdateNotificationHandler', () => {
       });
     });
 
+    describe('costLimitHit three-way semantics', () => {
+      it('clears metadata.costLimitHit when data.costLimitHit === null', async () => {
+        const thread = createMockThreadEntity({
+          status: ThreadStatus.Running,
+          metadata: { costLimitHit: true, preservedField: 'keep-me' },
+        });
+        const updatedThread = {
+          ...thread,
+          metadata: { preservedField: 'keep-me' },
+          updatedAt: new Date('2024-01-01T00:00:01Z'),
+        } satisfies ThreadEntity;
+
+        const notification = createMockNotification({
+          data: { costLimitHit: null },
+        });
+
+        vi.spyOn(threadsDao, 'getOne')
+          .mockResolvedValueOnce(thread)
+          .mockResolvedValueOnce(updatedThread);
+        const updateSpy = vi
+          .spyOn(threadsDao, 'updateById')
+          .mockResolvedValue(1);
+
+        await handler.handle(notification);
+
+        expect(updateSpy).toHaveBeenCalledOnce();
+        const callArgs = updateSpy.mock.calls[0]![1] as {
+          metadata: Record<string, unknown>;
+        };
+        expect(callArgs.metadata).toBeDefined();
+        expect(callArgs.metadata).not.toHaveProperty('costLimitHit');
+        expect(callArgs.metadata).toMatchObject({ preservedField: 'keep-me' });
+      });
+
+      it('sets metadata.costLimitHit when data.costLimitHit === true', async () => {
+        const thread = createMockThreadEntity({
+          status: ThreadStatus.Running,
+          metadata: { existingField: 'keep' },
+        });
+        const updatedThread = {
+          ...thread,
+          metadata: { existingField: 'keep', costLimitHit: true },
+          updatedAt: new Date('2024-01-01T00:00:01Z'),
+        } satisfies ThreadEntity;
+
+        const notification = createMockNotification({
+          data: { costLimitHit: true },
+        });
+
+        vi.spyOn(threadsDao, 'getOne')
+          .mockResolvedValueOnce(thread)
+          .mockResolvedValueOnce(updatedThread);
+        const updateSpy = vi
+          .spyOn(threadsDao, 'updateById')
+          .mockResolvedValue(1);
+
+        await handler.handle(notification);
+
+        expect(updateSpy).toHaveBeenCalledOnce();
+        const callArgs = updateSpy.mock.calls[0]![1] as {
+          metadata: Record<string, unknown>;
+        };
+        expect(callArgs.metadata).toBeDefined();
+        expect(updateSpy).toHaveBeenCalledWith(thread.id, {
+          metadata: { existingField: 'keep', costLimitHit: true },
+        });
+      });
+    });
+
     describe('stopCostUsd three-way semantics', () => {
       it('persists stopCostUsd number into metadata.stopCostUsd', async () => {
         const thread = createMockThreadEntity({

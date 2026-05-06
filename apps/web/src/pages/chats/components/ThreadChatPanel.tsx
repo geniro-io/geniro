@@ -164,6 +164,7 @@ export const ThreadChatPanel: React.FC<ThreadChatPanelProps> = ({
   const { settings: systemSettings } = useSystemSettings();
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- mirror parent prop into local override
     setSelectedThreadExternalId(
       externalThreadId ?? thread.externalThreadId ?? undefined,
     );
@@ -207,6 +208,7 @@ export const ThreadChatPanel: React.FC<ThreadChatPanelProps> = ({
     // Sync repo state from thread metadata
     const metaRepoId = thread.metadata?.repositoryId as string | undefined;
     if (metaRepoId) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- reconcile repo selection when thread changes
       setSelectedRepoId(metaRepoId);
       setRepoLocked(true);
     } else {
@@ -221,12 +223,14 @@ export const ThreadChatPanel: React.FC<ThreadChatPanelProps> = ({
 
   useEffect(() => {
     if (threadStatusOverride && thread.status !== ThreadDtoStatusEnum.Running) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- clear stale optimistic status
       setThreadStatusOverride(undefined);
     }
   }, [thread.status, threadStatusOverride]);
 
   useEffect(() => {
     if (!triggerNodes.length) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- clear trigger selection when none available
       setSelectedTriggerId(undefined);
       return;
     }
@@ -655,6 +659,7 @@ export const ThreadChatPanel: React.FC<ThreadChatPanelProps> = ({
 
   useEffect(() => {
     if (externalThreadId && !selectedThreadExternalId) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- backfill external id once parent provides it
       setSelectedThreadExternalId(externalThreadId);
     }
   }, [externalThreadId, selectedThreadExternalId]);

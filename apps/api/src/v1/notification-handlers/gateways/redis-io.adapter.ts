@@ -24,6 +24,14 @@ export class RedisIoAdapter extends IoAdapter {
     try {
       this.pubClient = new IORedis(this.redisUrl, {
         maxRetriesPerRequest: null,
+        // `disableClientInfo: true` skips the telemetry CLIENT SETINFO
+        // command on (re)connect — purely metadata for `CLIENT INFO`
+        // debug output, zero functional impact. We deliberately KEEP
+        // `enableReadyCheck` at its default `true` so Socket.IO pub/sub
+        // commands wait for Redis to finish loading after restart/
+        // failover; the adapter has no retry layer to compensate for
+        // LOADING errors.
+        disableClientInfo: true,
       });
       this.subClient = this.pubClient.duplicate();
 

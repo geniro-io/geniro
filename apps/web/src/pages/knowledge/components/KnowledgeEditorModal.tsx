@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -144,6 +145,11 @@ export const KnowledgeEditorModal = ({
           <DialogTitle>
             {activeDoc ? 'Edit knowledge' : 'Create knowledge'}
           </DialogTitle>
+          <DialogDescription className="sr-only">
+            {activeDoc
+              ? 'Update the title, content, tags, and LLM guidance for this knowledge document.'
+              : 'Add a new knowledge document with a title, content, tags, and optional LLM guidance.'}
+          </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4 py-2">

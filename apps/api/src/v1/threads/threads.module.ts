@@ -20,7 +20,7 @@ import { ThreadsListener } from './threads.listener';
 @Module({
   imports: [
     registerEntities([ThreadEntity, MessageEntity]),
-    AgentsModule,
+    forwardRef(() => AgentsModule),
     forwardRef(() => GraphsModule),
     NotificationsModule,
     LitellmModule,

@@ -2,6 +2,8 @@ import { Migration } from '@mikro-orm/migrations';
 
 export class Generated1759225623237 extends Migration {
   override async up(): Promise<void> {
+    this.addSql(`CREATE EXTENSION IF NOT EXISTS "uuid-ossp"`);
+    this.addSql(`CREATE EXTENSION IF NOT EXISTS "pgcrypto"`);
     this.addSql(`
             CREATE TABLE "graph_checkpoints" (
                 "id" uuid NOT NULL DEFAULT uuid_generate_v4(),

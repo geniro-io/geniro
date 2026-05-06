@@ -88,7 +88,12 @@ describe('SubagentsRunTaskTool', () => {
     statistics: {
       totalIterations: 2,
       toolCallsMade: 1,
-      usage: { inputTokens: 200, outputTokens: 50, totalTokens: 250 },
+      usage: {
+        inputTokens: 200,
+        outputTokens: 50,
+        totalTokens: 250,
+        totalPrice: 0,
+      },
     },
     exploredFiles: [],
   };
@@ -372,6 +377,7 @@ describe('SubagentsRunTaskTool', () => {
         inputTokens: 200,
         outputTokens: 50,
         totalTokens: 250,
+        totalPrice: 0,
       });
     });
 
@@ -622,6 +628,7 @@ describe('SubagentsRunTaskTool', () => {
         inputTokens: 200,
         outputTokens: 50,
         totalTokens: 250,
+        totalPrice: 0,
       });
     });
 
@@ -642,6 +649,73 @@ describe('SubagentsRunTaskTool', () => {
       await consumeStream(gen);
 
       expect(unsubscribeFn).toHaveBeenCalled();
+    });
+
+    // ── Defensive catch path: unexpected throw escaping SubAgent.runSubagent ──
+
+    it('returns a structured error result when runSubagent rejects unexpectedly', async () => {
+      // Mirror the failure mode where the subagent stream throws BEFORE the
+      // SubAgent's own try/catch can convert the error into a clean
+      // SubagentRunResult (e.g. graph-level abort, runtime cancellation).
+      const unsubscribeFn = vi.fn();
+      mockSubAgent.subscribe.mockReturnValue(unsubscribeFn);
+      mockSubAgent.runSubagent.mockRejectedValue(
+        new Error('LLM provider returned 503 service unavailable'),
+      );
+
+      const gen = tool.streamingInvoke!(
+        {
+          agentId: 'system:explorer',
+          task: 'Find files',
+          purpose: 'Explore',
+        },
+        makeConfig(),
+        defaultCfg,
+      );
+
+      const { chunks, result } = await consumeStream(gen);
+
+      expect(chunks).toHaveLength(0);
+      expect(result.output.error).toBe(
+        'LLM provider returned 503 service unavailable',
+      );
+      expect(result.output.result).toContain('Subagent execution failed');
+      expect(result.output.result).toContain('503 service unavailable');
+      // Defensive catch must still unsubscribe via the finally block.
+      expect(unsubscribeFn).toHaveBeenCalled();
+      // Real, unexpected errors must be logged so they're observable in prod.
+      expect(mockLogger.error).toHaveBeenCalled();
+    });
+
+    it('returns a neutral aborted result without error field on AbortError', async () => {
+      // User-initiated thread stops surface as AbortError on the runnable's
+      // signal. The defensive catch must NOT mark these as errors — otherwise
+      // the FE would render a misleading red badge for runs the user
+      // intentionally cancelled.
+      const unsubscribeFn = vi.fn();
+      mockSubAgent.subscribe.mockReturnValue(unsubscribeFn);
+      const abortErr = Object.assign(new Error('The operation was aborted.'), {
+        name: 'AbortError',
+      });
+      mockSubAgent.runSubagent.mockRejectedValue(abortErr);
+
+      const gen = tool.streamingInvoke!(
+        {
+          agentId: 'system:explorer',
+          task: 'Find files',
+          purpose: 'Explore',
+        },
+        makeConfig(),
+        defaultCfg,
+      );
+
+      const { result } = await consumeStream(gen);
+
+      expect(result.output.error).toBeUndefined();
+      expect(result.output.result).toBe('Subagent was aborted.');
+      expect(unsubscribeFn).toHaveBeenCalled();
+      // Aborts are user-initiated, not bugs — must not flood logs as errors.
+      expect(mockLogger.error).not.toHaveBeenCalled();
     });
   });
 });

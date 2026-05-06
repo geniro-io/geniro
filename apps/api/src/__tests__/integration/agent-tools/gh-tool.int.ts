@@ -1,6 +1,6 @@
 import { INestApplication } from '@nestjs/common';
 import { BaseException } from '@packages/common';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { AppContextStorage } from '../../../auth/app-context-storage';
 import { environment } from '../../../environments';
@@ -9,12 +9,19 @@ import { SimpleAgentSchemaType } from '../../../v1/agents/services/agents/simple
 import { CreateGraphDto } from '../../../v1/graphs/dto/graphs.dto';
 import { GraphStatus } from '../../../v1/graphs/graphs.types';
 import { GraphsService } from '../../../v1/graphs/services/graphs.service';
+import { LiteLlmClient } from '../../../v1/litellm/services/litellm.client';
 import { ProjectsDao } from '../../../v1/projects/dao/projects.dao';
 import { ThreadMessageDto } from '../../../v1/threads/dto/threads.dto';
+import { ThreadNameGeneratorService } from '../../../v1/threads/services/thread-name-generator.service';
 import { ThreadsService } from '../../../v1/threads/services/threads.service';
 import { ThreadStatus } from '../../../v1/threads/threads.types';
 import { waitForCondition } from '../helpers/graph-helpers';
 import { createTestProject } from '../helpers/test-context';
+import {
+  mockLiteLlmClient,
+  mockThreadNameGenerator,
+} from '../helpers/test-stubs';
+import { getMockLlm } from '../mocks/mock-llm';
 import { createTestModule } from '../setup';
 
 const TRIGGER_NODE_ID = 'trigger-1';
@@ -199,7 +206,14 @@ describe('GitHub Tool Integration Tests', () => {
   };
 
   beforeAll(async () => {
-    app = await createTestModule();
+    app = await createTestModule(async (m) =>
+      m
+        .overrideProvider(LiteLlmClient)
+        .useValue(mockLiteLlmClient)
+        .overrideProvider(ThreadNameGeneratorService)
+        .useValue(mockThreadNameGenerator)
+        .compile(),
+    );
     graphsService = app.get<GraphsService>(GraphsService);
     threadsService = app.get<ThreadsService>(ThreadsService);
 
@@ -231,6 +245,10 @@ describe('GitHub Tool Integration Tests', () => {
 
     await app.close();
   }, 360_000);
+
+  beforeEach(() => {
+    getMockLlm(app).reset();
+  });
 
   const uniqueThreadSubId = (prefix: string) =>
     `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -274,6 +292,44 @@ describe('GitHub Tool Integration Tests', () => {
       'executes GitHub clone tool when agent requests repository clone',
       { timeout: 120000 },
       async () => {
+        const mockLlm = getMockLlm(app);
+
+        // Turn 1 (callIndex 0): gh_clone is not yet loaded — agent uses tool_search to find it.
+        mockLlm.onChat(
+          { callIndex: 0 },
+          {
+            kind: 'toolCall',
+            toolName: 'tool_search',
+            args: { query: 'clone repository' },
+          },
+        );
+
+        // Turn 2: gh_clone is now loaded — agent calls gh_clone with the requested repo.
+        mockLlm.onChat(
+          { hasTools: ['gh_clone'] },
+          {
+            kind: 'toolCall',
+            toolName: 'gh_clone',
+            args: { owner: 'octocat', repo: 'Hello-World' },
+          },
+        );
+
+        // Turn 3: after the gh_clone result arrives, the agent calls finish to end the thread.
+        // Using both hasToolResult + hasTools for specificity 2 so this fixture beats the
+        // hasTools-only gh_clone fixture (specificity 1) when the clone result is in context.
+        mockLlm.onChat(
+          { hasToolResult: 'gh_clone', hasTools: ['finish'] },
+          {
+            kind: 'toolCall',
+            toolName: 'finish',
+            args: {
+              purpose: 'done',
+              message: 'Repository cloned.',
+              needsMoreInfo: false,
+            },
+          },
+        );
+
         await ensureGraphRunning(ghGraphId);
 
         const execution = await graphsService.executeTrigger(
@@ -308,21 +364,13 @@ describe('GitHub Tool Integration Tests', () => {
         expect(ghCloneExecution.toolCallId).toBeDefined();
         expect(ghCloneExecution.result).toBeDefined();
 
-        // The result should contain either a path (success) or error
-        if (
-          ghCloneExecution.result &&
-          typeof ghCloneExecution.result === 'object'
-        ) {
-          const result = ghCloneExecution.result as {
-            path?: string;
-            error?: string;
-          };
-          // In a real scenario, if the PAT token is invalid, we'd get an error
-          // But since we're using a mock token, we expect either:
-          // 1. An error (if authentication fails)
-          // 2. A path (if the clone succeeds somehow)
-          expect(result.path || result.error).toBeDefined();
-        }
+        const result = ghCloneExecution.result as {
+          path?: string;
+          error?: string;
+        };
+        expect(result.path).toBeDefined();
+        expect(result.path).toMatch(/octocat[/\\-]hello-world|hello-world/i);
+        expect(result.error).toBeUndefined();
       },
     );
 

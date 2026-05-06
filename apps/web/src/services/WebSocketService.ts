@@ -190,6 +190,89 @@ class WebSocketService {
   }
 
   /**
+   * TEST-HARNESS ONLY. Injects an event directly into the local handler bus,
+   * bypassing socket.io. Named with leading underscore + "_unsafe" so
+   * autocomplete, linters, and code review flag any accidental production use.
+   *
+   * Used exclusively by the Storybook replay harness
+   * (apps/web/src/pages/storybook/ws-replay/). Never call from application code.
+   */
+  // eslint-disable-next-line @typescript-eslint/naming-convention -- intentional: leading underscore signals test-harness-only API to autocomplete, linters, and code review
+  _unsafeInjectEventForHarness(
+    eventType: string,
+    data: SocketNotification,
+  ): void {
+    this.emitToHandlers(eventType, data);
+  }
+
+  /**
+   * TEST-HARNESS ONLY. Guarded variant of _unsafeInjectEventForHarness. Named
+   * with leading underscore + "_unsafe" so autocomplete, linters, and code review
+   * flag any accidental production use.
+   *
+   * The isCancelled callback is evaluated inside each handler's setTimeout(fn, 0)
+   * wrapper immediately before the handler is invoked. If it returns true the
+   * handler call is skipped. This allows callers (e.g. WSEventPlayer) to capture
+   * a generation counter at dispatch time and suppress handler delivery when
+   * dispose() or reset() increments that counter before the queued setTimeout fires.
+   *
+   * Used exclusively by the Storybook replay harness
+   * (apps/web/src/pages/storybook/ws-replay/). Never call from application code.
+   */
+  // eslint-disable-next-line @typescript-eslint/naming-convention -- intentional: leading underscore signals test-harness-only API to autocomplete, linters, and code review
+  _unsafeInjectEventForHarnessGuarded(
+    eventType: string,
+    data: SocketNotification,
+    isCancelled: () => boolean,
+  ): void {
+    this.emitToHandlersGuarded(eventType, data, isCancelled);
+  }
+
+  /**
+   * Internal variant of emitToHandlers that evaluates isCancelled inside each
+   * handler's setTimeout(fn, 0) callback so that post-schedule cancellations
+   * (dispose/reset) suppress delivery without requiring an additional timing layer.
+   */
+  private emitToHandlersGuarded(
+    eventType: string,
+    data: SocketNotification,
+    isCancelled: () => boolean,
+  ): void {
+    const handlers = this.eventHandlers.get(eventType);
+    if (handlers) {
+      handlers.forEach((handler) => {
+        setTimeout(() => {
+          if (isCancelled()) {
+            return;
+          }
+          try {
+            handler(data);
+          } catch (error) {
+            console.error('[WebSocket] Error in event handler:', error);
+          }
+        }, 0);
+      });
+    }
+
+    // Also emit to wildcard handlers
+    const wildcardHandlers = this.eventHandlers.get('*');
+    if (wildcardHandlers) {
+      wildcardHandlers.forEach((handler) => {
+        setTimeout(() => {
+          if (isCancelled()) {
+            return;
+          }
+          try {
+            handler(data);
+          } catch (error) {
+            console.error('[WebSocket] Error in wildcard handler:', error);
+          }
+        }, 0);
+      });
+    }
+  }
+
+  /**
    * Subscribe to a specific graph for updates
    * @param graphId The ID of the graph to subscribe to
    */

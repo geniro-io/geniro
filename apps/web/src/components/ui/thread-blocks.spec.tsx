@@ -47,7 +47,12 @@ vi.mock('dompurify', () => ({
 
 import React from 'react';
 
-import { ReasoningBlock } from './thread-blocks';
+import {
+  CommunicationBlock,
+  ReasoningBlock,
+  StatFooter,
+  SubagentBlock,
+} from './thread-blocks';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -224,5 +229,55 @@ describe('ReasoningBlock — non-streaming branch (smoke test)', () => {
     expect(
       screen.getByRole('button', { name: /show less/i }),
     ).toBeInTheDocument();
+  });
+});
+
+// ── SubagentBlock footer token source tests ────────────────────────────────────
+
+describe('SubagentBlock — footer tokens source', () => {
+  it('displays statistics totals in footer when statistics is set', () => {
+    const { container } = render(
+      <SubagentBlock
+        status="done"
+        statistics={{
+          usage: { totalTokens: 12345, totalPrice: 0.053, durationMs: 1000 },
+        }}>
+        <div>child</div>
+      </SubagentBlock>,
+    );
+
+    const badge = container.querySelector('[class*="cursor-pointer"]');
+    expect(badge).not.toBeNull();
+    const badgeText = badge?.textContent ?? '';
+    expect(badgeText).toContain('12.3K');
+  });
+
+  it('renders genuine 0 totals as "0 ($0.000)" rather than hiding the badge', () => {
+    const { container } = render(
+      <SubagentBlock
+        status="running"
+        statistics={{
+          usage: { totalTokens: 0, totalPrice: 0, durationMs: 1500 },
+        }}>
+        <div>child</div>
+      </SubagentBlock>,
+    );
+
+    const badge = container.querySelector('[class*="cursor-pointer"]');
+    expect(badge).not.toBeNull();
+    const badgeText = badge?.textContent ?? '';
+    expect(badgeText).toContain('0');
+    expect(badgeText).toContain('$0.000');
+  });
+
+  it('renders no token badge when statistics is absent', () => {
+    const { container } = render(
+      <SubagentBlock status="done">
+        <div>child</div>
+      </SubagentBlock>,
+    );
+
+    const badge = container.querySelector('[class*="cursor-pointer"]');
+    expect(badge).toBeNull();
   });
 });

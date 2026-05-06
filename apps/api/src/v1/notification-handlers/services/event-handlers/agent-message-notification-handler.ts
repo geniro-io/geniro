@@ -105,10 +105,22 @@ export class AgentMessageNotificationHandler extends BaseNotificationHandler<IAg
         | RequestTokenUsage
         | undefined;
 
+      // Subagent messages are stored under a surrogate nodeId so that per-node
+      // cost queries can distinguish subagent invocations from the parent node.
+      // Both signals must be present; a missing __toolCallId falls back to the
+      // parent event.nodeId to avoid malformed composite keys.
+      const isSubagentMessage =
+        additionalKwargs?.__subagentCommunication === true &&
+        typeof additionalKwargs?.__toolCallId === 'string' &&
+        additionalKwargs.__toolCallId.length > 0;
+      const persistedNodeId = isSubagentMessage
+        ? `${event.nodeId}::sub::${additionalKwargs!.__toolCallId as string}`
+        : event.nodeId;
+
       return {
         threadId: internalThread.id,
         externalThreadId: event.threadId,
-        nodeId: event.nodeId,
+        nodeId: persistedNodeId,
         message: messageDto,
         // Store requestTokenUsage if present (all AI messages, including subagent internals)
         ...(requestTokenUsage ? { requestTokenUsage } : {}),
@@ -134,7 +146,6 @@ export class AgentMessageNotificationHandler extends BaseNotificationHandler<IAg
       };
     });
 
-    // Batch insert all messages in a single transaction
     const createdMessages =
       messagesToCreate.length > 0
         ? await this.messagesDao.createMany(messagesToCreate)

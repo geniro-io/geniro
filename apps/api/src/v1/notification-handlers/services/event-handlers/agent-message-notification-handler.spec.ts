@@ -99,12 +99,11 @@ describe('AgentMessageNotificationHandler', () => {
     threadsDao = module.get<ThreadsDao>(ThreadsDao);
     messagesDao = module.get<MessagesDao>(MessagesDao);
     graphDao = module.get<GraphDao>(GraphDao);
+
+    vi.spyOn(threadsDao, 'getOne').mockResolvedValue(createMockThreadEntity());
   });
 
   it('saves requestTokenUsage only for AI messages, not for tool messages', async () => {
-    const internalThread = createMockThreadEntity();
-    vi.spyOn(threadsDao, 'getOne').mockResolvedValue(internalThread);
-
     const aiTokenUsage = {
       inputTokens: 100,
       outputTokens: 92,
@@ -176,9 +175,6 @@ describe('AgentMessageNotificationHandler', () => {
   });
 
   it('AI messages have __requestUsage, tool messages do not', async () => {
-    const internalThread = createMockThreadEntity();
-    vi.spyOn(threadsDao, 'getOne').mockResolvedValue(internalThread);
-
     const toolCallId = 'call_test_123';
     const requestUsage = {
       inputTokens: 13780,
@@ -270,9 +266,6 @@ describe('AgentMessageNotificationHandler', () => {
   });
 
   it('does not save requestTokenUsage for tool messages even when __requestUsage is present', async () => {
-    const internalThread = createMockThreadEntity();
-    vi.spyOn(threadsDao, 'getOne').mockResolvedValue(internalThread);
-
     const parentAiUsage = {
       inputTokens: 13257,
       outputTokens: 63,
@@ -338,9 +331,6 @@ describe('AgentMessageNotificationHandler', () => {
   });
 
   it('saves requestTokenUsage for subagent internal AI messages (__hideForLlm)', async () => {
-    const internalThread = createMockThreadEntity();
-    vi.spyOn(threadsDao, 'getOne').mockResolvedValue(internalThread);
-
     const subagentUsage = {
       inputTokens: 3500,
       outputTokens: 90,
@@ -398,10 +388,122 @@ describe('AgentMessageNotificationHandler', () => {
     expect(kwargs.__requestUsage).toBeUndefined();
   });
 
-  it('does not save requestTokenUsage for tool messages, only toolTokenUsage', async () => {
-    const internalThread = createMockThreadEntity();
-    vi.spyOn(threadsDao, 'getOne').mockResolvedValue(internalThread);
+  it('persists surrogate nodeId for subagent messages', async () => {
+    const subagentUsage = {
+      inputTokens: 200,
+      outputTokens: 50,
+      totalTokens: 250,
+      totalPrice: 0.0005,
+    };
 
+    const subagentAi = new AIMessage({
+      content: 'Subagent step result',
+      additional_kwargs: {
+        __subagentCommunication: true,
+        __toolCallId: 'call_xyz',
+        __requestUsage: subagentUsage,
+      },
+    });
+
+    const notification: IAgentMessageNotification = {
+      type: NotificationEvent.AgentMessage,
+      graphId: mockGraphId,
+      nodeId: 'parent-node',
+      threadId: mockThreadId,
+      parentThreadId: mockParentThreadId,
+      data: {
+        messages: [subagentAi],
+      },
+    };
+
+    await handler.handle(notification);
+
+    expect(messagesDao.createMany).toHaveBeenCalledTimes(1);
+
+    const createManyCall = vi.mocked(messagesDao.createMany).mock
+      .calls[0]?.[0] as Record<string, unknown>[];
+
+    expect(createManyCall).toHaveLength(1);
+    expect(createManyCall[0]?.nodeId).toBe('parent-node::sub::call_xyz');
+  });
+
+  it('keeps event nodeId for non-subagent messages', async () => {
+    const regularUsage = {
+      inputTokens: 100,
+      outputTokens: 40,
+      totalTokens: 140,
+      totalPrice: 0.0002,
+    };
+
+    const regularAi = new AIMessage({
+      content: 'Regular AI response',
+      additional_kwargs: {
+        __requestUsage: regularUsage,
+      },
+    });
+
+    const notification: IAgentMessageNotification = {
+      type: NotificationEvent.AgentMessage,
+      graphId: mockGraphId,
+      nodeId: mockNodeId,
+      threadId: mockThreadId,
+      parentThreadId: mockParentThreadId,
+      data: {
+        messages: [regularAi],
+      },
+    };
+
+    await handler.handle(notification);
+
+    expect(messagesDao.createMany).toHaveBeenCalledTimes(1);
+
+    const createManyCall = vi.mocked(messagesDao.createMany).mock
+      .calls[0]?.[0] as Record<string, unknown>[];
+
+    expect(createManyCall).toHaveLength(1);
+    expect(createManyCall[0]?.nodeId).toBe(mockNodeId);
+  });
+
+  it('falls back to event nodeId when __subagentCommunication is true but __toolCallId is missing', async () => {
+    const subagentUsage = {
+      inputTokens: 300,
+      outputTokens: 60,
+      totalTokens: 360,
+      totalPrice: 0.0008,
+    };
+
+    // __subagentCommunication present but __toolCallId absent — defensive fallback
+    const incompleteSubagentAi = new AIMessage({
+      content: 'Subagent output without toolCallId',
+      additional_kwargs: {
+        __subagentCommunication: true,
+        __requestUsage: subagentUsage,
+      },
+    });
+
+    const notification: IAgentMessageNotification = {
+      type: NotificationEvent.AgentMessage,
+      graphId: mockGraphId,
+      nodeId: mockNodeId,
+      threadId: mockThreadId,
+      parentThreadId: mockParentThreadId,
+      data: {
+        messages: [incompleteSubagentAi],
+      },
+    };
+
+    await handler.handle(notification);
+
+    expect(messagesDao.createMany).toHaveBeenCalledTimes(1);
+
+    const createManyCall = vi.mocked(messagesDao.createMany).mock
+      .calls[0]?.[0] as Record<string, unknown>[];
+
+    expect(createManyCall).toHaveLength(1);
+    expect(createManyCall[0]?.nodeId).toBe(mockNodeId);
+  });
+
+  it('does not save requestTokenUsage for tool messages, only toolTokenUsage', async () => {
     const parentToolCallId = 'call_parent_subagent';
 
     // Parent AI message dispatching subagent — has __requestUsage
@@ -496,9 +598,6 @@ describe('AgentMessageNotificationHandler', () => {
   });
 
   it('extracts answeredToolCallNames from additional_kwargs', async () => {
-    const internalThread = createMockThreadEntity();
-    vi.spyOn(threadsDao, 'getOne').mockResolvedValue(internalThread);
-
     // AI message that answers tool calls (no tool_calls of its own)
     const ai = new AIMessage({
       content: 'Based on the search results...',
@@ -540,9 +639,6 @@ describe('AgentMessageNotificationHandler', () => {
   });
 
   it('does not save requestTokenUsage for human messages', async () => {
-    const internalThread = createMockThreadEntity();
-    vi.spyOn(threadsDao, 'getOne').mockResolvedValue(internalThread);
-
     // Human message (user input - should NOT have requestTokenUsage)
     const human = new HumanMessage({
       content: 'Hello, how are you?',

@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -625,6 +626,9 @@ export const GraphsListPage = () => {
         <DialogContent className="sm:max-w-[600px]">
           <DialogHeader>
             <DialogTitle>Edit Graph</DialogTitle>
+            <DialogDescription className="sr-only">
+              Update the name, description, and cost limit for this graph.
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
@@ -698,6 +702,9 @@ export const GraphsListPage = () => {
         <DialogContent className="sm:max-w-[425px]">
           <DialogHeader>
             <DialogTitle>Delete graph</DialogTitle>
+            <DialogDescription className="sr-only">
+              Permanently delete this graph. This action cannot be undone.
+            </DialogDescription>
           </DialogHeader>
           <p className="text-sm text-muted-foreground py-2">
             Are you sure you want to delete this graph? This action cannot be

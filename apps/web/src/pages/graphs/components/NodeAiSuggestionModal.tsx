@@ -13,6 +13,7 @@ import { Button } from '../../../components/ui/button';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from '../../../components/ui/dialog';
@@ -195,6 +196,9 @@ export const NodeAiSuggestionModal: FC<NodeAiSuggestionModalProps> = ({
       <DialogContent className="sm:max-w-[1100px] max-h-[90vh] overflow-y-auto overflow-x-hidden">
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
+          <DialogDescription className="sr-only">
+            Use AI to generate or improve instructions for this agent node.
+          </DialogDescription>
         </DialogHeader>
         {aiSuggestionState && (
           <div className="flex flex-col gap-6">

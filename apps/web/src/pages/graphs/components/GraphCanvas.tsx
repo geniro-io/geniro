@@ -1,4 +1,5 @@
 // GraphCanvas.tsx
+/* eslint-disable react-refresh/only-export-components -- intentional re-export of node-context hook alongside the canvas component */
 import '@xyflow/react/dist/style.css';
 
 import {

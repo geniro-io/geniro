@@ -829,7 +829,12 @@ describe('ShellTool', () => {
       vi.mocked(mockOpenaiService.response).mockResolvedValueOnce({
         content: 'FAIL test2: Error: expected true',
         conversationId: 'conv-1',
-        usage: { inputTokens: 50, outputTokens: 10, totalTokens: 60 },
+        usage: {
+          inputTokens: 50,
+          outputTokens: 10,
+          totalTokens: 60,
+          totalPrice: 0,
+        },
       });
 
       const config: ShellToolOptions = {
@@ -854,6 +859,7 @@ describe('ShellTool', () => {
         inputTokens: 50,
         outputTokens: 10,
         totalTokens: 60,
+        totalPrice: 0,
       });
       expect(mockOpenaiService.response).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -897,7 +903,12 @@ describe('ShellTool', () => {
       vi.mocked(mockOpenaiService.response).mockResolvedValueOnce({
         content: 'Runtime crashed',
         conversationId: 'conv-2',
-        usage: { inputTokens: 30, outputTokens: 5, totalTokens: 35 },
+        usage: {
+          inputTokens: 30,
+          outputTokens: 5,
+          totalTokens: 35,
+          totalPrice: 0,
+        },
       });
 
       const config: ShellToolOptions = {
@@ -967,7 +978,12 @@ describe('ShellTool', () => {
       vi.mocked(mockOpenaiService.complete).mockResolvedValueOnce({
         content: 'focused content',
         conversationId: 'conv-3',
-        usage: { inputTokens: 40, outputTokens: 8, totalTokens: 48 },
+        usage: {
+          inputTokens: 40,
+          outputTokens: 8,
+          totalTokens: 48,
+          totalPrice: 0,
+        },
       });
 
       const config: ShellToolOptions = {
@@ -1108,7 +1124,12 @@ describe('ShellTool', () => {
       vi.mocked(mockOpenaiService.response).mockResolvedValueOnce({
         content: 'FAIL test2',
         conversationId: 'conv-1',
-        usage: { inputTokens: 50, outputTokens: 10, totalTokens: 60 },
+        usage: {
+          inputTokens: 50,
+          outputTokens: 10,
+          totalTokens: 60,
+          totalPrice: 0,
+        },
       });
 
       const config: ShellToolOptions = {

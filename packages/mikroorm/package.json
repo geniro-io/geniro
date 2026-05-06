@@ -3,18 +3,18 @@
   "version": "1.0.0",
   "author": "Sergey Razumovskiy <s.razumru@gmail.com>",
   "dependencies": {
-    "@mikro-orm/core": "^7.0.12",
-    "@mikro-orm/decorators": "^7.0.12",
-    "@mikro-orm/migrations": "^7.0.12",
+    "@mikro-orm/core": "^7.0.13",
+    "@mikro-orm/decorators": "^7.0.13",
+    "@mikro-orm/migrations": "^7.0.13",
     "@mikro-orm/nestjs": "^7.0.1",
-    "@mikro-orm/postgresql": "^7.0.12",
+    "@mikro-orm/postgresql": "^7.0.13",
     "@nestjs/common": "^11.1.19",
     "@nestjs/core": "^11.1.19",
     "@packages/common": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^25.6.0",
-    "eslint": "^10.1.0",
+    "eslint": "^10.3.0",
     "typescript": "^6.0.3",
     "vitest": "^4.1.5"
   },

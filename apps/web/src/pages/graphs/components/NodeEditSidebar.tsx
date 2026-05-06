@@ -275,9 +275,6 @@ export const NodeEditSidebar = React.memo(
     const isInstructionBlock = Boolean(
       (nodeTemplate as Record<string, unknown> | undefined)?.instructionBlockId,
     );
-    const systemAgentId = isSystemAgent
-      ? String(nodeConfig.systemAgentId)
-      : null;
     const isSystemAgentDeprecated = isSystemAgent && !nodeTemplate;
     const isGraphRunning = graphStatus === GraphDtoStatusEnum.Running;
     const showNodeStatus = ['runtime', 'simpleagent', 'trigger'].includes(

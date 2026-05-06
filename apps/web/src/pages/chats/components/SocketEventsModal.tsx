@@ -4,6 +4,7 @@ import { Button } from '../../../components/ui/button';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -30,6 +31,9 @@ export const SocketEventsModal: FC<SocketEventsModalProps> = ({
       <DialogContent className="sm:max-w-[900px]">
         <DialogHeader>
           <DialogTitle>Thread Socket Events</DialogTitle>
+          <DialogDescription className="sr-only">
+            Inspect WebSocket events recorded for the selected thread.
+          </DialogDescription>
         </DialogHeader>
         {threadId ? (
           <div className="space-y-3">

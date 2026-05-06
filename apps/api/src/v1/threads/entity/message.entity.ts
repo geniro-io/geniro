@@ -21,7 +21,16 @@ export class MessageEntity extends TimestampsEntity {
   @Index()
   threadId!: string;
 
-  @ManyToOne(() => ThreadEntity, { deleteRule: 'cascade', nullable: true })
+  // `persist: false` here is load-bearing — same MikroORM v7 dual-property bug
+  // as ThreadEntity.graph (see thread.entity.ts for the full diagnosis). Every
+  // call site uses the scalar `threadId`, so option (2) — relation marked
+  // non-persistent — is the right pattern. Do NOT run `pnpm migration:generate`
+  // against this entity; the FK constraint must come from the DB schema.
+  @ManyToOne(() => ThreadEntity, {
+    deleteRule: 'cascade',
+    nullable: true,
+    persist: false,
+  })
   thread?: ThreadEntity;
 
   @Property({ type: 'varchar' })

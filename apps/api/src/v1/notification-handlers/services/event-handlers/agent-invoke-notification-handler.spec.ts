@@ -357,6 +357,94 @@ describe('AgentInvokeNotificationHandler', () => {
       });
     });
 
+    it('emits a second ThreadUpdate clearing stop fields when the existing thread had cost-limit stop state', async () => {
+      const mockGraph = createMockGraphEntity();
+      const existingThread = createMockThreadEntity({
+        name: 'Existing Thread Name',
+        externalThreadId: 'parent-thread-123',
+        metadata: {
+          stopReason: 'cost_limit',
+          stopCostUsd: 0.3,
+          costLimitHit: true,
+        },
+      });
+      const notification = createMockNotification({
+        runId: '55555555-5555-4555-8aaa-555555555555',
+      });
+
+      vi.spyOn(graphDao, 'getOne').mockResolvedValue(mockGraph);
+      vi.spyOn(threadsDao, 'upsertByExternalThreadId').mockResolvedValue(
+        existingThread,
+      );
+      vi.spyOn(threadsDao, 'getOne').mockResolvedValue(existingThread);
+
+      const expectedThreadDto = buildThreadResponseDto(existingThread);
+
+      await handler.handle(notification);
+
+      expect(notificationsService.emit).toHaveBeenCalledTimes(2);
+      expect(notificationsService.emit).toHaveBeenNthCalledWith(1, {
+        type: NotificationEvent.ThreadUpdate,
+        graphId: mockGraphId,
+        projectId: mockProjectId,
+        threadId: 'parent-thread-123',
+        parentThreadId: 'parent-thread-123',
+        data: expectedThreadDto,
+      });
+      expect(notificationsService.emit).toHaveBeenNthCalledWith(2, {
+        type: NotificationEvent.ThreadUpdate,
+        graphId: mockGraphId,
+        projectId: mockProjectId,
+        threadId: 'parent-thread-123',
+        parentThreadId: 'parent-thread-123',
+        data: { stopReason: null, stopCostUsd: null, costLimitHit: null },
+      });
+    });
+
+    it('does NOT emit a second ThreadUpdate when stopReason is user_stop (non-cost-limit)', async () => {
+      const mockGraph = createMockGraphEntity();
+      const existingThread = createMockThreadEntity({
+        name: 'Existing Thread Name',
+        externalThreadId: 'parent-thread-123',
+        metadata: { stopReason: 'user_stop' },
+      });
+      const notification = createMockNotification({
+        runId: '77777777-7777-4777-8aaa-777777777777',
+      });
+
+      vi.spyOn(graphDao, 'getOne').mockResolvedValue(mockGraph);
+      vi.spyOn(threadsDao, 'upsertByExternalThreadId').mockResolvedValue(
+        existingThread,
+      );
+      vi.spyOn(threadsDao, 'getOne').mockResolvedValue(existingThread);
+
+      await handler.handle(notification);
+
+      expect(notificationsService.emit).toHaveBeenCalledTimes(1);
+    });
+
+    it('does NOT emit a second ThreadUpdate when the existing thread has no stop state in metadata', async () => {
+      const mockGraph = createMockGraphEntity();
+      const existingThread = createMockThreadEntity({
+        name: 'Existing Thread Name',
+        externalThreadId: 'parent-thread-123',
+        metadata: {},
+      });
+      const notification = createMockNotification({
+        runId: '66666666-6666-4666-8aaa-666666666666',
+      });
+
+      vi.spyOn(graphDao, 'getOne').mockResolvedValue(mockGraph);
+      vi.spyOn(threadsDao, 'upsertByExternalThreadId').mockResolvedValue(
+        existingThread,
+      );
+      vi.spyOn(threadsDao, 'getOne').mockResolvedValue(existingThread);
+
+      await handler.handle(notification);
+
+      expect(notificationsService.emit).toHaveBeenCalledTimes(1);
+    });
+
     it('should skip thread creation if graph not found', async () => {
       const notification = createMockNotification();
 

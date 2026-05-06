@@ -13,7 +13,7 @@ describe('GraphsListener', () => {
     const module = await Test.createTestingModule({
       providers: [
         GraphsListener,
-        { provide: GraphDao, useValue: { hardDelete: vi.fn() } },
+        { provide: GraphDao, useValue: { delete: vi.fn() } },
         { provide: DefaultLogger, useValue: { log: vi.fn(), error: vi.fn() } },
       ],
     }).compile();
@@ -23,18 +23,18 @@ describe('GraphsListener', () => {
   });
 
   it('deletes graphs for the deleted project', async () => {
-    vi.mocked(graphDao.hardDelete).mockResolvedValue(undefined as never);
+    vi.mocked(graphDao.delete).mockResolvedValue(undefined as never);
 
     await listener.onProjectDeleted({ projectId: 'p-1', userId: 'u-1' });
 
-    expect(graphDao.hardDelete).toHaveBeenCalledWith({
+    expect(graphDao.delete).toHaveBeenCalledWith({
       projectId: 'p-1',
       createdBy: 'u-1',
     });
   });
 
   it('propagates DAO errors', async () => {
-    vi.mocked(graphDao.hardDelete).mockRejectedValue(new Error('DB failure'));
+    vi.mocked(graphDao.delete).mockRejectedValue(new Error('DB failure'));
 
     await expect(
       listener.onProjectDeleted({ projectId: 'p-1', userId: 'u-1' }),

@@ -37,6 +37,14 @@ pnpm deps:down                        # Stop all services (including Zitadel)
 cd apps/api && pnpm start:dev         # Dev server with hot-reload (port 5000)
 ```
 
+### LiteLLM model configuration (gotcha)
+
+`litellm.yaml` changes do **not** reach the running LiteLLM proxy until the container is restarted **AND** the yaml-DB reconciliation is triggered. The proxy runs with `store_model_in_db: true`, so its authoritative model table lives in Postgres — yaml additions only merge into that table on specific startup paths. Symptoms of drift: a graph configured with a model like `openai/gpt-5.4-mini` returns `totalPrice: 0` on every call because LiteLLM's `/model/info` does not list it.
+
+- Check registered models: `curl -s http://localhost:4000/model/info -H "Authorization: Bearer master" | jq '.data[] | {name: .model_name, in: .model_info.input_cost_per_token, out: .model_info.output_cost_per_token}'`
+- Look for zero-pricing entries — any `in: 0, out: 0` silently produces $0.000 cost reports in the UI.
+- To resync yaml → DB: `docker compose restart litellm` (or `podman-compose`). If the alias still doesn't appear, add it via LiteLLM's management API (`POST /model/new`) or clear the DB model table and restart.
+
 ### Build & lint
 ```bash
 pnpm build                            # Full monorepo build (Turbo)
@@ -47,23 +55,24 @@ pnpm lint                             # Lint without fixing (to see remaining is
 
 ### Testing
 
-**⚠️ CRITICAL**: Always use the `pnpm run` / `pnpm` package.json scripts to run tests. Never call test runners directly (e.g. `vitest`, `npx vitest`). Never run full test suites — always target specific files.
+**⚠️ CRITICAL**: Always use the `pnpm run` / `pnpm` package.json scripts to run tests. Never call test runners directly (e.g. `vitest`, `npx vitest`).
 
 ```bash
 # ✅ CORRECT — always use package.json scripts
 pnpm test:unit                        # Vitest unit tests (*.spec.ts) — mandatory
-pnpm test:integration {filename}      # Run ONLY the related integration test file
+pnpm test:integration {filename}      # Target one integration file (preferred for iteration)
+pnpm test:integration                 # Run the full integration suite (allowed — LLM calls are mocked via MockLlmService)
 
 # ❌ WRONG — never call test runners directly
 # vitest run
 # npx vitest
 # pnpm vitest run
 
-# ❌ WRONG — NEVER run full test suites
-# pnpm test                           # runs everything — FORBIDDEN
-# pnpm test:integration               # runs ALL integration tests — FORBIDDEN
-
-# ⚠️  NEVER run bare `pnpm test:integration` without a filename — always target the specific file
+# Iteration tip: target a specific file with `pnpm test:integration <file>` to keep the loop tight.
+# The bulk run is fine for verification (e.g. before pushing). Files run in parallel
+# (5 workers, each with its own per-worker DB clone); within a file tests still run sequentially.
+# The setup always boots ephemeral Postgres/Redis/Qdrant testcontainers and runs migrations
+# against the base DB before cloning per-worker databases.
 
 # E2E (Cypress) — requires server running + deps up:
 cd apps/api
@@ -303,12 +312,49 @@ When all four are set, the `GET /api/system/settings` endpoint returns `githubAp
 ## Testing conventions
 
 - **Always use package.json scripts**: Run tests via `pnpm test:unit`, `pnpm test:integration {filename}`, etc. **Never** invoke test runners directly (`vitest`, `npx vitest`, `pnpm vitest run`).
-- **Never run full test suites**: `pnpm test` and bare `pnpm test:integration` (without a filename) are **forbidden**. Always target a specific scope.
+- **Iteration vs verification**: `pnpm test` (everything) is forbidden — too coarse. `pnpm test:integration` (whole integration suite) is **allowed** because LLM calls are mocked via `MockLlmService`. Prefer the targeted form `pnpm test:integration {filename}` while iterating; the bulk form is for pre-push verification.
 - **Unit tests** (`*.spec.ts`): placed next to the source file. Run with `pnpm test:unit`. Prefer updating an existing spec file over creating a new one.
-- **Integration tests** (`*.int.ts`): in `src/__tests__/integration/`. Call services directly (no HTTP). **Mandatory** when modifying code that already has integration tests — always run with a specific filename: `pnpm test:integration {filename}`. **NEVER** run bare `pnpm test:integration` without a filename.
+- **Integration tests** (`*.int.ts`): in `src/__tests__/integration/`. Call services directly (no HTTP). **Mandatory** when modifying code that already has integration tests — run with a specific filename while iterating, run `pnpm test:integration` to verify the suite.
 - **E2E tests** (`*.cy.ts`): in `apps/api/cypress/e2e/`. Smoke-test endpoints over HTTP. Require a running server + deps.
 - **E2E type safety**: When creating or modifying E2E tests, always regenerate API type definitions first (`cd apps/api && pnpm test:e2e:generate-api`). E2E helpers and tests **must** import request/response types from `../../api-definitions` (e.g. `import type { GraphDto, GetAllGraphsData } from '../../api-definitions'`) instead of defining inline types. Use the generated `*Data['query']` types for query parameters and the generated `*Dto` types for response bodies.
 - **Must-fail policy**: Tests must never conditionally skip based on missing env vars or services. If a prerequisite is absent, the test must fail with a clear error — no `it.skip` or early returns.
 - **Coverage thresholds** (when enabled): 90% lines/functions/statements, 80% branches.
 - **E2E logging**: use `cy.task('log', message)` to print to terminal output.
+
+### Mocking the LLM in integration tests
+
+All integration tests **always** mock the LLM — there is no opt-out flag and no real-LLM mode. The mock is wired into `createTestModule()` automatically and covers two seams: `OpenaiService` (via NestJS DI override) and `BaseAgent.prototype.buildLLM` (via process-level patch).
+
+**Import:** `import { getMockLlm, applyDefaults, MockLlmNoMatchError } from '../mocks/mock-llm';` (path relative to test location).
+
+**API surface:**
+```typescript
+const mockLlm = getMockLlm(app);
+
+// Register matcher-based fixtures (returns first match from filters):
+mockLlm.onChat(matcher, reply);
+mockLlm.onJsonRequest(matcher, reply);
+mockLlm.onEmbeddings(matcher, reply);
+
+// Queue FIFO replies (consumed before matchers, ignores matchers):
+mockLlm.queueChat(reply);
+mockLlm.queueCost(usd);  // sugar: text reply with totalPrice
+
+// Inspect:
+mockLlm.getRequests();    // ordered request log
+mockLlm.getLastRequest();
+
+// Test cleanup (call in beforeEach):
+mockLlm.reset();
+```
+
+**Matcher fields:** `model` (string or RegExp), `lastUserMessage` (string-includes or RegExp), `systemMessage` (string-includes or RegExp), `hasTools` (string[] subset match), `hasToolResult` (string exact match), `callIndex` (number). No match throws `MockLlmNoMatchError` with context (model, call index, message, tool names, registered matchers).
+
+**Specificity & multi-turn gotcha:** Fixtures are resolved by specificity (count of non-undefined matcher fields). Ties are broken by registration order. When agent loops `callTool → toolResult → followUp`, fixtures with `{ hasTools: ['T'] }` and `{ hasToolResult: 'T' }` both have specificity 1 and tie. To disambiguate, combine matchers: `{ hasToolResult: 'T', hasTools: ['finish'] }` (specificity 2).
+
+**Tool-call fixture args MUST satisfy the real tool's Zod schema** — e.g., a `finish` tool fixture requires `{ purpose: string, message: string, needsMoreInfo?: boolean }` (not `{ result: 'done' }`). The mock will pass schema validation through to the real tool registry; mismatched args silently break tool dispatch.
+
+**Apply defaults (optional):** `applyDefaults(mockLlm)` registers benign defaults: a finish-tool fallback, a catch-all text reply, and deterministic embeddings. Apply AFTER per-test fixtures or the catch-all swallows them.
+
+**Limitations:** Code paths requiring real LLM behavior (e.g. `ReasoningAwareChatCompletions` normalization, token-stream timing, retry/backoff) must be covered by unit tests, not integration tests.
 

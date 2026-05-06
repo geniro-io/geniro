@@ -11,6 +11,7 @@ import { Button } from '../../../components/ui/button';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -93,6 +94,9 @@ const ThreadSnapshotModalContent: FC<ContentProps> = ({
         className="sm:max-w-4xl h-[85vh] flex flex-col overflow-hidden"
         onOpenAutoFocus={(e) => e.preventDefault()}>
         <DialogHeader className="flex-shrink-0">
+          <DialogDescription className="sr-only">
+            Exported snapshot of thread messages and usage statistics.
+          </DialogDescription>
           <div className="flex items-center justify-between gap-2 min-w-0 pr-8">
             <DialogTitle className="flex items-center gap-2 min-w-0 flex-1">
               <FileText className="size-4 shrink-0" />
@@ -183,6 +187,9 @@ const ThreadSnapshotModalContent: FC<ContentProps> = ({
               <BarChart3 className="size-4" />
               Usage Statistics
             </DialogTitle>
+            <DialogDescription className="sr-only">
+              Token usage and cost breakdown for this thread snapshot.
+            </DialogDescription>
           </DialogHeader>
           <div className="flex-1 min-h-0 overflow-y-auto">
             <ThreadUsageDisplay
@@ -209,6 +216,10 @@ const ThreadSnapshotModalContent: FC<ContentProps> = ({
                 <Network className="size-4" />
                 <span className="truncate">{snapshot.graph.name}</span>
               </DialogTitle>
+              <DialogDescription className="sr-only">
+                Visual configuration of the graph associated with this thread
+                snapshot.
+              </DialogDescription>
               {snapshot.graph.description && (
                 <p className="text-xs text-muted-foreground">
                   {snapshot.graph.description}

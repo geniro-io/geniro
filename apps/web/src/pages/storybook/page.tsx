@@ -140,6 +140,7 @@ import {
   KnowledgeAiSuggestionModal,
   type KnowledgeSuggestionState,
 } from '../knowledge/components/KnowledgeAiSuggestionModal';
+import { WSReplayHarnessSection } from './ws-replay/WSReplayHarnessSection';
 
 /* -------------------------------------------------------------------------- */
 /*  Layout helpers                                                            */
@@ -229,6 +230,7 @@ const SECTIONS = [
   { id: 'live-thread', label: 'Live Thread' },
   { id: 'metrics', label: 'Metrics' },
   { id: 'thread-token-usage-line', label: 'Thread Token Usage Line' },
+  { id: 'ws-replay-harness', label: 'WS Replay Harness' },
   { id: 'json-viewer', label: 'JSON Viewer' },
   { id: 'project-card', label: 'Project Card' },
   { id: 'graph-card', label: 'Graph Card' },
@@ -4273,6 +4275,7 @@ export function StorybookPage() {
         <LiveThreadSection />
         <MetricsSection />
         <ThreadTokenUsageLineSection />
+        <WSReplayHarnessSection />
         <JsonViewerSection />
         <ProjectCardSection />
         <GraphCardSection />

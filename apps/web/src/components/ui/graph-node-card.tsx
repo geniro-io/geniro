@@ -420,7 +420,7 @@ export const CustomNode = React.memo(
               availableSecretNames,
             )
           : [],
-      // eslint-disable-next-line react-hooks/preserve-manual-memoization
+
       [connectedEdges, allNodes, nodeId, templates, availableSecretNames],
     );
     const inputRules = useMemo(
@@ -436,7 +436,7 @@ export const CustomNode = React.memo(
               templates,
             )
           : [],
-      // eslint-disable-next-line react-hooks/preserve-manual-memoization
+
       [nodeData, nodeId, templates],
     );
 

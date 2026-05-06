@@ -1,6 +1,6 @@
 import { defineProject, mergeConfig } from 'vitest/config';
 
-import { defineBaseConfig } from '../../vitest.config';
+import { defineBaseConfig } from '../../vitest.base';
 import pkg from './package.json';
 
 export default mergeConfig(
@@ -9,10 +9,11 @@ export default mergeConfig(
     test: {
       name: pkg.name,
       disableConsoleIntercept: true,
-      include: ['src/**/*.spec.ts', 'src/**/*.int.ts'],
+      include: ['src/**/*.spec.ts'],
       projects: undefined,
-      fileParallelism: false,
+      fileParallelism: true,
       maxWorkers: 5,
+      sequence: { groupOrder: 1 },
     },
   }),
 );

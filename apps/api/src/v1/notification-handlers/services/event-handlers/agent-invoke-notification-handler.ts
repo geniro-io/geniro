@@ -45,8 +45,15 @@ export class AgentInvokeNotificationHandler extends BaseNotificationHandler<neve
   }
 
   async handle(event: IAgentInvokeNotification): Promise<never[]> {
-    const { threadId, graphId, parentThreadId, source, runId, threadMetadata } =
-      event;
+    const {
+      threadId,
+      graphId,
+      parentThreadId,
+      source,
+      runId,
+      threadMetadata,
+      effectiveCostLimitUsd,
+    } = event;
 
     const graph = await this.graphDao.getOne({ id: graphId });
     if (!graph) {
@@ -55,6 +62,21 @@ export class AgentInvokeNotificationHandler extends BaseNotificationHandler<neve
 
     const externalThreadKey = parentThreadId ?? threadId;
     const isRootThreadExecution = threadId === externalThreadKey;
+
+    // Seed effectiveCostLimitUsd into the INSERT-path metadata so the client's
+    // header can render the limit on a brand-new thread even when this handler
+    // wins the race against executeTrigger's eager creation. On CONFLICT the
+    // upsert's merge list excludes metadata, so this does not overwrite an
+    // already-populated metadata from the eager path or a prior resume.
+    const insertMetadata =
+      threadMetadata || effectiveCostLimitUsd !== undefined
+        ? {
+            ...(threadMetadata ?? {}),
+            ...(effectiveCostLimitUsd !== undefined
+              ? { effectiveCostLimitUsd }
+              : {}),
+          }
+        : undefined;
 
     // Upsert: INSERT or ON CONFLICT(externalThreadId) UPDATE status/source/lastRunId.
     // This eliminates the race condition between executeTrigger (eager thread creation)
@@ -67,7 +89,7 @@ export class AgentInvokeNotificationHandler extends BaseNotificationHandler<neve
       status: ThreadStatus.Running,
       ...(source ? { source } : {}),
       ...(runId ? { lastRunId: runId } : {}),
-      ...(threadMetadata ? { metadata: threadMetadata } : {}),
+      ...(insertMetadata ? { metadata: insertMetadata } : {}),
     });
 
     // Fetch the full entity after upsert to get all fields (including name, metadata
@@ -107,6 +129,33 @@ export class AgentInvokeNotificationHandler extends BaseNotificationHandler<neve
         parentThreadId,
         data: threadDto,
       });
+
+      // If the thread previously stopped due to a cost limit, clear the stop
+      // fields so the frontend stops showing the cost-limit banner as soon as
+      // the user's new run begins. The ThreadUpdateNotificationHandler handles
+      // the actual metadata writes when it receives these null values.
+      // Only fire for cost-limit stops — user_stop re-runs should leave
+      // stopReason intact so the record persists.
+      const meta = thread.metadata as
+        | Record<string, unknown>
+        | null
+        | undefined;
+      const hadCostLimitState = Boolean(
+        meta &&
+        (meta.costLimitHit === true ||
+          (typeof meta.stopReason === 'string' &&
+            meta.stopReason === 'cost_limit')),
+      );
+      if (hadCostLimitState) {
+        await this.notificationsService.emit({
+          type: NotificationEvent.ThreadUpdate,
+          graphId,
+          projectId: graph.projectId,
+          threadId: externalThreadKey,
+          parentThreadId,
+          data: { stopReason: null, stopCostUsd: null, costLimitHit: null },
+        });
+      }
     }
 
     // Generate thread name for root thread executions that don't have one yet.

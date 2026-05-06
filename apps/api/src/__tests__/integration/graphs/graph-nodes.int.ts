@@ -20,6 +20,7 @@ import {
   waitForCondition,
 } from '../helpers/graph-helpers';
 import { createTestProject } from '../helpers/test-context';
+import { getMockLlm } from '../mocks/mock-llm';
 import { createTestModule } from '../setup';
 
 type GraphNodeWithStatus = z.infer<typeof GraphNodeWithStatusSchema>;
@@ -433,6 +434,24 @@ describe('Graph Nodes Integration Tests', () => {
     { timeout: 120_000 },
     async () => {
       await ensureGraphRunning(basicGraphId);
+
+      // Mocked LLM resolves instantly, so the first run would finish before the
+      // second trigger arrives (no `appendMessages` path, no pending-message
+      // window). Delay the first finish-tool reply so the run stays active long
+      // enough for the follow-up trigger to land in `appendMessages`.
+      const mockLlm = getMockLlm(app);
+      mockLlm.onChat(
+        {
+          lastUserMessage: 'Start long running task',
+          hasTools: ['finish'],
+        },
+        {
+          kind: 'toolCall',
+          toolName: 'finish',
+          args: { purpose: 'done', message: 'OK', needsMoreInfo: false },
+          delayMs: 5_000,
+        },
+      );
 
       const threadSubId = uniqueThreadSubId('pending-metadata-thread');
       const firstExecution = await graphsService.executeTrigger(

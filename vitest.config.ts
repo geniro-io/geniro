@@ -1,23 +1,17 @@
-import swc from 'unplugin-swc';
-import tsconfigPaths from 'vite-tsconfig-paths';
 import { defineConfig } from 'vitest/config';
 
-export const defineBaseConfig = () => ({
-  plugins: [
-    tsconfigPaths(),
-    swc.vite({
-      module: { type: 'es6' },
-    }),
-  ],
-});
+import { defineBaseConfig } from './vitest.base';
 
 export default defineConfig({
   ...defineBaseConfig(),
   test: {
     globals: true,
     silent: false,
-    //disableConsoleIntercept: true,
-    projects: ['packages/*', 'apps/*'],
+    projects: [
+      'packages/*',
+      'apps/*',
+      'apps/api/vitest.integration.config.ts',
+    ],
     fileParallelism: false,
     maxWorkers: 5,
     coverage: {

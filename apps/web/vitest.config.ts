@@ -1,6 +1,6 @@
 import { defineProject, mergeConfig } from 'vitest/config';
 
-import { defineBaseConfig } from '../../vitest.config';
+import { defineBaseConfig } from '../../vitest.base';
 import pkg from './package.json';
 
 export default mergeConfig(

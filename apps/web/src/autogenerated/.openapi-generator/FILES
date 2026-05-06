@@ -68,6 +68,7 @@ docs/RepoIndexDto.md
 docs/ResumeThreadDto.md
 docs/RuntimeHealthDto.md
 docs/RuntimeInstanceDto.md
+docs/RuntimeInstanceStateDto.md
 docs/RuntimesApi.md
 docs/SecretResponseDto.md
 docs/SecretsApi.md

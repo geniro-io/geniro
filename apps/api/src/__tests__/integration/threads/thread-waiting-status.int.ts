@@ -70,7 +70,11 @@ describe('Thread Waiting Status Integration Tests', () => {
       { messages: [`Thread waiting test ${Date.now()}`] },
     );
 
-    // Wait for the thread to appear and reach a terminal or stable state.
+    // Wait for the thread to reach a TERMINAL status. `Running` is transient
+    // and an in-flight notification handler can still flip it after the
+    // condition resolves — under load (parallel mode), the handler routinely
+    // overwrites a `setThreadWaiting()` write done by the test body, which
+    // causes `getThreads({ status: Waiting })` to return 0.
     const thread = await waitForCondition(
       () =>
         threadsService.getThreadByExternalId(
@@ -80,8 +84,7 @@ describe('Thread Waiting Status Integration Tests', () => {
       (t) =>
         t.status === ThreadStatus.Done ||
         t.status === ThreadStatus.NeedMoreInfo ||
-        t.status === ThreadStatus.Stopped ||
-        t.status === ThreadStatus.Running,
+        t.status === ThreadStatus.Stopped,
       { timeout: 60_000, interval: 500 },
     );
     threadId = thread.id;

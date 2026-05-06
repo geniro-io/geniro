@@ -30,13 +30,10 @@ describe('KnowledgeService (integration)', () => {
     knowledgeChunksService = app.get(KnowledgeChunksService);
     docDao = app.get(KnowledgeDocDao);
     qdrantService = app.get(QdrantService);
+    // MikroORM v7 exposes the schema generator via `orm.schema` and the update
+    // method is `orm.schema.update()` — `getSchemaGenerator()` was removed.
     const orm = app.get(MikroORM);
-    const schemaGenerator = (
-      orm as unknown as {
-        getSchemaGenerator(): { updateSchema(): Promise<void> };
-      }
-    ).getSchemaGenerator();
-    await schemaGenerator.updateSchema();
+    await orm.schema.update();
 
     const projectResult = await createTestProject(app);
     testProjectId = projectResult.projectId;

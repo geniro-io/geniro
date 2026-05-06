@@ -9,7 +9,6 @@
 | **schema**         | [**UpdateGraphDtoSchema**](UpdateGraphDtoSchema.md)             |                                                                            | [optional] [default to undefined] |
 | **metadata**       | [**UpdateGraphDtoMetadata**](UpdateGraphDtoMetadata.md)         |                                                                            | [optional] [default to undefined] |
 | **temporary**      | [**UpdateGraphDtoTemporary**](UpdateGraphDtoTemporary.md)       |                                                                            | [optional] [default to undefined] |
-| **settings**       | **{ [key: string]: any; }**                                     | Arbitrary per-graph settings stored as JSONB                               | [optional] [default to undefined] |
 | **costLimitUsd**   | [**UpdateGraphDtoCostLimitUsd**](UpdateGraphDtoCostLimitUsd.md) |                                                                            | [optional] [default to undefined] |
 | **currentVersion** | **string**                                                      | Current version of the graph (for optimistic locking and 3-way merge base) | [default to undefined]            |
 
@@ -24,7 +23,6 @@ const instance: UpdateGraphDto = {
   schema,
   metadata,
   temporary,
-  settings,
   costLimitUsd,
   currentVersion,
 };

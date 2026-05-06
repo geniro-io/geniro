@@ -1,6 +1,6 @@
 import { INestApplication } from '@nestjs/common';
 import { BaseException } from '@packages/common';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { AppContextStorage } from '../../../auth/app-context-storage';
 import { ReasoningEffort } from '../../../v1/agents/agents.types';
@@ -8,13 +8,20 @@ import { SimpleAgentSchemaType } from '../../../v1/agents/services/agents/simple
 import { CreateGraphDto } from '../../../v1/graphs/dto/graphs.dto';
 import { GraphStatus } from '../../../v1/graphs/graphs.types';
 import { GraphsService } from '../../../v1/graphs/services/graphs.service';
+import { LiteLlmClient } from '../../../v1/litellm/services/litellm.client';
 import { ProjectsDao } from '../../../v1/projects/dao/projects.dao';
 import { ThreadMessageDto } from '../../../v1/threads/dto/threads.dto';
+import { ThreadNameGeneratorService } from '../../../v1/threads/services/thread-name-generator.service';
 import { ThreadsService } from '../../../v1/threads/services/threads.service';
 import { ThreadStatus } from '../../../v1/threads/threads.types';
 import { wait } from '../../test-utils';
 import { waitForCondition } from '../helpers/graph-helpers';
 import { createTestProject } from '../helpers/test-context';
+import {
+  mockLiteLlmClient,
+  mockThreadNameGenerator,
+} from '../helpers/test-stubs';
+import { getMockLlm } from '../mocks/mock-llm';
 import { createTestModule } from '../setup';
 
 type FinishToolMessage = Extract<ThreadMessageDto['message'], { role: 'tool' }>;
@@ -147,7 +154,14 @@ describe('Finish Tool Integration Tests', () => {
   });
 
   beforeAll(async () => {
-    app = await createTestModule();
+    app = await createTestModule(async (m) =>
+      m
+        .overrideProvider(LiteLlmClient)
+        .useValue(mockLiteLlmClient)
+        .overrideProvider(ThreadNameGeneratorService)
+        .useValue(mockThreadNameGenerator)
+        .compile(),
+    );
 
     graphsService = app.get<GraphsService>(GraphsService);
     threadsService = app.get<ThreadsService>(ThreadsService);
@@ -217,6 +231,10 @@ describe('Finish Tool Integration Tests', () => {
     await app.close();
   }, 180_000);
 
+  beforeEach(() => {
+    getMockLlm(app).reset();
+  });
+
   const uniqueThreadSubId = (prefix: string) =>
     `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
@@ -233,6 +251,24 @@ describe('Finish Tool Integration Tests', () => {
     'records finish tool response when agent completes a task',
     { timeout: 120_000 },
     async () => {
+      const mockLlm = getMockLlm(app);
+
+      // The finish-tool graph has no shell or other deferred tools — only finish
+      // and tool_search are available. The agent calls finish directly on the
+      // first turn to complete the task.
+      mockLlm.onChat(
+        { hasTools: ['finish'] },
+        {
+          kind: 'toolCall',
+          toolName: 'finish',
+          args: {
+            purpose: 'done',
+            message: 'I am Test Agent.',
+            needsMoreInfo: false,
+          },
+        },
+      );
+
       await ensureGraphRunning(doneGraphId);
 
       const execution = await graphsService.executeTrigger(
@@ -268,6 +304,22 @@ describe('Finish Tool Integration Tests', () => {
     'sets thread status to need_more_info when finish tool requests clarification',
     { timeout: 120_000 },
     async () => {
+      const mockLlm = getMockLlm(app);
+
+      // Agent calls finish with needsMoreInfo=true to request clarification.
+      mockLlm.onChat(
+        { hasTools: ['finish'] },
+        {
+          kind: 'toolCall',
+          toolName: 'finish',
+          args: {
+            purpose: 'clarification needed',
+            message: 'Could you please clarify what you need help with?',
+            needsMoreInfo: true,
+          },
+        },
+      );
+
       await ensureGraphRunning(needMoreInfoGraphId);
 
       const execution = await graphsService.executeTrigger(
@@ -298,6 +350,22 @@ describe('Finish Tool Integration Tests', () => {
     'does not inject tool guard prompts when agent voluntarily calls finish',
     { timeout: 120_000 },
     async () => {
+      const mockLlm = getMockLlm(app);
+
+      // Agent calls finish voluntarily — no guard prompts should be injected.
+      mockLlm.onChat(
+        { hasTools: ['finish'] },
+        {
+          kind: 'toolCall',
+          toolName: 'finish',
+          args: {
+            purpose: 'answer',
+            message: 'The answer is 4.',
+            needsMoreInfo: false,
+          },
+        },
+      );
+
       await ensureGraphRunning(doneGraphId);
 
       const execution = await graphsService.executeTrigger(

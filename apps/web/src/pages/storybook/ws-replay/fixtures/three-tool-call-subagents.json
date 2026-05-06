@@ -1,0 +1,490 @@
+{
+  "name": "three-tool-call-subagents",
+  "description": "Models the __subagentCommunication: true (tool-call) path: a supervisor invokes 3 parallel subagents via subagents_run_task tool calls. Each subagent emits an initial agent.message (requestTokenUsage), interleaved agent.state.update events carrying inFlightSubagentPrice for live in-flight display, a terminal tool-result agent.message (toolTokenUsage — dropped by the Change 1 reducer to avoid double-count), and a sentinel-0 state update to clear the in-flight suffix. Expected total cost: ~$0.102 ($0.034 per subagent x 3). Playback ~15s at 1x.",
+  "threadId": "storybook-thread-tc-001",
+  "graphId": "storybook-graph-tc-001",
+  "events": [
+    {
+      "delayMs": 0,
+      "event": {
+        "type": "graph.preview",
+        "graphId": "storybook-graph-tc-001",
+        "data": {
+          "status": "running",
+          "agents": [{ "nodeId": "supervisor" }],
+          "triggerNodes": [],
+          "nodeDisplayNames": {
+            "supervisor": "Supervisor"
+          }
+        }
+      }
+    },
+    {
+      "delayMs": 300,
+      "event": {
+        "type": "thread.create",
+        "threadId": "storybook-thread-tc-001",
+        "internalThreadId": "storybook-thread-tc-001",
+        "graphId": "storybook-graph-tc-001",
+        "data": {
+          "id": "storybook-thread-tc-001",
+          "graphId": "storybook-graph-tc-001",
+          "status": "running",
+          "createdAt": "2026-04-24T10:00:00.000Z",
+          "updatedAt": "2026-04-24T10:00:00.000Z"
+        }
+      }
+    },
+    {
+      "delayMs": 150,
+      "event": {
+        "type": "thread.update",
+        "threadId": "storybook-thread-tc-001",
+        "internalThreadId": "storybook-thread-tc-001",
+        "graphId": "storybook-graph-tc-001",
+        "data": {
+          "id": "storybook-thread-tc-001",
+          "graphId": "storybook-graph-tc-001",
+          "status": "running",
+          "createdAt": "2026-04-24T10:00:00.000Z",
+          "updatedAt": "2026-04-24T10:00:00.150Z"
+        }
+      }
+    },
+    {
+      "delayMs": 700,
+      "event": {
+        "type": "agent.message",
+        "internalThreadId": "storybook-thread-tc-001",
+        "threadId": "storybook-thread-tc-001",
+        "nodeId": "supervisor",
+        "graphId": "storybook-graph-tc-001",
+        "data": {
+          "id": "tc-msg-001",
+          "threadId": "storybook-thread-tc-001",
+          "createdAt": "2026-04-24T10:00:01.150Z",
+          "nodeId": "supervisor",
+          "message": {
+            "role": "ai",
+            "content": "Dispatching three research subagents in parallel.",
+            "additionalKwargs": {
+              "__model": "openai/gpt-5.4-mini",
+              "tool_calls": [
+                {
+                  "id": "tc-sa-A",
+                  "function": { "name": "subagents_run_task" }
+                },
+                {
+                  "id": "tc-sa-B",
+                  "function": { "name": "subagents_run_task" }
+                },
+                {
+                  "id": "tc-sa-C",
+                  "function": { "name": "subagents_run_task" }
+                }
+              ]
+            }
+          },
+          "requestTokenUsage": {
+            "inputTokens": 320,
+            "outputTokens": 180,
+            "totalTokens": 500,
+            "totalPrice": 0.0
+          }
+        }
+      }
+    },
+    {
+      "delayMs": 400,
+      "event": {
+        "type": "agent.message",
+        "internalThreadId": "storybook-thread-tc-001",
+        "threadId": "storybook-thread-tc-001",
+        "nodeId": "supervisor",
+        "graphId": "storybook-graph-tc-001",
+        "data": {
+          "id": "tc-msg-002",
+          "threadId": "storybook-thread-tc-001",
+          "createdAt": "2026-04-24T10:00:01.550Z",
+          "nodeId": "supervisor",
+          "message": {
+            "role": "ai",
+            "content": "Subagent A — first internal iteration.",
+            "additionalKwargs": {
+              "__model": "openai/gpt-5.4-mini",
+              "__subagentCommunication": true,
+              "__toolCallId": "tc-sa-A"
+            }
+          },
+          "requestTokenUsage": {
+            "inputTokens": 480,
+            "outputTokens": 220,
+            "totalTokens": 700,
+            "totalPrice": 0.034
+          }
+        }
+      }
+    },
+    {
+      "delayMs": 350,
+      "event": {
+        "type": "agent.state.update",
+        "threadId": "storybook-thread-tc-001",
+        "internalThreadId": "storybook-thread-tc-001",
+        "nodeId": "supervisor",
+        "graphId": "storybook-graph-tc-001",
+        "data": {
+          "currentContext": 9500,
+          "effectiveCostLimitUsd": null,
+          "inFlightSubagentPrice": {
+            "tc-sa-A": 0.012
+          }
+        }
+      }
+    },
+    {
+      "delayMs": 500,
+      "event": {
+        "type": "agent.message",
+        "internalThreadId": "storybook-thread-tc-001",
+        "threadId": "storybook-thread-tc-001",
+        "nodeId": "supervisor",
+        "graphId": "storybook-graph-tc-001",
+        "data": {
+          "id": "tc-msg-003",
+          "threadId": "storybook-thread-tc-001",
+          "createdAt": "2026-04-24T10:00:02.400Z",
+          "nodeId": "supervisor",
+          "message": {
+            "role": "ai",
+            "content": "Subagent B — first internal iteration.",
+            "additionalKwargs": {
+              "__model": "openai/gpt-5.4-mini",
+              "__subagentCommunication": true,
+              "__toolCallId": "tc-sa-B"
+            }
+          },
+          "requestTokenUsage": {
+            "inputTokens": 480,
+            "outputTokens": 220,
+            "totalTokens": 700,
+            "totalPrice": 0.034
+          }
+        }
+      }
+    },
+    {
+      "delayMs": 300,
+      "event": {
+        "type": "agent.state.update",
+        "threadId": "storybook-thread-tc-001",
+        "internalThreadId": "storybook-thread-tc-001",
+        "nodeId": "supervisor",
+        "graphId": "storybook-graph-tc-001",
+        "data": {
+          "currentContext": 12000,
+          "effectiveCostLimitUsd": null,
+          "inFlightSubagentPrice": {
+            "tc-sa-A": 0.022,
+            "tc-sa-B": 0.008
+          }
+        }
+      }
+    },
+    {
+      "delayMs": 450,
+      "event": {
+        "type": "agent.message",
+        "internalThreadId": "storybook-thread-tc-001",
+        "threadId": "storybook-thread-tc-001",
+        "nodeId": "supervisor",
+        "graphId": "storybook-graph-tc-001",
+        "data": {
+          "id": "tc-msg-004",
+          "threadId": "storybook-thread-tc-001",
+          "createdAt": "2026-04-24T10:00:03.150Z",
+          "nodeId": "supervisor",
+          "message": {
+            "role": "ai",
+            "content": "Subagent C — first internal iteration.",
+            "additionalKwargs": {
+              "__model": "openai/gpt-5.4-mini",
+              "__subagentCommunication": true,
+              "__toolCallId": "tc-sa-C"
+            }
+          },
+          "requestTokenUsage": {
+            "inputTokens": 480,
+            "outputTokens": 220,
+            "totalTokens": 700,
+            "totalPrice": 0.034
+          }
+        }
+      }
+    },
+    {
+      "delayMs": 400,
+      "event": {
+        "type": "agent.state.update",
+        "threadId": "storybook-thread-tc-001",
+        "internalThreadId": "storybook-thread-tc-001",
+        "nodeId": "supervisor",
+        "graphId": "storybook-graph-tc-001",
+        "data": {
+          "currentContext": 15500,
+          "effectiveCostLimitUsd": null,
+          "inFlightSubagentPrice": {
+            "tc-sa-A": 0.034,
+            "tc-sa-B": 0.018,
+            "tc-sa-C": 0.007
+          }
+        }
+      }
+    },
+    {
+      "delayMs": 350,
+      "event": {
+        "type": "agent.state.update",
+        "threadId": "storybook-thread-tc-001",
+        "internalThreadId": "storybook-thread-tc-001",
+        "nodeId": "supervisor",
+        "graphId": "storybook-graph-tc-001",
+        "data": {
+          "currentContext": 16000,
+          "effectiveCostLimitUsd": null,
+          "inFlightSubagentPrice": {
+            "tc-sa-A": 0
+          }
+        }
+      }
+    },
+    {
+      "delayMs": 400,
+      "event": {
+        "type": "agent.message",
+        "internalThreadId": "storybook-thread-tc-001",
+        "threadId": "storybook-thread-tc-001",
+        "nodeId": "supervisor",
+        "graphId": "storybook-graph-tc-001",
+        "data": {
+          "id": "tc-msg-005",
+          "threadId": "storybook-thread-tc-001",
+          "createdAt": "2026-04-24T10:00:04.850Z",
+          "nodeId": "supervisor",
+          "message": {
+            "role": "tool",
+            "content": "Subagent A completed — research results delivered.",
+            "name": "subagents_run_task",
+            "tool_call_id": "tc-sa-A",
+            "additionalKwargs": {
+              "__subagentCommunication": true,
+              "__toolCallId": "tc-sa-A"
+            }
+          },
+          "toolTokenUsage": {
+            "inputTokens": 1440,
+            "outputTokens": 660,
+            "totalTokens": 2100,
+            "totalPrice": 0.034
+          }
+        }
+      }
+    },
+    {
+      "delayMs": 500,
+      "event": {
+        "type": "agent.state.update",
+        "threadId": "storybook-thread-tc-001",
+        "internalThreadId": "storybook-thread-tc-001",
+        "nodeId": "supervisor",
+        "graphId": "storybook-graph-tc-001",
+        "data": {
+          "currentContext": 17000,
+          "effectiveCostLimitUsd": null,
+          "inFlightSubagentPrice": {
+            "tc-sa-B": 0.028,
+            "tc-sa-C": 0.016
+          }
+        }
+      }
+    },
+    {
+      "delayMs": 450,
+      "event": {
+        "type": "agent.state.update",
+        "threadId": "storybook-thread-tc-001",
+        "internalThreadId": "storybook-thread-tc-001",
+        "nodeId": "supervisor",
+        "graphId": "storybook-graph-tc-001",
+        "data": {
+          "currentContext": 17500,
+          "effectiveCostLimitUsd": null,
+          "inFlightSubagentPrice": {
+            "tc-sa-B": 0.034,
+            "tc-sa-C": 0.024
+          }
+        }
+      }
+    },
+    {
+      "delayMs": 350,
+      "event": {
+        "type": "agent.state.update",
+        "threadId": "storybook-thread-tc-001",
+        "internalThreadId": "storybook-thread-tc-001",
+        "nodeId": "supervisor",
+        "graphId": "storybook-graph-tc-001",
+        "data": {
+          "currentContext": 17800,
+          "effectiveCostLimitUsd": null,
+          "inFlightSubagentPrice": {
+            "tc-sa-B": 0
+          }
+        }
+      }
+    },
+    {
+      "delayMs": 400,
+      "event": {
+        "type": "agent.message",
+        "internalThreadId": "storybook-thread-tc-001",
+        "threadId": "storybook-thread-tc-001",
+        "nodeId": "supervisor",
+        "graphId": "storybook-graph-tc-001",
+        "data": {
+          "id": "tc-msg-006",
+          "threadId": "storybook-thread-tc-001",
+          "createdAt": "2026-04-24T10:00:07.500Z",
+          "nodeId": "supervisor",
+          "message": {
+            "role": "tool",
+            "content": "Subagent B completed — analysis results delivered.",
+            "name": "subagents_run_task",
+            "tool_call_id": "tc-sa-B",
+            "additionalKwargs": {
+              "__subagentCommunication": true,
+              "__toolCallId": "tc-sa-B"
+            }
+          },
+          "toolTokenUsage": {
+            "inputTokens": 1440,
+            "outputTokens": 660,
+            "totalTokens": 2100,
+            "totalPrice": 0.034
+          }
+        }
+      }
+    },
+    {
+      "delayMs": 500,
+      "event": {
+        "type": "agent.state.update",
+        "threadId": "storybook-thread-tc-001",
+        "internalThreadId": "storybook-thread-tc-001",
+        "nodeId": "supervisor",
+        "graphId": "storybook-graph-tc-001",
+        "data": {
+          "currentContext": 18500,
+          "effectiveCostLimitUsd": null,
+          "inFlightSubagentPrice": {
+            "tc-sa-C": 0.034
+          }
+        }
+      }
+    },
+    {
+      "delayMs": 400,
+      "event": {
+        "type": "agent.state.update",
+        "threadId": "storybook-thread-tc-001",
+        "internalThreadId": "storybook-thread-tc-001",
+        "nodeId": "supervisor",
+        "graphId": "storybook-graph-tc-001",
+        "data": {
+          "currentContext": 18900,
+          "effectiveCostLimitUsd": null,
+          "inFlightSubagentPrice": {
+            "tc-sa-C": 0
+          }
+        }
+      }
+    },
+    {
+      "delayMs": 400,
+      "event": {
+        "type": "agent.message",
+        "internalThreadId": "storybook-thread-tc-001",
+        "threadId": "storybook-thread-tc-001",
+        "nodeId": "supervisor",
+        "graphId": "storybook-graph-tc-001",
+        "data": {
+          "id": "tc-msg-007",
+          "threadId": "storybook-thread-tc-001",
+          "createdAt": "2026-04-24T10:00:10.500Z",
+          "nodeId": "supervisor",
+          "message": {
+            "role": "tool",
+            "content": "Subagent C completed — synthesis results delivered.",
+            "name": "subagents_run_task",
+            "tool_call_id": "tc-sa-C",
+            "additionalKwargs": {
+              "__subagentCommunication": true,
+              "__toolCallId": "tc-sa-C"
+            }
+          },
+          "toolTokenUsage": {
+            "inputTokens": 1440,
+            "outputTokens": 660,
+            "totalTokens": 2100,
+            "totalPrice": 0.034
+          }
+        }
+      }
+    },
+    {
+      "delayMs": 600,
+      "event": {
+        "type": "agent.message",
+        "internalThreadId": "storybook-thread-tc-001",
+        "threadId": "storybook-thread-tc-001",
+        "nodeId": "supervisor",
+        "graphId": "storybook-graph-tc-001",
+        "data": {
+          "id": "tc-msg-008",
+          "threadId": "storybook-thread-tc-001",
+          "createdAt": "2026-04-24T10:00:11.500Z",
+          "nodeId": "supervisor",
+          "message": {
+            "role": "ai",
+            "content": "All three subagents completed. Synthesizing final report.",
+            "additionalKwargs": {
+              "__model": "openai/gpt-5.4-mini"
+            }
+          },
+          "requestTokenUsage": {
+            "inputTokens": 0,
+            "outputTokens": 0,
+            "totalTokens": 0,
+            "totalPrice": 0.0
+          }
+        }
+      }
+    },
+    {
+      "delayMs": 700,
+      "event": {
+        "type": "thread.update",
+        "threadId": "storybook-thread-tc-001",
+        "internalThreadId": "storybook-thread-tc-001",
+        "graphId": "storybook-graph-tc-001",
+        "data": {
+          "id": "storybook-thread-tc-001",
+          "graphId": "storybook-graph-tc-001",
+          "status": "done",
+          "createdAt": "2026-04-24T10:00:00.000Z",
+          "updatedAt": "2026-04-24T10:00:15.000Z"
+        }
+      }
+    }
+  ]
+}

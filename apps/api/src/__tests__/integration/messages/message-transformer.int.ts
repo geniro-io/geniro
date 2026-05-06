@@ -1,9 +1,11 @@
 import { ToolMessage } from '@langchain/core/messages';
+import { INestApplication } from '@nestjs/common';
 import type { FastifyRequest } from 'fastify';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { AppContextStorage } from '../../../auth/app-context-storage';
 import { GraphDao } from '../../../v1/graphs/dao/graph.dao';
+import { ToolMessageDto } from '../../../v1/graphs/dto/graphs.dto';
 import { GraphStatus } from '../../../v1/graphs/graphs.types';
 import { MessageTransformerService } from '../../../v1/graphs/services/message-transformer.service';
 import { ProjectsDao } from '../../../v1/projects/dao/projects.dao';
@@ -12,6 +14,7 @@ import { ThreadsDao } from '../../../v1/threads/dao/threads.dao';
 import { ThreadMessageDto } from '../../../v1/threads/dto/threads.dto';
 import { ThreadsService } from '../../../v1/threads/services/threads.service';
 import { ThreadStatus } from '../../../v1/threads/threads.types';
+import { getMockLlm } from '../mocks/mock-llm';
 import { createTestModule, TEST_USER_ID } from '../setup';
 
 const EMPTY_REQUEST = { headers: {} } as FastifyRequest;
@@ -21,7 +24,8 @@ const contextDataStorage = new AppContextStorage(
   EMPTY_REQUEST,
 );
 
-describe('Web search tool integration', () => {
+describe('Message transformer integration', () => {
+  let app: INestApplication;
   let messageTransformer: MessageTransformerService;
   let threadsDao: ThreadsDao;
   let messagesDao: MessagesDao;
@@ -33,7 +37,7 @@ describe('Web search tool integration', () => {
   let testProjectId: string;
 
   beforeAll(async () => {
-    const app = await createTestModule();
+    app = await createTestModule();
     messageTransformer = app.get<MessageTransformerService>(
       MessageTransformerService,
     );
@@ -89,6 +93,12 @@ describe('Web search tool integration', () => {
     if (testProjectId) {
       await projectsDao.deleteById(testProjectId);
     }
+
+    await app.close();
+  });
+
+  beforeEach(() => {
+    getMockLlm(app).reset();
   });
 
   it('stores tool call title from metadata in message DTO and DB', async () => {
@@ -102,11 +112,9 @@ describe('Web search tool integration', () => {
 
     const dto = messageTransformer.transformMessageToDto(toolMsg);
     expect(dto.role).toBe('tool');
-    if (dto.role !== 'tool') {
-      return;
-    }
-    expect(dto.title).toBe(title);
-    expect(dto.additionalKwargs?.__title).toBe(title);
+    const toolDto = dto as ToolMessageDto;
+    expect(toolDto.title).toBe(title);
+    expect(toolDto.additionalKwargs?.__title).toBe(title);
 
     await messagesDao.create({
       threadId: createdThreadId,
@@ -125,10 +133,12 @@ describe('Web search tool integration', () => {
     );
 
     expect(storedTool).toBeDefined();
-    if (!storedTool || storedTool.message.role !== 'tool') {
-      return;
+    if (!storedTool) {
+      throw new Error('Expected storedTool to be defined');
     }
-    expect(storedTool.message.title).toBe(title);
-    expect(storedTool.message.additionalKwargs?.__title).toBe(title);
+    expect(storedTool.message.role).toBe('tool');
+    const storedToolMessage = storedTool.message as ToolMessageDto;
+    expect(storedToolMessage.title).toBe(title);
+    expect(storedToolMessage.additionalKwargs?.__title).toBe(title);
   });
 });

@@ -9,6 +9,7 @@ import { Button } from '../../../components/ui/button';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -51,6 +52,9 @@ export const UsageStatsModal: FC<UsageStatsModalProps> = ({
             <BarChart3 className="size-4" />
             Thread Usage Statistics
           </DialogTitle>
+          <DialogDescription className="sr-only">
+            Token usage and cost breakdown for the selected thread.
+          </DialogDescription>
         </DialogHeader>
         {threadId &&
           (() => {

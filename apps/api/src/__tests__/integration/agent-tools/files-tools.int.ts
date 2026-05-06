@@ -2,7 +2,15 @@ import { ToolRunnableConfig } from '@langchain/core/tools';
 import { INestApplication } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { BaseException } from '@packages/common';
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+} from 'vitest';
 
 import { AppContextStorage } from '../../../auth/app-context-storage';
 import { environment } from '../../../environments';
@@ -21,6 +29,7 @@ import { SimpleAgentSchemaType } from '../../../v1/agents/services/agents/simple
 import { CreateGraphDto } from '../../../v1/graphs/dto/graphs.dto';
 import { GraphStatus } from '../../../v1/graphs/graphs.types';
 import { GraphsService } from '../../../v1/graphs/services/graphs.service';
+import { LiteLlmClient } from '../../../v1/litellm/services/litellm.client';
 import { LitellmService } from '../../../v1/litellm/services/litellm.service';
 import { LlmModelsService } from '../../../v1/litellm/services/llm-models.service';
 import { OpenaiService } from '../../../v1/openai/openai.service';
@@ -31,10 +40,17 @@ import { DockerRuntime } from '../../../v1/runtime/services/docker-runtime';
 import { RuntimeProvider } from '../../../v1/runtime/services/runtime-provider';
 import { RuntimeThreadProvider } from '../../../v1/runtime/services/runtime-thread-provider';
 import { ThreadMessageDto } from '../../../v1/threads/dto/threads.dto';
+import { ThreadNameGeneratorService } from '../../../v1/threads/services/thread-name-generator.service';
 import { ThreadsService } from '../../../v1/threads/services/threads.service';
 import { ThreadStatus } from '../../../v1/threads/threads.types';
 import { waitForCondition } from '../helpers/graph-helpers';
 import { createTestProject } from '../helpers/test-context';
+import {
+  mockLiteLlmClient,
+  mockThreadNameGenerator,
+} from '../helpers/test-stubs';
+import { getMockLlm } from '../mocks/mock-llm';
+import { getMockRuntime } from '../mocks/mock-runtime';
 import { createTestModule } from '../setup';
 
 const THREAD_ID = `files-tools-int-${Date.now()}`;
@@ -1667,13 +1683,24 @@ When the user message contains 'SEARCH_WITH_FILES_TOOL' followed by JSON, parse 
   };
 
   beforeAll(async () => {
-    app = await createTestModule();
+    app = await createTestModule(async (m) =>
+      m
+        .overrideProvider(LiteLlmClient)
+        .useValue(mockLiteLlmClient)
+        .overrideProvider(ThreadNameGeneratorService)
+        .useValue(mockThreadNameGenerator)
+        .compile(),
+    );
     graphsService = app.get<GraphsService>(GraphsService);
     threadsService = app.get<ThreadsService>(ThreadsService);
 
     const projectResult = await createTestProject(app);
     testProjectId = projectResult.projectId;
     contextDataStorage = projectResult.ctx;
+  });
+
+  beforeEach(() => {
+    getMockLlm(app).reset();
   });
 
   afterEach(async () => {
@@ -1701,6 +1728,81 @@ When the user message contains 'SEARCH_WITH_FILES_TOOL' followed by JSON, parse 
     'runs files_search_text via graph trigger and returns matches',
     { timeout: 45000 },
     async () => {
+      const mockLlm = getMockLlm(app);
+
+      // MockRuntime doesn't run a real `rg` against the simulated workdir;
+      // register a fixture that returns the canonical `rg --json` line for the
+      // sample file the production initScript would have created.
+      const samplePath = `${SEARCH_DIR}/src/sample.ts`;
+      const sampleLine = `This line has ${SEARCH_QUERY} content.`;
+      const matchOffset = sampleLine.indexOf(SEARCH_QUERY);
+      const ripgrepJsonOutput = [
+        JSON.stringify({
+          type: 'match',
+          data: {
+            path: { text: samplePath },
+            lines: { text: `${sampleLine}\n` },
+            line_number: 1,
+            absolute_offset: 0,
+            submatches: [
+              {
+                match: { text: SEARCH_QUERY },
+                start: matchOffset,
+                end: matchOffset + SEARCH_QUERY.length,
+              },
+            ],
+          },
+        }),
+        '',
+      ].join('\n');
+      getMockRuntime(app).onExec(
+        { cmd: 'rg --json' },
+        { exitCode: 0, stdout: ripgrepJsonOutput, stderr: '' },
+      );
+
+      // Turn 1 (callIndex 0): files_search_text is not yet loaded — agent uses
+      // tool_search to discover it.
+      mockLlm.onChat(
+        { callIndex: 0 },
+        {
+          kind: 'toolCall',
+          toolName: 'tool_search',
+          args: { query: 'search files text' },
+        },
+      );
+
+      // Turn 2: files_search_text is now loaded — agent calls it with the params
+      // extracted from the user message.
+      mockLlm.onChat(
+        { hasTools: ['files_search_text'] },
+        {
+          kind: 'toolCall',
+          toolName: 'files_search_text',
+          args: {
+            searchInDirectory: SEARCH_DIR,
+            textPattern: SEARCH_QUERY,
+            onlyInFilesMatching: INCLUDE_GLOBS,
+          },
+        },
+      );
+
+      // Turn 3: after the files_search_text result arrives, the agent calls finish.
+      // Using both hasToolResult + hasTools for specificity 2 so this fixture beats
+      // the hasTools-only files_search_text fixture (specificity 1) when the tool
+      // result is in context.
+      mockLlm.onChat(
+        { hasToolResult: 'files_search_text', hasTools: ['finish'] },
+        {
+          kind: 'toolCall',
+          toolName: 'finish',
+          args: {
+            purpose: 'done',
+            message: 'Search completed.',
+            needsMoreInfo: false,
+          },
+        },
+      );
+
       const graph = await graphsService.create(
         contextDataStorage,
         createFilesSearchGraphData(),

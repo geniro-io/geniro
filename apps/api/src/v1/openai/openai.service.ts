@@ -107,11 +107,13 @@ export class OpenaiService {
 
     const content = response.choices?.[0]?.message?.content ?? undefined;
 
+    const providerCost = this.extractProviderCost(response.usage);
     const usage = response.usage
       ? (await this.litellmService.extractTokenUsageFromResponse(data.model, {
           input_tokens: response.usage.prompt_tokens ?? 0,
           output_tokens: response.usage.completion_tokens ?? 0,
           total_tokens: response.usage.total_tokens ?? 0,
+          ...(providerCost !== undefined ? { cost: providerCost } : {}),
         })) || undefined
       : undefined;
 
@@ -171,10 +173,17 @@ export class OpenaiService {
 
     const extractedContent = outputText ?? this.extractFromOutput(response);
 
+    const providerResponseCost = this.extractProviderCost(response.usage);
+    const responseUsagePayload = {
+      ...(response.usage as unknown as Record<string, unknown>),
+      cost: providerResponseCost,
+    };
     const usage =
       (await this.litellmService.extractTokenUsageFromResponse(
         data.model,
-        response.usage,
+        responseUsagePayload as Parameters<
+          typeof this.litellmService.extractTokenUsageFromResponse
+        >[1],
       )) || undefined;
 
     if ('jsonSchema' in data) {
@@ -234,11 +243,15 @@ export class OpenaiService {
       input: wellFormedInput,
       ...(args.dimensions !== undefined ? { dimensions: args.dimensions } : {}),
     });
+    const providerEmbedCost = this.extractProviderCost(response.usage);
     const usage = response.usage
       ? (await this.litellmService.extractTokenUsageFromResponse(args.model, {
           input_tokens: response.usage.prompt_tokens ?? 0,
           output_tokens: 0,
           total_tokens: response.usage.total_tokens ?? 0,
+          ...(providerEmbedCost !== undefined
+            ? { cost: providerEmbedCost }
+            : {}),
         })) || undefined
       : undefined;
 
@@ -246,6 +259,16 @@ export class OpenaiService {
       embeddings: response.data.map((item) => item.embedding),
       usage,
     };
+  }
+
+  // Defensive hedge: OpenAI/Responses/Embeddings SDK `Usage` has no `cost` field today;
+  // the cast lets us read it when LiteLLM eventually emits body-level cost for non-streaming
+  // calls. Currently a no-op — returns undefined for all real OpenAI responses.
+  private extractProviderCost(usage: unknown): number | undefined {
+    const raw = usage as Record<string, unknown> | undefined;
+    return typeof raw?.cost === 'number' && Number.isFinite(raw.cost)
+      ? raw.cost
+      : undefined;
   }
 
   private extractFromOutput(response: unknown): string | undefined {

@@ -1,3 +1,4 @@
+import { MikroORM } from '@mikro-orm/postgresql';
 import { DefaultLogger } from '@packages/common';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -6,6 +7,18 @@ import {
   RepoIndexQueueCallbacks,
   RepoIndexQueueService,
 } from './repo-index-queue.service';
+
+vi.mock('@mikro-orm/postgresql', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@mikro-orm/postgresql')>();
+  return {
+    ...actual,
+    RequestContext: {
+      create: (_em: unknown, cb: () => Promise<void>) => cb(),
+    },
+  };
+});
+
+const mockOrm = { em: {} } as unknown as MikroORM;
 
 const mockRedisClient = {
   publish: vi.fn().mockResolvedValue(1),
@@ -59,7 +72,10 @@ describe('RepoIndexQueueService', () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
-    service = new RepoIndexQueueService(mockLogger as unknown as DefaultLogger);
+    service = new RepoIndexQueueService(
+      mockLogger as unknown as DefaultLogger,
+      mockOrm,
+    );
     await service.onModuleInit();
   });
 

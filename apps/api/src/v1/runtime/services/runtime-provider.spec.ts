@@ -190,6 +190,43 @@ describe('RuntimeProvider', () => {
     });
   });
 
+  describe('cleanupRuntimesByNodeId', () => {
+    it('filters by graphId when provided so sibling graphs are not collateral', async () => {
+      const provider = buildProvider(null);
+      runtimeInstanceDao.getAll.mockResolvedValue([]);
+
+      await provider.cleanupRuntimesByNodeId('runtime-1', 'graph-A');
+
+      expect(runtimeInstanceDao.getAll).toHaveBeenCalledWith({
+        nodeId: 'runtime-1',
+        graphId: 'graph-A',
+      });
+    });
+
+    it('filters by null graphId for system runtimes (no parent graph)', async () => {
+      const provider = buildProvider(null);
+      runtimeInstanceDao.getAll.mockResolvedValue([]);
+
+      await provider.cleanupRuntimesByNodeId('runtime-1', null);
+
+      expect(runtimeInstanceDao.getAll).toHaveBeenCalledWith({
+        nodeId: 'runtime-1',
+        graphId: null,
+      });
+    });
+
+    it('omits the graphId filter when graphId arg is undefined (legacy callers)', async () => {
+      const provider = buildProvider(null);
+      runtimeInstanceDao.getAll.mockResolvedValue([]);
+
+      await provider.cleanupRuntimesByNodeId('runtime-1');
+
+      expect(runtimeInstanceDao.getAll).toHaveBeenCalledWith({
+        nodeId: 'runtime-1',
+      });
+    });
+  });
+
   describe('stopRuntime (K8s branch)', () => {
     it('calls K8sRuntime.stopByName when no cached runtime is present', async () => {
       const provider = buildProvider(null);

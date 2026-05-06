@@ -69,6 +69,7 @@ export const ModelsPage = () => {
   }, []);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot model-slot fetch on mount
     loadData();
   }, [loadData]);
 

@@ -33,6 +33,8 @@ model_list:
       api_key: os.environ/OPENROUTER_API_KEY
       drop_params: true
       additional_drop_params: [ "stop" ]
+    model_info:
+      base_model: gpt-5-mini              # map pricing from LiteLLM DB
 
   - model_name: gpt-5.2-codex
     litellm_params:
@@ -40,6 +42,8 @@ model_list:
       api_key: os.environ/OPENROUTER_API_KEY
       drop_params: true
       additional_drop_params: [ "stop" ]
+    model_info:
+      base_model: gpt-5.2-codex           # map pricing from LiteLLM DB
 
   - model_name: gpt-5.4
     litellm_params:
@@ -47,6 +51,8 @@ model_list:
       api_key: os.environ/OPENROUTER_API_KEY
       drop_params: true
       additional_drop_params: [ "stop" ]
+    model_info:
+      base_model: gpt-5.4                 # map pricing from LiteLLM DB
 
   # OpenRouter provider — MiniMax
   - model_name: openrouter/minimax-m2.5

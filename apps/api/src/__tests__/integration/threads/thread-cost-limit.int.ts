@@ -8,7 +8,6 @@ import {
   describe,
   expect,
   it,
-  vi,
 } from 'vitest';
 
 import { AppContextStorage } from '../../../auth/app-context-storage';
@@ -17,17 +16,24 @@ import { SimpleAgentSchemaType } from '../../../v1/agents/services/agents/simple
 import { GraphDao } from '../../../v1/graphs/dao/graph.dao';
 import { CreateGraphDto } from '../../../v1/graphs/dto/graphs.dto';
 import { GraphStatus } from '../../../v1/graphs/graphs.types';
+import { CostLimitResolverService } from '../../../v1/graphs/services/cost-limit-resolver.service';
 import { GraphsService } from '../../../v1/graphs/services/graphs.service';
-import { LitellmService } from '../../../v1/litellm/services/litellm.service';
+import { LiteLlmClient } from '../../../v1/litellm/services/litellm.client';
 import { ProjectsDao } from '../../../v1/projects/dao/projects.dao';
 import { ThreadsDao } from '../../../v1/threads/dao/threads.dao';
 import { ThreadDto } from '../../../v1/threads/dto/threads.dto';
+import { ThreadNameGeneratorService } from '../../../v1/threads/services/thread-name-generator.service';
 import { ThreadsService } from '../../../v1/threads/services/threads.service';
 import { ThreadStatus } from '../../../v1/threads/threads.types';
 import { UserPreferencesDao } from '../../../v1/user-preferences/dao/user-preferences.dao';
 import { UserPreferencesService } from '../../../v1/user-preferences/services/user-preferences.service';
 import { waitForCondition } from '../helpers/graph-helpers';
 import { createTestProject } from '../helpers/test-context';
+import {
+  mockLiteLlmClient,
+  mockThreadNameGenerator,
+} from '../helpers/test-stubs';
+import { applyDefaults, getMockLlm } from '../mocks/mock-llm';
 import { createTestModule, TEST_USER_ID } from '../setup';
 
 const TRIGGER_NODE_ID = 'trigger-1';
@@ -35,44 +41,6 @@ const AGENT_NODE_ID = 'agent-1';
 
 const SHORT_ANSWER_INSTRUCTIONS =
   'You are a test agent. Answer the user in one short sentence, then call the finish tool with needsMoreInfo=false.';
-
-/**
- * Each per-LLM-call cost (USD) returned by the mocked
- * `litellmService.extractTokenUsageFromResponse`. We pop from this queue on
- * every call. When empty, the mock falls back to returning a tiny default
- * (to keep the agent's state transitions happy after a limit has fired).
- *
- * This is the core of the test's determinism: by controlling how much each
- * LLM "call" reports as cost, we can trigger cost-limit enforcement on
- * predictable iterations without depending on real model pricing.
- */
-let mockedCostQueue: number[] = [];
-const DEFAULT_TAIL_COST_USD = 0.0001;
-
-type MockUsage = {
-  inputTokens: number;
-  outputTokens: number;
-  totalTokens: number;
-  currentContext: number;
-  cachedInputTokens: number;
-  reasoningTokens: number;
-  totalPrice: number;
-  durationMs?: number;
-};
-
-const buildMockUsage = (totalPrice: number): MockUsage => ({
-  inputTokens: 100,
-  outputTokens: 50,
-  totalTokens: 150,
-  currentContext: 100,
-  cachedInputTokens: 0,
-  reasoningTokens: 0,
-  totalPrice,
-});
-
-const resetMockedCostQueue = (costs: number[]) => {
-  mockedCostQueue = [...costs];
-};
 
 /**
  * Assigned once in `beforeAll` from `createTestProject`.
@@ -87,22 +55,29 @@ describe('Thread Cost Limits Integration Tests', () => {
   let userPreferencesDao: UserPreferencesDao;
   let graphDao: GraphDao;
   let projectsDao: ProjectsDao;
-  let litellmService: LitellmService;
   let threadsDao: ThreadsDao;
+  let costLimitResolver: CostLimitResolverService;
   let testProjectId: string;
 
   const createdGraphIds: string[] = [];
 
   beforeAll(async () => {
-    app = await createTestModule();
+    app = await createTestModule(async (m) =>
+      m
+        .overrideProvider(LiteLlmClient)
+        .useValue(mockLiteLlmClient)
+        .overrideProvider(ThreadNameGeneratorService)
+        .useValue(mockThreadNameGenerator)
+        .compile(),
+    );
     graphsService = app.get(GraphsService);
     threadsService = app.get(ThreadsService);
     userPreferencesService = app.get(UserPreferencesService);
     userPreferencesDao = app.get(UserPreferencesDao);
     graphDao = app.get(GraphDao);
     projectsDao = app.get(ProjectsDao);
-    litellmService = app.get(LitellmService);
     threadsDao = app.get(ThreadsDao);
+    costLimitResolver = app.get(CostLimitResolverService);
 
     const projectResult = await createTestProject(app);
     testProjectId = projectResult.projectId;
@@ -141,23 +116,19 @@ describe('Thread Cost Limits Integration Tests', () => {
   }, 180_000);
 
   beforeEach(() => {
-    // Install the LLM cost mock. The real `extractTokenUsageFromResponse`
-    // would call LiteLLM to compute a price; here we return a deterministic
-    // cost from the pre-seeded queue so the integration test can drive cost
-    // accumulation exactly.
-    vi.spyOn(
-      litellmService,
-      'extractTokenUsageFromResponse',
-    ).mockImplementation(async () => {
-      const next = mockedCostQueue.shift() ?? DEFAULT_TAIL_COST_USD;
-      return buildMockUsage(next);
-    });
+    // Reset the mock LLM state before each test so queued costs from a
+    // previous scenario do not bleed over. Then register tail defaults: the
+    // queue (populated by the per-scenario `queueCost` calls) is FIFO and is
+    // consulted before any fixture, so the cost-limit-triggering call still
+    // wins. Once the queue drains, the `finish`-tool default fires so the
+    // agent terminates cleanly instead of throwing `MockLlmNoMatchError` and
+    // pushing the thread into Stopped for the wrong reason.
+    const mockLlm = getMockLlm(app);
+    mockLlm.reset();
+    applyDefaults(mockLlm);
   });
 
   afterEach(async () => {
-    vi.restoreAllMocks();
-    mockedCostQueue = [];
-
     // Reset user cost-limit preference between scenarios.
     try {
       const pref = await userPreferencesDao.getOne({ userId: TEST_USER_ID });
@@ -259,6 +230,15 @@ describe('Thread Cost Limits Integration Tests', () => {
 
     const graph = await graphsService.create(contextDataStorage, schema);
     createdGraphIds.push(graph.id);
+
+    // `graphsService.create()` does not project `costLimitUsd` from the DTO into
+    // the entity's `settings.costLimitUsd` JSONB column — only `update()` does.
+    // Persist the limit directly so `CostLimitResolverService.resolveForThread`
+    // returns the configured value when the trigger fires.
+    if (options.costLimitUsd !== undefined) {
+      await setGraphCostLimitDirect(graph.id, options.costLimitUsd);
+    }
+
     await graphsService.run(contextDataStorage, graph.id);
     await waitForGraphRunning(graph.id);
     return graph.id;
@@ -302,6 +282,23 @@ describe('Thread Cost Limits Integration Tests', () => {
   };
 
   const runTrigger = async (graphId: string, threadSubId: string) => {
+    // Resolve the effective cost limit the same way `GraphsService.executeTrigger`
+    // does and forward it via `dto.metadata.effectiveCostLimitUsd`. Both the
+    // (eager) thread create in `executeTrigger` and the upsert in
+    // `AgentInvokeNotificationHandler` race to INSERT the thread row, but only
+    // the path that wins persists `metadata` — `upsertByExternalThreadId`'s
+    // ON CONFLICT clause does not touch `metadata`. The eager-create path
+    // already injects the resolved limit, but the upsert path receives only
+    // `cfg.thread_metadata = dto.metadata` from the trigger config. Forwarding
+    // the resolved value here ensures both racers write the SAME
+    // `effectiveCostLimitUsd` regardless of who wins, which is what the
+    // assertions on `ThreadDto.effectiveCostLimitUsd` (sourced from
+    // `metadata.effectiveCostLimitUsd`) require.
+    const userId = contextDataStorage.checkSub();
+    const effectiveCostLimitUsd = await costLimitResolver.resolveForThread(
+      userId,
+      graphId,
+    );
     return await graphsService.executeTrigger(
       contextDataStorage,
       graphId,
@@ -310,6 +307,7 @@ describe('Thread Cost Limits Integration Tests', () => {
         messages: ['Please say hello.'],
         async: true,
         threadSubId,
+        metadata: { effectiveCostLimitUsd },
       },
     );
   };
@@ -350,7 +348,7 @@ describe('Thread Cost Limits Integration Tests', () => {
       });
 
       // Make the first call overshoot the $0.50 limit outright.
-      resetMockedCostQueue([0.6]);
+      getMockLlm(app).queueCost(0.6);
 
       const execution = await runTrigger(
         graphId,
@@ -392,7 +390,7 @@ describe('Thread Cost Limits Integration Tests', () => {
       });
 
       // Make the first call overshoot $5.00 so enforcement fires deterministically.
-      resetMockedCostQueue([5.5]);
+      getMockLlm(app).queueCost(5.5);
 
       const execution = await runTrigger(
         graphId,
@@ -420,7 +418,7 @@ describe('Thread Cost Limits Integration Tests', () => {
         costLimitUsd: 0.5,
       });
 
-      resetMockedCostQueue([0.6]);
+      getMockLlm(app).queueCost(0.6);
 
       const execution = await runTrigger(
         graphId,
@@ -451,7 +449,7 @@ describe('Thread Cost Limits Integration Tests', () => {
         costLimitUsd: null,
       });
 
-      resetMockedCostQueue([2.5]);
+      getMockLlm(app).queueCost(2.5);
 
       const execution = await runTrigger(
         graphId,
@@ -478,7 +476,7 @@ describe('Thread Cost Limits Integration Tests', () => {
       });
 
       // Even a "huge" cost must not stop the run when no limit is configured.
-      resetMockedCostQueue([10.0]);
+      getMockLlm(app).queueCost(10.0);
 
       const execution = await runTrigger(
         graphId,
@@ -504,7 +502,7 @@ describe('Thread Cost Limits Integration Tests', () => {
       const threadSubId = `cost-limit-s6-${Date.now()}`;
 
       // First run: trigger cost_limit stop.
-      resetMockedCostQueue([0.6]);
+      getMockLlm(app).queueCost(0.6);
       const firstExecution = await runTrigger(graphId, threadSubId);
       const firstStopped = await waitForThread(
         firstExecution.externalThreadId,
@@ -516,7 +514,7 @@ describe('Thread Cost Limits Integration Tests', () => {
       await setGraphCostLimitDirect(graphId, 10.0);
 
       // Cheap second run so enforcement no longer fires.
-      resetMockedCostQueue([0.01]);
+      getMockLlm(app).queueCost(0.01);
       const secondExecution = await runTrigger(graphId, threadSubId);
       expect(secondExecution.externalThreadId).toBe(
         firstExecution.externalThreadId,
@@ -554,7 +552,7 @@ describe('Thread Cost Limits Integration Tests', () => {
 
       const threadSubId = `cost-limit-s7-${Date.now()}`;
 
-      resetMockedCostQueue([0.6]);
+      getMockLlm(app).queueCost(0.6);
       const firstExecution = await runTrigger(graphId, threadSubId);
       const firstStopped = await waitForThread(
         firstExecution.externalThreadId,
@@ -580,7 +578,7 @@ describe('Thread Cost Limits Integration Tests', () => {
         costLimitUsd: 0.5,
       });
 
-      resetMockedCostQueue([0.6]);
+      getMockLlm(app).queueCost(0.6);
       const execution = await runTrigger(
         graphId,
         `cost-limit-s8-${Date.now()}`,
@@ -647,7 +645,8 @@ describe('Thread Cost Limits Integration Tests', () => {
       // Call 2 reports $0.40 — projected total = $0.30 + $0.40 = $0.70 > $0.50,
       // so enforcement fires on this later call with accumulated total.
       // Any further calls after the stop are padded with the tail default.
-      resetMockedCostQueue([0.3, 0.4]);
+      getMockLlm(app).queueCost(0.3);
+      getMockLlm(app).queueCost(0.4);
 
       const execution = await runTrigger(
         graphId,

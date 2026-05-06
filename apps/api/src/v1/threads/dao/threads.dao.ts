@@ -65,11 +65,11 @@ export class ThreadsDao extends BaseDao<ThreadEntity> {
   }
 
   async touchById(id: string): Promise<void> {
-    await this.getRepo().nativeUpdate(
-      { id },
-      {
-        updatedAt: new Date(),
-      },
-    );
+    const entity = await this.getRepo().findOne({ id });
+    if (!entity) {
+      return;
+    }
+    entity.updatedAt = new Date();
+    await this.em.flush();
   }
 }

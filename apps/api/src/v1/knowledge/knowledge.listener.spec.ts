@@ -13,7 +13,7 @@ describe('KnowledgeListener', () => {
     const module = await Test.createTestingModule({
       providers: [
         KnowledgeListener,
-        { provide: KnowledgeDocDao, useValue: { hardDelete: vi.fn() } },
+        { provide: KnowledgeDocDao, useValue: { delete: vi.fn() } },
         { provide: DefaultLogger, useValue: { log: vi.fn(), error: vi.fn() } },
       ],
     }).compile();
@@ -23,18 +23,18 @@ describe('KnowledgeListener', () => {
   });
 
   it('deletes knowledge docs for the deleted project', async () => {
-    vi.mocked(knowledgeDocDao.hardDelete).mockResolvedValue(undefined as never);
+    vi.mocked(knowledgeDocDao.delete).mockResolvedValue(undefined as never);
 
     await listener.onProjectDeleted({ projectId: 'p-1', userId: 'u-1' });
 
-    expect(knowledgeDocDao.hardDelete).toHaveBeenCalledWith({
+    expect(knowledgeDocDao.delete).toHaveBeenCalledWith({
       projectId: 'p-1',
       createdBy: 'u-1',
     });
   });
 
   it('propagates DAO errors', async () => {
-    vi.mocked(knowledgeDocDao.hardDelete).mockRejectedValue(
+    vi.mocked(knowledgeDocDao.delete).mockRejectedValue(
       new Error('DB failure'),
     );
 

@@ -163,6 +163,18 @@ export class SummarizeNode extends BaseNode<
       ...messagesForKeep,
     ];
 
+    // Cumulative state.totalPrice is number; unknown pricing (null) is coerced
+    // to 0 when accumulating. See matching handling in invoke-llm-node.
+    const usageForState = summaryData.usage
+      ? {
+          ...summaryData.usage,
+          totalPrice:
+            typeof summaryData.usage.totalPrice === 'number'
+              ? summaryData.usage.totalPrice
+              : 0,
+        }
+      : {};
+
     return {
       messages: {
         mode: 'replace',
@@ -172,7 +184,7 @@ export class SummarizeNode extends BaseNode<
       summary: summaryData.summary,
       toolUsageGuardActivated: false,
       toolUsageGuardActivatedCount: 0,
-      ...(summaryData.usage || {}),
+      ...usageForState,
     };
   }
 
@@ -524,7 +536,18 @@ export class SummarizeNode extends BaseNode<
     );
     const res = (await llm.invoke([sys, human])) as AIMessage;
     const model = String(llm.model);
-    const usageMetadata = res.usage_metadata || res.response_metadata?.usage;
+    const rawUsage = res.response_metadata?.usage as
+      | Record<string, unknown>
+      | undefined;
+    // llm.invoke() here is non-streaming — LangChain's streaming-aggregation
+    // 2× doubling bug (see invoke-llm-node.ts) does not apply. Forward any
+    // provider-reported cost as-is without compensation.
+    const providerCost =
+      typeof rawUsage?.cost === 'number' ? rawUsage.cost : undefined;
+    const usageMetadata = {
+      ...(res.usage_metadata ?? rawUsage ?? {}),
+      ...(providerCost !== undefined ? { cost: providerCost } : {}),
+    };
 
     const usage = await this.litellmService.extractTokenUsageFromResponse(
       model,

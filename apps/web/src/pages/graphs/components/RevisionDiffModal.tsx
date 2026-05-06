@@ -6,6 +6,7 @@ import { DiffHtmlView } from '../../../components/markdown/DiffHtmlView';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from '../../../components/ui/dialog';
@@ -126,6 +127,9 @@ export const RevisionDiffModal = ({
               ? `v${revision.baseVersion} \u2192 v${revision.toVersion}`
               : 'Revision diff'}
           </DialogTitle>
+          <DialogDescription className="sr-only">
+            Diff of graph configuration changes between two revisions.
+          </DialogDescription>
         </DialogHeader>
         {revision ? (
           !previousConfig ? (
