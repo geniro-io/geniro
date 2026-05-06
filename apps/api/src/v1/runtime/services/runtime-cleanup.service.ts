@@ -23,6 +23,13 @@ export class RuntimeCleanupService implements OnModuleInit, OnModuleDestroy {
   async onModuleInit(): Promise<void> {
     this.redis = new IORedis(environment.redisUrl, {
       maxRetriesPerRequest: null,
+      // BullMQ-managed connection — see thread-resume-queue.service.ts for
+      // the full rationale. `enableReadyCheck: false` is safe here because
+      // BullMQ retries jobs at its own layer when commands fail during a
+      // Redis LOADING window. `disableClientInfo: true` is purely cosmetic
+      // (skips the SETINFO telemetry roundtrip).
+      enableReadyCheck: false,
+      disableClientInfo: true,
     });
 
     this.redis.on('error', (err) => {
@@ -31,6 +38,9 @@ export class RuntimeCleanupService implements OnModuleInit, OnModuleDestroy {
 
     this.queue = new Queue(this.queueName, {
       connection: this.redis,
+      // Skip BullMQ's startup INFO call — see queue services for full
+      // rationale (race with teardown surfaces ioredis stderr noise).
+      skipVersionCheck: true,
       defaultJobOptions: {
         removeOnComplete: 25,
         removeOnFail: 25,
@@ -45,6 +55,15 @@ export class RuntimeCleanupService implements OnModuleInit, OnModuleDestroy {
     this.worker = new Worker(this.queueName, this.processJob.bind(this), {
       connection: this.redis,
       concurrency: 1,
+      skipVersionCheck: true,
+    });
+    // Forward BullMQ worker errors to our logger so the internal blocking-
+    // connection duplicate's transient socket errors don't surface as
+    // unhandled `[ioredis] Unhandled error event:` console noise.
+    this.worker.on('error', (err) => {
+      this.logger.warn('Runtime cleanup worker error', {
+        error: err instanceof Error ? err.message : String(err),
+      });
     });
 
     await this.queue.add(

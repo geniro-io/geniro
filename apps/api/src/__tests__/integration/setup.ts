@@ -21,6 +21,7 @@ import { AppModule } from '../../app.module';
 import mikroOrmConfig from '../../db/mikro-orm.config';
 import { environment, setInstanceFingerprint } from '../../environments';
 import { GraphRestorationService } from '../../v1/graphs/services/graph-restoration.service';
+import { LiteLlmClient } from '../../v1/litellm/services/litellm.client';
 import { LitellmService } from '../../v1/litellm/services/litellm.service';
 import { NotificationsService } from '../../v1/notifications/services/notifications.service';
 import { OpenaiService } from '../../v1/openai/openai.service';
@@ -45,6 +46,7 @@ import { setMockMcpService } from './mocks/mock-mcp/mock-mcp-singleton.utils';
 import { MockRuntimeModule } from './mocks/mock-runtime/mock-runtime.module';
 import { MockRuntimeService } from './mocks/mock-runtime/mock-runtime.service';
 import { MockRuntimeProvider } from './mocks/mock-runtime/mock-runtime-provider';
+import { mockLiteLlmClient } from './helpers/test-stubs';
 
 /**
  * Returns a `MockLlmService`-shaped proxy that resolves method calls to the
@@ -181,7 +183,14 @@ export const createTestModule = async (
     // close wins, the still-pending DB query throws "driver has already been
     // destroyed". Replace the service with a no-op for every integration test.
     .overrideProvider(GraphRestorationService)
-    .useValue({ restoreRunningGraphs: async () => {} });
+    .useValue({ restoreRunningGraphs: async () => {} })
+    // LiteLlmClient hits the LiteLLM proxy (localhost:4000) for model-info
+    // lookups (capability checks, cost rates, model listing). The proxy is not
+    // booted by the integration setup, so leave the default in place would
+    // surface as ECONNREFUSED noise in every test that touches an agent. The
+    // mock returns no model info — production paths fall back to safe defaults.
+    .overrideProvider(LiteLlmClient)
+    .useValue(mockLiteLlmClient);
 
   const m = mockRuntimeEnabled
     ? moduleBuilder.overrideProvider(RuntimeProvider).useFactory({

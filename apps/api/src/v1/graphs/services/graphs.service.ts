@@ -100,7 +100,13 @@ export class GraphsService {
       throw new NotFoundException('PROJECT_NOT_FOUND');
     }
 
-    return await this.em.transactional(async (em: EntityManager) => {
+    // `em.fork().transactional()` matches the pattern used in executeTrigger
+    // (line 776) — root the transaction on a private fork so the upper em's
+    // #transactionContext can never leak across concurrent calls. Graph
+    // creation is invoked concurrently from multiple test files and from the
+    // graph-templates seeder, both of which previously triggered the
+    // "savepoint trx1 does not exist" heisenbug under high parallelism.
+    return await this.em.fork().transactional(async (em: EntityManager) => {
       const initialVersion = '1.0.0';
       const agents = extractAgentsFromSchema(
         data.schema,
