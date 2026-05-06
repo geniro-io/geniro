@@ -701,7 +701,7 @@ export class DockerRuntime extends BaseRuntime {
             Env: env,
             WorkingDir: this.getWorkdir(params?.workdir),
             Cmd: cmd,
-            Labels: params?.labels,
+            Labels: { 'geniro.io/type': 'runtime', ...(params?.labels ?? {}) },
             Tty: false,
             AttachStdin: false,
             AttachStdout: false,

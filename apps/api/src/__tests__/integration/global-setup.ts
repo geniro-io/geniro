@@ -1,3 +1,4 @@
+import Docker from 'dockerode';
 import { Client } from 'pg';
 import { GenericContainer, StartedTestContainer, Wait } from 'testcontainers';
 
@@ -5,6 +6,7 @@ import migrationConfig from '../../db/mikro-orm.migration-config';
 
 const WORKER_COUNT = 5;
 const CONTAINER_LABELS = { 'io.geniro.test': 'true' };
+const RUNTIME_TYPE_LABEL = 'geniro.io/type=runtime';
 
 /**
  * Boot ephemeral Postgres / Redis / Qdrant containers, run MikroORM migrations
@@ -17,6 +19,7 @@ const CONTAINER_LABELS = { 'io.geniro.test': 'true' };
  */
 export default async function globalSetup(): Promise<() => Promise<void>> {
   const startedAt = Date.now();
+  const sessionStartedAtUnixSec = Math.floor(startedAt / 1000);
   const [postgresContainer, redisContainer, qdrantContainer] =
     await Promise.all([
       new GenericContainer('pgvector/pgvector:pg17')
@@ -73,10 +76,63 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
   process.env.INTEGRATION_WORKER_DB_NAMES = workerDbNames.join(',');
 
   return async () => {
+    await sweepRuntimeContainers(sessionStartedAtUnixSec);
     await dropWorkerDatabases(postgresUrl, workerDbNames);
     await Promise.allSettled(containers.map((c) => c.stop()));
   };
 }
+
+/**
+ * Force-remove any runtime containers spawned via RuntimeProvider during
+ * this test session. Filtering by Created >= sessionStart avoids touching
+ * containers from a developer's concurrent `pnpm start:dev` session that
+ * happened to be running before tests started.
+ */
+const sweepRuntimeContainers = async (
+  sessionStartedAtUnixSec: number,
+): Promise<void> => {
+  let docker: Docker;
+  try {
+    docker = new Docker();
+  } catch (err) {
+    process.stdout.write(
+      `[integration] runtime sweep skipped — dockerode init failed: ${(err as Error).message}\n`,
+    );
+    return;
+  }
+
+  let candidates: Awaited<ReturnType<Docker['listContainers']>>;
+  try {
+    candidates = await docker.listContainers({
+      all: true,
+      filters: { label: [RUNTIME_TYPE_LABEL] },
+    });
+  } catch (err) {
+    process.stdout.write(
+      `[integration] runtime sweep skipped — listContainers failed: ${(err as Error).message}\n`,
+    );
+    return;
+  }
+
+  const testEra = candidates.filter((c) => c.Created >= sessionStartedAtUnixSec);
+  if (testEra.length === 0) {
+    return;
+  }
+
+  process.stdout.write(
+    `[integration] sweeping ${testEra.length} runtime container(s) spawned during tests\n`,
+  );
+
+  await Promise.allSettled(
+    testEra.map(async (info) => {
+      try {
+        await docker.getContainer(info.Id).remove({ force: true });
+      } catch {
+        // best-effort: container may have been removed by its own cleanup
+      }
+    }),
+  );
+};
 
 const runMigrations = async (postgresUrl: string): Promise<void> => {
   const previous = process.env.POSTGRES_URL;
