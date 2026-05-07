@@ -14,6 +14,7 @@ import {
 } from '@nestjs/platform-fastify';
 import {
   DocumentBuilder,
+  OpenAPIObject,
   SwaggerCustomOptions,
   SwaggerModule,
 } from '@nestjs/swagger';
@@ -36,6 +37,73 @@ import { ExceptionsFilter } from './exceptions.filter';
 import { HttpServerModule } from './http-server.module';
 import { IHttpServerParams } from './http-server.types';
 import { ZodResponseInterceptor } from './interceptors/zod-response.interceptor';
+
+const HTTP_VERBS = [
+  'get',
+  'post',
+  'put',
+  'patch',
+  'delete',
+  'options',
+  'head',
+] as const;
+
+/**
+ * Throws at swagger-setup time if any two operations share the same operationId.
+ * The default operationIdFactory uses only the method name, so two controllers
+ * with e.g. `getAll()` produce identical IDs. openapi-generator-cli (used by
+ * `pnpm generate:api` in apps/web) requires globally unique operationIds.
+ *
+ * This guard runs only during setupSwagger (dev/test). Production skips swagger
+ * entirely, so this has zero runtime cost in prod.
+ */
+export const validateOperationIdUniqueness = (
+  doc: Pick<OpenAPIObject, 'paths'>,
+): void => {
+  const seen = new Map<string, string[]>();
+
+  for (const [path, methods] of Object.entries(doc.paths ?? {})) {
+    if (!methods || typeof methods !== 'object') {
+      continue;
+    }
+    for (const verb of HTTP_VERBS) {
+      const op = (
+        methods as Record<string, { operationId?: string } | undefined>
+      )[verb];
+      if (!op || typeof op !== 'object' || typeof op.operationId !== 'string') {
+        continue;
+      }
+      const id = op.operationId;
+      const ref = `${verb.toUpperCase()} ${path}`;
+      const list = seen.get(id);
+      if (list) {
+        list.push(ref);
+      } else {
+        seen.set(id, [ref]);
+      }
+    }
+  }
+
+  const duplicates = [...seen.entries()].filter(([, refs]) => refs.length > 1);
+  if (duplicates.length === 0) {
+    return;
+  }
+
+  const summary = duplicates
+    .map(([id, refs]) => `  "${id}" used by: ${refs.join(', ')}`)
+    .join('\n');
+
+  throw new Error(
+    `Duplicate operationIds detected in OpenAPI spec:\n${summary}\n\n` +
+      `openapi-generator-cli (used by 'pnpm generate:api' in apps/web) ` +
+      `requires every operationId to be globally unique. The default ` +
+      `operationIdFactory in setup.ts uses only the method name, so two ` +
+      `controllers with the same method name (e.g. getAll, getById) collide.\n\n` +
+      `Fix: add @ApiOperation({ operationId: 'unique-name' }) to one of the ` +
+      `conflicting methods. Use a descriptive verb+resource form (e.g. ` +
+      `'listInstructionBlocks', 'getInstructionBlockById').`,
+  );
+};
 
 export const getVersion = (v?: string) =>
   `${v ? `v${v}` : ``}`
@@ -88,6 +156,7 @@ export const setupSwagger = (
         methodKey,
     },
   );
+  validateOperationIdUniqueness(openapiDocument);
   openapiDocument.openapi = '3.1.0';
 
   const swp = [path].join('/').replace(/\/{1,}/g, '/');
