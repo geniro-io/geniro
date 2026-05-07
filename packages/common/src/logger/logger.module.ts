@@ -8,10 +8,10 @@ import lodash from 'lodash';
 
 const { compact } = lodash;
 
-import { BaseLogger } from './base-logger.js';
-import { DefaultLogger } from './default-logger.js';
-import { type ILoggerParams, Logger, LoggerParams } from './logger.types.js';
-import { SentryService } from './sentry.service.js';
+import { BaseLogger } from './base-logger';
+import { DefaultLogger } from './default-logger';
+import { type ILoggerParams, Logger, LoggerParams } from './logger.types';
+import { SentryService } from './sentry.service';
 
 @Global()
 export class LoggerModule {

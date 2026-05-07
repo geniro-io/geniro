@@ -8,16 +8,16 @@ import lodash from 'lodash';
 
 const { compact, flatten } = lodash;
 
-import { AppBootstrapperModule } from './app-bootstrapper.module.js';
+import { AppBootstrapperModule } from './app-bootstrapper.module';
 import {
   type IAppBootstrapperExtension,
   type IAppBootstrapperParams,
-} from './app-bootstrapper.types.js';
+} from './app-bootstrapper.types';
 import {
   type BaseLogger,
   type ILoggerParams,
   LoggerModule,
-} from './logger/index.js';
+} from './logger/index';
 
 export class AppBootstrapper {
   private bootstrapModules: NonNullable<ModuleMetadata['imports']> = [];

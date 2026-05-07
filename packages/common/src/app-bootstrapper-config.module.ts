@@ -4,8 +4,8 @@ import { ConfigModule } from '@nestjs/config';
 import {
   BootstrapParameters,
   type IAppBootstrapperParams,
-} from './app-bootstrapper.types.js';
-import { AppBootstrapperConfigService } from './app-bootstrapper-config.service.js';
+} from './app-bootstrapper.types';
+import { AppBootstrapperConfigService } from './app-bootstrapper-config.service';
 
 @Module({})
 @Global()

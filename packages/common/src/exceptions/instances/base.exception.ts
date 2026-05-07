@@ -1,8 +1,8 @@
-import { EXCEPTION_CODES } from '../exceptions.codes.js';
+import { EXCEPTION_CODES } from '../exceptions.codes';
 import {
   type IExceptionData,
   type IExceptionFieldError,
-} from '../exceptions.types.js';
+} from '../exceptions.types';
 
 interface BaseExceptionData {
   description?: string;

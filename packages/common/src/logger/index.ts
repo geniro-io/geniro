@@ -1,8 +1,8 @@
-import { BaseLogger } from './base-logger.js';
-import { DefaultLogger } from './default-logger.js';
-import { LoggerModule } from './logger.module.js';
-import { SentryService } from './sentry.service.js';
+import { BaseLogger } from './base-logger';
+import { DefaultLogger } from './default-logger';
+import { LoggerModule } from './logger.module';
+import { SentryService } from './sentry.service';
 
-export * from './logger.types.js';
+export * from './logger.types';
 
 export { BaseLogger, DefaultLogger, LoggerModule, SentryService };

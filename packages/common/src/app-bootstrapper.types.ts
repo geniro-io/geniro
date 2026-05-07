@@ -4,7 +4,7 @@ import {
   type Type,
 } from '@nestjs/common';
 
-import { type BaseLogger } from './logger/index.js';
+import { type BaseLogger } from './logger/index';
 
 export interface IAppBootstrapperParams {
   environment: string;

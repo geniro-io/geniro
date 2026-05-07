@@ -8,7 +8,7 @@ import {
   Registry,
 } from 'prom-client';
 
-import { type Labels } from '../metrics.types.js';
+import { type Labels } from '../metrics.types';
 
 @Injectable()
 export class MetricsService {

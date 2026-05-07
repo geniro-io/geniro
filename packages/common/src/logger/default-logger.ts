@@ -1,8 +1,8 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { networkInterfaces } from 'os';
 
-import { BaseLogger } from './base-logger.js';
-import * as loggerTypes from './logger.types.js';
+import { BaseLogger } from './base-logger';
+import * as loggerTypes from './logger.types';
 
 @Injectable()
 export class DefaultLogger extends BaseLogger {

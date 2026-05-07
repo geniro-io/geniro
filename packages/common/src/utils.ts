@@ -1,5 +1,5 @@
-import { AppBootstrapper } from './app.bootstrapper.js';
-import { type IAppBootstrapperParams } from './app-bootstrapper.types.js';
+import { AppBootstrapper } from './app.bootstrapper';
+import { type IAppBootstrapperParams } from './app-bootstrapper.types';
 
 export const buildBootstrapper = (params: IAppBootstrapperParams) => {
   const instance = new AppBootstrapper(params);

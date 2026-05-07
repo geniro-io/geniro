@@ -4,8 +4,8 @@ import {
   type ModuleMetadata,
 } from '@nestjs/common';
 
-import { type IAppBootstrapperParams } from './app-bootstrapper.types.js';
-import { AppBootstrapperConfigModule } from './app-bootstrapper-config.module.js';
+import { type IAppBootstrapperParams } from './app-bootstrapper.types';
+import { AppBootstrapperConfigModule } from './app-bootstrapper-config.module';
 
 @Module({})
 export class AppBootstrapperModule {

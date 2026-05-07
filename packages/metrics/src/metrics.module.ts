@@ -7,14 +7,14 @@ import {
 } from '@nestjs/common';
 import { AppBootstrapperConfigService } from '@packages/common';
 
-import { MetricsController } from './metrics.controller.js';
-import { FastifyMetricsMiddleware } from './metrics.middleware.js';
+import { MetricsController } from './metrics.controller';
+import { FastifyMetricsMiddleware } from './metrics.middleware';
 import {
   InstanceMetric,
   RequestMetric,
   RequestTimeMetric,
-} from './metrics.types.js';
-import { MetricsService } from './services/metrics.service.js';
+} from './metrics.types';
+import { MetricsService } from './services/metrics.service';
 
 @Module({})
 @Global()

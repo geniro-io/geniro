@@ -1,8 +1,8 @@
 import { Injectable, type NestMiddleware } from '@nestjs/common';
 import { type FastifyReply, type FastifyRequest } from 'fastify';
 
-import { RequestMetric, RequestTimeMetric } from './metrics.types.js';
-import { MetricsService } from './services/metrics.service.js';
+import { RequestMetric, RequestTimeMetric } from './metrics.types';
+import { MetricsService } from './services/metrics.service';
 
 @Injectable()
 export class FastifyMetricsMiddleware implements NestMiddleware {

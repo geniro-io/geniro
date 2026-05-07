@@ -4,8 +4,8 @@ import lodash from 'lodash';
 
 const { isObject } = lodash;
 
-import { BaseLogger } from './base-logger.js';
-import * as loggerTypes from './logger.types.js';
+import { BaseLogger } from './base-logger';
+import * as loggerTypes from './logger.types';
 
 @Injectable({
   scope: Scope.DEFAULT,

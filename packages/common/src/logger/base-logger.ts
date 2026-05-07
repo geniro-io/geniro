@@ -5,7 +5,7 @@ import pretty from 'pino-pretty';
 
 const { isObject, isString, isUndefined, pickBy } = lodash;
 
-import { type ILoggerParams, type LogLevel } from './logger.types.js';
+import { type ILoggerParams, type LogLevel } from './logger.types';
 
 export abstract class BaseLogger
   extends ConsoleLogger
