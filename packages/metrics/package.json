@@ -2,6 +2,14 @@
   "name": "@packages/metrics",
   "version": "1.6.7",
   "author": "Sergey Razumovskiy <s.razumru@gmail.com>",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.js"
+    }
+  },
   "dependencies": {
     "@nestjs/common": "^11.1.19",
     "@nestjs/swagger": "^11.4.2",

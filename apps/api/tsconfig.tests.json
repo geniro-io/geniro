@@ -3,9 +3,10 @@
   "compilerOptions": {
     "outDir": "./dist",
     "rootDir": "./",
+    "verbatimModuleSyntax": false
   },
   "include": [
     "src/**/*",
-    "cypress/**/*",
+    "cypress/**/*"
   ]
 }

@@ -1,7 +1,7 @@
 import { Controller, Get, VERSION_NEUTRAL } from '@nestjs/common';
 import { ApiExcludeController, ApiOperation, ApiTags } from '@nestjs/swagger';
 
-import { MetricsService } from './services/metrics.service';
+import { MetricsService } from './services/metrics.service.js';
 
 @Controller({
   path: 'metrics',

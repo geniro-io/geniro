@@ -1,15 +1,15 @@
-import { EXCEPTION_CODES } from './exceptions.codes';
-import { BadRequestException } from './instances/bad-request.exception';
-import { BaseException } from './instances/base.exception';
-import { ConflictException } from './instances/conflict.exception';
-import { ForbiddenException } from './instances/forbidden.exception';
-import { InternalException } from './instances/internal.exception';
-import { NotFoundException } from './instances/not-found.exception';
-import { UnauthorizedException } from './instances/unauthorized.exception';
-import { ValidationException } from './instances/validation.exception';
+import { EXCEPTION_CODES } from './exceptions.codes.js';
+import { BadRequestException } from './instances/bad-request.exception.js';
+import { BaseException } from './instances/base.exception.js';
+import { ConflictException } from './instances/conflict.exception.js';
+import { ForbiddenException } from './instances/forbidden.exception.js';
+import { InternalException } from './instances/internal.exception.js';
+import { NotFoundException } from './instances/not-found.exception.js';
+import { UnauthorizedException } from './instances/unauthorized.exception.js';
+import { ValidationException } from './instances/validation.exception.js';
 
-export * from './exceptions.codes';
-export * from './exceptions.types';
+export * from './exceptions.codes.js';
+export * from './exceptions.types.js';
 
 export {
   BadRequestException,

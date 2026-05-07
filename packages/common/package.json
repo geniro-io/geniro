@@ -2,6 +2,14 @@
   "name": "@packages/common",
   "version": "1.2.8",
   "author": "Sergey Razumovskiy <s.razumru@gmail.com>",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.js"
+    }
+  },
   "dependencies": {
     "@nestjs/common": "^11.1.19",
     "@nestjs/config": "^4.0.4",

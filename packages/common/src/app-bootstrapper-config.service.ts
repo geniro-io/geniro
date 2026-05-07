@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 
-import * as appBootstrapperTypes from './app-bootstrapper.types';
+import * as appBootstrapperTypes from './app-bootstrapper.types.js';
 
 @Injectable()
 export class AppBootstrapperConfigService {

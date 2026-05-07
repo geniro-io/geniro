@@ -1,9 +1,11 @@
 import { Inject, Injectable, Scope } from '@nestjs/common';
 import * as Sentry from '@sentry/node';
-import { isObject } from 'lodash';
+import lodash from 'lodash';
 
-import { BaseLogger } from './base-logger';
-import * as loggerTypes from './logger.types';
+const { isObject } = lodash;
+
+import { BaseLogger } from './base-logger.js';
+import * as loggerTypes from './logger.types.js';
 
 @Injectable({
   scope: Scope.DEFAULT,

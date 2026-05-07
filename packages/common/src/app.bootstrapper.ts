@@ -1,14 +1,23 @@
-import { DynamicModule, Type } from '@nestjs/common';
-import { ModuleMetadata } from '@nestjs/common/interfaces/modules/module-metadata.interface';
-import { NestFactory } from '@nestjs/core';
-import { compact, flatten } from 'lodash';
-
-import { AppBootstrapperModule } from './app-bootstrapper.module';
 import {
-  IAppBootstrapperExtension,
-  IAppBootstrapperParams,
-} from './app-bootstrapper.types';
-import { BaseLogger, ILoggerParams, LoggerModule } from './logger';
+  type DynamicModule,
+  type ModuleMetadata,
+  type Type,
+} from '@nestjs/common';
+import { NestFactory } from '@nestjs/core';
+import lodash from 'lodash';
+
+const { compact, flatten } = lodash;
+
+import { AppBootstrapperModule } from './app-bootstrapper.module.js';
+import {
+  type IAppBootstrapperExtension,
+  type IAppBootstrapperParams,
+} from './app-bootstrapper.types.js';
+import {
+  type BaseLogger,
+  type ILoggerParams,
+  LoggerModule,
+} from './logger/index.js';
 
 export class AppBootstrapper {
   private bootstrapModules: NonNullable<ModuleMetadata['imports']> = [];

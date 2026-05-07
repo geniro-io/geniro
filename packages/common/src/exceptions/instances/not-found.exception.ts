@@ -1,4 +1,4 @@
-import { BaseException } from './base.exception';
+import { BaseException } from './base.exception.js';
 
 export class NotFoundException extends BaseException {
   constructor(errorCode?: string, customData?: Record<string, unknown>);

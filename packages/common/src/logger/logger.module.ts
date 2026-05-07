@@ -1,10 +1,17 @@
-import { DynamicModule, Global, Provider, Type } from '@nestjs/common';
-import { compact } from 'lodash';
+import {
+  type DynamicModule,
+  Global,
+  type Provider,
+  type Type,
+} from '@nestjs/common';
+import lodash from 'lodash';
 
-import { BaseLogger } from './base-logger';
-import { DefaultLogger } from './default-logger';
-import { ILoggerParams, Logger, LoggerParams } from './logger.types';
-import { SentryService } from './sentry.service';
+const { compact } = lodash;
+
+import { BaseLogger } from './base-logger.js';
+import { DefaultLogger } from './default-logger.js';
+import { type ILoggerParams, Logger, LoggerParams } from './logger.types.js';
+import { SentryService } from './sentry.service.js';
 
 @Global()
 export class LoggerModule {

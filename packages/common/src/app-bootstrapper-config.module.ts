@@ -1,11 +1,11 @@
-import { DynamicModule, Global, Module } from '@nestjs/common';
+import { type DynamicModule, Global, Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 
 import {
   BootstrapParameters,
-  IAppBootstrapperParams,
-} from './app-bootstrapper.types';
-import { AppBootstrapperConfigService } from './app-bootstrapper-config.service';
+  type IAppBootstrapperParams,
+} from './app-bootstrapper.types.js';
+import { AppBootstrapperConfigService } from './app-bootstrapper-config.service.js';
 
 @Module({})
 @Global()

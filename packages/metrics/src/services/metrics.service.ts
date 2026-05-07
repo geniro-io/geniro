@@ -3,12 +3,12 @@ import {
   Counter,
   Gauge,
   Histogram,
-  HistogramConfiguration,
+  type HistogramConfiguration,
   Pushgateway,
   Registry,
 } from 'prom-client';
 
-import { Labels } from '../metrics.types';
+import { type Labels } from '../metrics.types.js';
 
 @Injectable()
 export class MetricsService {

@@ -7,7 +7,7 @@ import { useCallback, useEffect, useRef } from 'react';
 
 import { useAuth } from '../auth/AuthModuleContext';
 import {
-  SocketEventHandler,
+  type SocketEventHandler,
   webSocketService,
 } from '../services/WebSocketService';
 import type { SocketNotification } from '../services/WebSocketTypes';

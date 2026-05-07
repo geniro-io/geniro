@@ -25,7 +25,8 @@
     "strict": true,
     "strictNullChecks": true,
     "types": ["node"],
-    "verbatimModuleSyntax": false,
+    "verbatimModuleSyntax": true,
+    "rewriteRelativeImportExtensions": true,
     "noUncheckedIndexedAccess": true,
     "paths": {
       "@packages/*": ["./packages/*/src"]
