@@ -8,7 +8,13 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiQuery, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiCreatedResponse,
+  ApiOkResponse,
+  ApiQuery,
+  ApiTags,
+} from '@nestjs/swagger';
 import { CtxStorage, OnlyForAuthorized } from '@packages/http-server';
 
 import { AppContextStorage } from '../../../auth/app-context-storage';
@@ -35,6 +41,7 @@ export class GitRepositoriesController {
   ) {}
 
   @Post()
+  @ApiCreatedResponse({ type: GitRepositoryDto })
   async createRepository(
     @Body() dto: CreateRepositoryDto,
     @CtxStorage() contextDataStorage: AppContextStorage,
@@ -46,6 +53,7 @@ export class GitRepositoriesController {
   }
 
   @Get()
+  @ApiOkResponse({ type: GitRepositoryDto, isArray: true })
   async getRepositories(
     @Query() query: GetRepositoriesQueryDto,
     @CtxStorage() contextDataStorage: AppContextStorage,
@@ -59,6 +67,7 @@ export class GitRepositoriesController {
   // Static routes MUST be declared before parameterised routes so that
   // NestJS matches them first (e.g. GET /indexes before GET /:id).
   @Get('indexes')
+  @ApiOkResponse({ type: RepoIndexDto, isArray: true })
   async getRepoIndexes(
     @Query() query: GetRepoIndexesQueryDto,
     @CtxStorage() contextDataStorage: AppContextStorage,
@@ -70,6 +79,7 @@ export class GitRepositoriesController {
   }
 
   @Post('sync')
+  @ApiCreatedResponse({ type: SyncRepositoriesResponseDto })
   async syncRepositories(
     @CtxStorage() ctx: AppContextStorage,
   ): Promise<SyncRepositoriesResponseDto> {
@@ -77,6 +87,7 @@ export class GitRepositoriesController {
   }
 
   @Get(':id')
+  @ApiOkResponse({ type: GitRepositoryDto })
   async getRepositoryById(
     @Param('id') id: string,
     @CtxStorage() contextDataStorage: AppContextStorage,
@@ -88,6 +99,7 @@ export class GitRepositoriesController {
   }
 
   @Get(':id/index')
+  @ApiOkResponse({ type: RepoIndexDto })
   @ApiQuery({
     name: 'branch',
     required: false,
@@ -107,6 +119,7 @@ export class GitRepositoriesController {
   }
 
   @Patch(':id')
+  @ApiOkResponse({ type: GitRepositoryDto })
   async updateRepository(
     @Param('id') id: string,
     @Body() dto: UpdateRepositoryDto,
@@ -128,6 +141,7 @@ export class GitRepositoriesController {
   }
 
   @Post('reindex')
+  @ApiCreatedResponse({ type: TriggerReindexResponseDto })
   async triggerReindex(
     @Body() dto: TriggerReindexDto,
     @CtxStorage() contextDataStorage: AppContextStorage,

@@ -1,5 +1,4 @@
 import { INestApplication } from '@nestjs/common';
-import { SwaggerModule } from '@nestjs/swagger';
 import { buildBootstrapper, LogLevel } from '@packages/common';
 import {
   buildAuthExtension,
@@ -101,31 +100,7 @@ process.on('unhandledRejection', (reason: unknown) => {
   console.error('Unhandled promise rejection (non-fatal):', reason);
 });
 
-type MetadataFn = () => Promise<Record<string, unknown>>;
-type MetadataModule = { default: MetadataFn | { default: MetadataFn } };
-
-void (async () => {
-  // SwaggerModule.loadPluginMetadata expects `() => Promise<MetadataObject>` —
-  // the metadata generator's default export is exactly that. Passing
-  // `() => import('./metadata.js')` returns the module NAMESPACE instead, and
-  // metadata-loader.js silently ignores it (looks for `metadata['@nestjs/swagger']`,
-  // finds undefined, returns). Dereference the function from the CJS-ESM wrapper:
-  // dynamic-importing a CJS module that exports `module.exports.default = fn`
-  // gives `{ default: { default: fn, __esModule: true } }` under NodeNext.
-  const metadataMod = (await import('./metadata.js')) as MetadataModule;
-  const metadataFn: MetadataFn =
-    typeof metadataMod.default === 'function'
-      ? metadataMod.default
-      : typeof metadataMod.default?.default === 'function'
-        ? metadataMod.default.default
-        : (() => {
-            throw new Error(
-              'Failed to resolve Swagger metadata default export — neither metadata.default nor metadata.default.default is a function.',
-            );
-          })();
-  await SwaggerModule.loadPluginMetadata(metadataFn);
-  await bootstrapper.init();
-})().catch((err) => {
+bootstrapper.init().catch((err) => {
   console.error('Failed to bootstrap application', err);
   process.exit(1);
 });

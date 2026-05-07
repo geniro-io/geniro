@@ -8,8 +8,7 @@
   "scripts": {
     "lint:fix": "pnpm run lint --fix",
     "lint": "pnpm eslint src cypress",
-    "build": "pnpm prebuild:metadata && tsc -p tsconfig.build.json",
-    "prebuild:metadata": "ts-node --transpile-only ./generate-metadata.ts",
+    "build": "tsc -p tsconfig.build.json",
     "build:tests": "tsc -p tsconfig.tests.json",
     "prebuild": "rm -rf ./dist || true",
     "test": "vitest run --passWithNoTests",
@@ -118,8 +117,6 @@
     "cypress": "^15.14.2",
     "eslint": "^10.3.0",
     "testcontainers": "^11.14.0",
-    "@nestjs/cli": "^11",
-    "concurrently": "^9",
     "ts-node-dev": "^2.0.0",
     "tsconfig-paths": "^4.2.0",
     "type-fest": "^5.6.0",

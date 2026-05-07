@@ -8,7 +8,12 @@ import {
   Put,
   Query,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiCreatedResponse,
+  ApiOkResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { CtxStorage, OnlyForAuthorized } from '@packages/http-server';
 
@@ -37,6 +42,7 @@ export class GraphsController {
   constructor(private readonly graphsService: GraphsService) {}
 
   @Post()
+  @ApiCreatedResponse({ type: GraphDto })
   async createGraph(
     @Body() dto: CreateGraphDto,
     @CtxStorage() contextDataStorage: AppContextStorage,
@@ -45,6 +51,7 @@ export class GraphsController {
   }
 
   @Get()
+  @ApiOkResponse({ type: GraphDto, isArray: true })
   async getAllGraphs(
     @Query() query: GetAllGraphsQueryDto,
     @CtxStorage() contextDataStorage: AppContextStorage,
@@ -53,6 +60,7 @@ export class GraphsController {
   }
 
   @Get('preview')
+  @ApiOkResponse({ type: GraphPreviewDto, isArray: true })
   async getGraphsPreview(
     @Query() query: GetGraphsPreviewQueryDto,
     @CtxStorage() contextDataStorage: AppContextStorage,
@@ -61,6 +69,7 @@ export class GraphsController {
   }
 
   @Get(':id')
+  @ApiOkResponse({ type: GraphDto })
   async findGraphById(
     @Param() params: EntityUUIDDto,
     @CtxStorage() contextDataStorage: AppContextStorage,
@@ -69,6 +78,7 @@ export class GraphsController {
   }
 
   @Get(':id/nodes')
+  @ApiOkResponse({ type: GraphNodeWithStatusDto, isArray: true })
   async getCompiledNodes(
     @Param() params: EntityUUIDDto,
     @Query() query: GraphNodesQueryDto,
@@ -82,6 +92,7 @@ export class GraphsController {
   }
 
   @Put(':id')
+  @ApiOkResponse({ type: UpdateGraphResponseDto })
   async updateGraph(
     @Param() params: EntityUUIDDto,
     @Body() dto: UpdateGraphDto,
@@ -100,6 +111,7 @@ export class GraphsController {
 
   @Throttle({ default: { ttl: 60000, limit: 50 } })
   @Post(':id/run')
+  @ApiCreatedResponse({ type: GraphDto })
   async runGraph(
     @Param() params: EntityUUIDDto,
     @CtxStorage() contextDataStorage: AppContextStorage,
@@ -108,6 +120,7 @@ export class GraphsController {
   }
 
   @Post(':id/destroy')
+  @ApiCreatedResponse({ type: GraphDto })
   async destroyGraph(
     @Param() params: EntityUUIDDto,
     @CtxStorage() contextDataStorage: AppContextStorage,
@@ -117,6 +130,7 @@ export class GraphsController {
 
   @Throttle({ default: { ttl: 60000, limit: 50 } })
   @Post(':graphId/triggers/:triggerId/execute')
+  @ApiCreatedResponse({ type: ExecuteTriggerResponseDto })
   async executeTrigger(
     @Param('graphId') graphId: string,
     @Param('triggerId') triggerId: string,

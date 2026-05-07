@@ -9,7 +9,12 @@ import {
   Query,
   StreamableFile,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiCreatedResponse,
+  ApiOkResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { CtxStorage, OnlyForAuthorized } from '@packages/http-server';
 
 import { AppContextStorage } from '../../../auth/app-context-storage';
@@ -32,6 +37,7 @@ export class ThreadsController {
   constructor(private readonly threadsService: ThreadsService) {}
 
   @Get()
+  @ApiOkResponse({ type: ThreadDto, isArray: true })
   async getThreads(
     @Query() query: GetThreadsQueryDto,
     @CtxStorage() ctx: AppContextStorage,
@@ -40,6 +46,7 @@ export class ThreadsController {
   }
 
   @Get(':threadId')
+  @ApiOkResponse({ type: ThreadDto })
   async getThreadById(
     @Param('threadId') threadId: string,
     @CtxStorage() ctx: AppContextStorage,
@@ -48,6 +55,7 @@ export class ThreadsController {
   }
 
   @Get('external/:externalThreadId')
+  @ApiOkResponse({ type: ThreadDto })
   async getThreadByExternalId(
     @Param('externalThreadId') externalThreadId: string,
     @CtxStorage() ctx: AppContextStorage,
@@ -56,6 +64,7 @@ export class ThreadsController {
   }
 
   @Get(':threadId/messages')
+  @ApiOkResponse({ type: ThreadMessageDto, isArray: true })
   async getThreadMessages(
     @Param('threadId') threadId: string,
     @Query() query: GetMessagesQueryDto,
@@ -65,6 +74,7 @@ export class ThreadsController {
   }
 
   @Get(':threadId/usage-statistics')
+  @ApiOkResponse({ type: ThreadUsageStatisticsDto })
   async getThreadUsageStatistics(
     @Param('threadId') threadId: string,
     @CtxStorage() ctx: AppContextStorage,
@@ -73,6 +83,7 @@ export class ThreadsController {
   }
 
   @Get(':threadId/export')
+  @ApiOkResponse({ description: 'Thread export as a downloadable file.' })
   async exportThread(
     @Param('threadId') threadId: string,
     @CtxStorage() ctx: AppContextStorage,
@@ -81,6 +92,7 @@ export class ThreadsController {
   }
 
   @Put(':threadId/metadata')
+  @ApiOkResponse({ type: ThreadDto })
   async setThreadMetadata(
     @Param('threadId') threadId: string,
     @Body() dto: SetThreadMetadataDto,
@@ -90,6 +102,7 @@ export class ThreadsController {
   }
 
   @Put('external/:externalThreadId/metadata')
+  @ApiOkResponse({ type: ThreadDto })
   async setThreadMetadataByExternalId(
     @Param('externalThreadId') externalThreadId: string,
     @Body() dto: SetThreadMetadataDto,
@@ -111,6 +124,7 @@ export class ThreadsController {
   }
 
   @Post(':threadId/stop')
+  @ApiCreatedResponse({ type: ThreadDto })
   async stopThread(
     @Param('threadId') threadId: string,
     @CtxStorage() ctx: AppContextStorage,
@@ -119,6 +133,7 @@ export class ThreadsController {
   }
 
   @Post('external/:externalThreadId/stop')
+  @ApiCreatedResponse({ type: ThreadDto })
   async stopThreadByExternalId(
     @Param('externalThreadId') externalThreadId: string,
     @CtxStorage() ctx: AppContextStorage,
@@ -127,6 +142,7 @@ export class ThreadsController {
   }
 
   @Post(':threadId/resume')
+  @ApiCreatedResponse({ type: ThreadDto })
   async resumeThread(
     @Param('threadId') threadId: string,
     @Body() dto: ResumeThreadDto,
@@ -136,6 +152,7 @@ export class ThreadsController {
   }
 
   @Post(':threadId/cancel-wait')
+  @ApiCreatedResponse({ type: ThreadDto })
   async cancelWait(
     @Param('threadId') threadId: string,
     @CtxStorage() ctx: AppContextStorage,

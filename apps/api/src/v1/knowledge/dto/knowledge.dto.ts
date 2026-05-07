@@ -65,5 +65,14 @@ export class KnowledgeDocListQueryDto extends createZodDto(
   KnowledgeDocListQuerySchema,
 ) {}
 
+export const KnowledgeDocListResultSchema = z.object({
+  items: z.array(KnowledgeDocSchema),
+  total: z.number().int().nonnegative(),
+});
+
+export class KnowledgeDocListResultDto extends createZodDto(
+  KnowledgeDocListResultSchema,
+) {}
+
 export type KnowledgeDocInput = z.infer<typeof KnowledgeDocInputSchema>;
 export type KnowledgeDocListQuery = z.infer<typeof KnowledgeDocListQuerySchema>;

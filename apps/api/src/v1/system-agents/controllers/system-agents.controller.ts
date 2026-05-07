@@ -1,5 +1,5 @@
 import { Controller, Get, Param } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import { OnlyForAuthorized } from '@packages/http-server';
 
 import { SystemAgentResponseDto } from '../dto/system-agents.dto';
@@ -13,11 +13,13 @@ export class SystemAgentsController {
   constructor(private readonly systemAgentsService: SystemAgentsService) {}
 
   @Get()
+  @ApiOkResponse({ type: SystemAgentResponseDto, isArray: true })
   async getAll(): Promise<SystemAgentResponseDto[]> {
     return await this.systemAgentsService.getAll();
   }
 
   @Get(':id')
+  @ApiOkResponse({ type: SystemAgentResponseDto })
   async getById(@Param('id') id: string): Promise<SystemAgentResponseDto> {
     return await this.systemAgentsService.getById(id);
   }
