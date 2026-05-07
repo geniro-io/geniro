@@ -8,7 +8,7 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { CtxStorage, OnlyForAuthorized } from '@packages/http-server';
 
 import { AppContextStorage } from '../../../auth/app-context-storage';
@@ -88,6 +88,12 @@ export class GitRepositoriesController {
   }
 
   @Get(':id/index')
+  @ApiQuery({
+    name: 'branch',
+    required: false,
+    type: String,
+    description: 'Optional branch name to filter repo indexes',
+  })
   async getRepoIndexByRepositoryId(
     @Param('id') id: string,
     @Query('branch') branch: string | undefined,

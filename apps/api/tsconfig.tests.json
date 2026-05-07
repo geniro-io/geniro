@@ -3,15 +3,9 @@
   "compilerOptions": {
     "outDir": "./dist",
     "rootDir": "./",
-    "plugins": [
-      { "transform": "@packages/http-server/swagger-plugin.js" },
-    ]
   },
   "include": [
     "src/**/*",
     "cypress/**/*",
-  ],
-  "ts-node": {
-    "compiler": "ts-patch/compiler"
-  }
+  ]
 }

@@ -2,15 +2,9 @@
   "extends": "../../tsconfig.build.json",
   "compilerOptions": {
     "outDir": "./dist",
-    "rootDir": "./src",
-    "plugins": [
-      { "transform": "@packages/http-server/swagger-plugin.js" }
-    ]
+    "rootDir": "./src"
   },
   "include": [
     "src/**/*"
-  ],
-  "ts-node": {
-    "compiler": "ts-patch/compiler"
-  }
+  ]
 }

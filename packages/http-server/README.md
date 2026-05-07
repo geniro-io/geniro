@@ -200,24 +200,6 @@ export class FilterDto {
 }
 ```
 
-## Swagger CLI Plugin
-
-Enhance your NestJS project with automatic DTO decorator generation for Swagger documentation:
-
-1. Add the plugin to your `tsconfig.json`:
-
-```json
-{
-  "compilerOptions": {
-    "plugins": [
-      { "transform": "@packages/http-server/swagger-plugin.js" }
-    ]
-  }
-}
-```
-
-2. The plugin will automatically generate the necessary Swagger decorators for your DTOs.
-
 ## Authentication Providers
 
 The HTTP server includes a flexible authentication system that supports multiple authentication providers:
