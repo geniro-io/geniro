@@ -2,14 +2,14 @@
 
 All URIs are relative to _http://localhost_
 
-| Method                  | HTTP request                       | Description |
-| ----------------------- | ---------------------------------- | ----------- |
-| [**getAll**](#getall)   | **GET** /api/v1/system-agents      |             |
-| [**getById**](#getbyid) | **GET** /api/v1/system-agents/{id} |             |
+| Method                                        | HTTP request                       | Description |
+| --------------------------------------------- | ---------------------------------- | ----------- |
+| [**getSystemAgentById**](#getsystemagentbyid) | **GET** /api/v1/system-agents/{id} |             |
+| [**listSystemAgents**](#listsystemagents)     | **GET** /api/v1/system-agents      |             |
 
-# **getAll**
+# **getSystemAgentById**
 
-> Array<SystemAgentResponseDto> getAll()
+> SystemAgentResponseDto getSystemAgentById()
 
 ### Example
 
@@ -19,16 +19,20 @@ import { SystemAgentsApi, Configuration } from './api';
 const configuration = new Configuration();
 const apiInstance = new SystemAgentsApi(configuration);
 
-const { status, data } = await apiInstance.getAll();
+let id: string; // (default to undefined)
+
+const { status, data } = await apiInstance.getSystemAgentById(id);
 ```
 
 ### Parameters
 
-This endpoint does not have any parameters.
+| Name   | Type         | Description | Notes                 |
+| ------ | ------------ | ----------- | --------------------- |
+| **id** | [**string**] |             | defaults to undefined |
 
 ### Return type
 
-**Array<SystemAgentResponseDto>**
+**SystemAgentResponseDto**
 
 ### Authorization
 
@@ -47,9 +51,9 @@ This endpoint does not have any parameters.
 
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
 
-# **getById**
+# **listSystemAgents**
 
-> SystemAgentResponseDto getById()
+> Array<SystemAgentResponseDto> listSystemAgents()
 
 ### Example
 
@@ -59,20 +63,16 @@ import { SystemAgentsApi, Configuration } from './api';
 const configuration = new Configuration();
 const apiInstance = new SystemAgentsApi(configuration);
 
-let id: string; // (default to undefined)
-
-const { status, data } = await apiInstance.getById(id);
+const { status, data } = await apiInstance.listSystemAgents();
 ```
 
 ### Parameters
 
-| Name   | Type         | Description | Notes                 |
-| ------ | ------------ | ----------- | --------------------- |
-| **id** | [**string**] |             | defaults to undefined |
+This endpoint does not have any parameters.
 
 ### Return type
 
-**SystemAgentResponseDto**
+**Array<SystemAgentResponseDto>**
 
 ### Authorization
 
