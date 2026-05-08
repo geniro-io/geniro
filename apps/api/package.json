@@ -14,6 +14,7 @@
     "test": "vitest run --passWithNoTests",
     "test:unit": "vitest run --passWithNoTests",
     "test:integration": "vitest run --passWithNoTests --config vitest.integration.config.ts",
+    "test:runtime-smoke": "SMOKE_LOG=/tmp/runtime-smoke-$$.log; node ./dist/main.js > $SMOKE_LOG 2>&1 & SMOKE_PID=$!; sleep 10; kill $SMOKE_PID 2>/dev/null; wait $SMOKE_PID 2>/dev/null; if grep -qE \"ERR_REQUIRE_ESM|Cannot use import statement|ERR_UNKNOWN_FILE_EXTENSION|ERR_PACKAGE_PATH_NOT_EXPORTED|Reflect\\.metadata is not a function|decorators are not supported|Cannot find module '@packages/\" $SMOKE_LOG; then cat $SMOKE_LOG; rm -f $SMOKE_LOG; exit 1; fi; rm -f $SMOKE_LOG",
     "test:cov": "vitest run --coverage --passWithNoTests",
     "test:e2e:generate-api": "cy-generate-api http://localhost:5000/swagger-api-json cypress/api-definitions && pnpm run lint:fix",
     "test:e2e": "cypress run -P ./cypress",

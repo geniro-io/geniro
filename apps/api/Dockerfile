@@ -39,10 +39,6 @@ COPY --from=build $WORKDIR/apps/$APP_NAME/node_modules ./apps/$APP_NAME/node_mod
 
 # For seeds
 COPY --from=build $WORKDIR/apps/$APP_NAME/src ./apps/$APP_NAME/src/
-COPY --from=build $WORKDIR/apps/$APP_NAME/tsconfig.json ./apps/$APP_NAME/
-COPY --from=build $WORKDIR/apps/$APP_NAME/tsconfig.build.json ./apps/$APP_NAME/
-COPY --from=build $WORKDIR/tsconfig.build.json ./
-COPY --from=build $WORKDIR/tsconfig.json ./
 #RUN find ./packages -mindepth 2 -maxdepth 2 \
 #  ! -name dist \
 #  ! -name node_modules \
@@ -53,4 +49,4 @@ RUN corepack enable && pnpm --version
 
 EXPOSE $HTTP_PORT
 
-CMD pnpm run --filter "*$APP_NAME" start
+CMD ["node", "apps/api/dist/main.js"]
