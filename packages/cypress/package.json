@@ -3,7 +3,15 @@
   "version": "1.7.14",
   "author": "Sergey Razumovskiy <s.razumru@gmail.com>",
   "bin": {
-    "cy-generate-api": "src/bin/generate-api.js"
+    "cy-generate-api": "src/bin/generate-api.mjs"
+  },
+  "exports": {
+    ".": {
+      "source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
+    }
   },
   "dependencies": {
     "@hey-api/openapi-ts": "^0.97.0",
@@ -19,6 +27,7 @@
     "typescript": "^6.0.3"
   },
   "main": "dist/index.js",
+  "module": "./dist/index.mjs",
   "peerDependencies": {
     "@nestjs/common": "^11.1.8",
     "cypress": "^15.5.0"
@@ -26,7 +35,7 @@
   "scripts": {
     "lint:fix": "pnpm run lint --fix",
     "lint": "pnpm eslint src",
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsup",
     "prebuild": "rm -rf ./dist || true"
   },
   "types": "dist/index.d.ts"

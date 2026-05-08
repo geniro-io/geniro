@@ -1,4 +1,4 @@
-import { Transform, TransformFnParams } from 'class-transformer';
+import { Transform, type TransformFnParams } from 'class-transformer';
 import { isNumberString } from 'class-validator';
 import { isArray, isNumber, isString } from 'lodash';
 

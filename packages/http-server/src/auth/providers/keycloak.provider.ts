@@ -3,10 +3,10 @@ import {
   createRemoteJWKSet,
   decodeJwt,
   jwtVerify,
-  JWTVerifyOptions,
+  type JWTVerifyOptions,
 } from 'jose';
 
-import { IContextData } from '../auth.types';
+import type { IContextData } from '../auth.types';
 import { AuthProvider } from './auth.provider';
 
 export class KeycloakProvider extends AuthProvider {

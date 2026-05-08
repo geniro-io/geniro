@@ -1,4 +1,4 @@
-import { ExecutionContext } from '@nestjs/common';
+import type { ExecutionContext } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { ForbiddenException } from '@packages/common';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';

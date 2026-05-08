@@ -7,7 +7,7 @@ import {
 } from '@packages/common';
 
 import { RequestContextService } from './context';
-import { ISentryExceptionData } from './http-server.types';
+import type { ISentryExceptionData } from './http-server.types';
 
 @Injectable()
 export class ExceptionHandler {

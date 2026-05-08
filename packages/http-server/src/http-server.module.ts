@@ -1,11 +1,11 @@
-import { DynamicModule, Module } from '@nestjs/common';
+import { type DynamicModule, Module } from '@nestjs/common';
 import { APP_INTERCEPTOR, APP_PIPE } from '@nestjs/core';
 import { ZodSerializerInterceptor } from 'nestjs-zod';
 
 import { AppContextModule } from './context';
 import { ExceptionHandler } from './exception-handler';
 import { HealthCheckerModule } from './health/health-checker.module';
-import { HttpServerParams, IHttpServerParams } from './http-server.types';
+import { HttpServerParams, type IHttpServerParams } from './http-server.types';
 import { ZodValidationPipe } from './pipes/zod-validation.pipe';
 
 @Module({})

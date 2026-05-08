@@ -1,33 +1,33 @@
-import compress, { FastifyCompressOptions } from '@fastify/compress';
+import compress, { type FastifyCompressOptions } from '@fastify/compress';
 import multipart from '@fastify/multipart';
 import {
   ClassSerializerInterceptor,
-  DynamicModule,
-  INestApplication,
+  type DynamicModule,
+  type INestApplication,
   RequestMethod,
   VersioningType,
 } from '@nestjs/common';
 import { ContextIdFactory, NestFactory, Reflector } from '@nestjs/core';
 import {
   FastifyAdapter,
-  NestFastifyApplication,
+  type NestFastifyApplication,
 } from '@nestjs/platform-fastify';
 import {
   DocumentBuilder,
-  OpenAPIObject,
-  SwaggerCustomOptions,
+  type OpenAPIObject,
+  type SwaggerCustomOptions,
   SwaggerModule,
 } from '@nestjs/swagger';
 import {
   AppBootstrapperConfigService,
   BaseLogger,
   DefaultLogger,
-  IAppBootstrapperExtension,
+  type IAppBootstrapperExtension,
   Logger,
 } from '@packages/common';
 import { apiReference } from '@scalar/nestjs-api-reference';
 import rTracer from 'cls-rtracer';
-import { FastifyInstance } from 'fastify';
+import type { FastifyInstance } from 'fastify';
 import qs from 'fastify-qs';
 import helmet from 'helmet';
 import { cleanupOpenApiDoc } from 'nestjs-zod';
@@ -35,7 +35,7 @@ import { cleanupOpenApiDoc } from 'nestjs-zod';
 import { RequestContextLogger } from './context';
 import { ExceptionsFilter } from './exceptions.filter';
 import { HttpServerModule } from './http-server.module';
-import { IHttpServerParams } from './http-server.types';
+import type { IHttpServerParams } from './http-server.types';
 import { ZodResponseInterceptor } from './interceptors/zod-response.interceptor';
 
 const HTTP_VERBS = [

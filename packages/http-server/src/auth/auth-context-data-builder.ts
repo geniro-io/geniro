@@ -1,5 +1,5 @@
 import { Inject, Injectable, Optional } from '@nestjs/common';
-import { UnknownRecord } from 'type-fest';
+import type { UnknownRecord } from 'type-fest';
 
 import * as httpServerTypes from '../http-server.types';
 import type { IAuthModuleParams, IContextData } from './auth.types';

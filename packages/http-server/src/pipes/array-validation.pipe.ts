@@ -1,4 +1,4 @@
-import { ParseArrayOptions, ParseArrayPipe } from '@nestjs/common';
+import { type ParseArrayOptions, ParseArrayPipe } from '@nestjs/common';
 
 import { ValidationPipe } from './validation.pipe';
 

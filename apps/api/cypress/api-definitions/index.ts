@@ -86,7 +86,7 @@ export {
   updatePreferences,
   updateProject,
   updateRepository,
-} from './sdk.gen.js';
+} from './sdk.gen';
 export type {
   AnalyticsByGraphResponseDto,
   AnalyticsOverviewDto,
@@ -400,4 +400,4 @@ export type {
   UpdateSecretDto,
   UpdateUserPreferencesDto,
   UserPreferencesDto,
-} from './types.gen.js';
+} from './types.gen';

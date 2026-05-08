@@ -1,8 +1,12 @@
-import { DynamicModule, Global, MiddlewareConsumer } from '@nestjs/common';
+import {
+  type DynamicModule,
+  Global,
+  type MiddlewareConsumer,
+} from '@nestjs/common';
 import { compact } from 'lodash';
 
 import { HttpServerAuthParams } from '../http-server.types';
-import { IAuthModuleParams } from './auth.types';
+import type { IAuthModuleParams } from './auth.types';
 import { AuthContextService } from './auth-context.service';
 import { AuthContextDataBuilder } from './auth-context-data-builder';
 import { AuthGuard } from './guards/auth.guard';

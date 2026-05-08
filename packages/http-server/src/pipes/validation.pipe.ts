@@ -1,9 +1,12 @@
 import {
-  ValidationError,
+  type ValidationError,
   ValidationPipe as NestValidationPipe,
-  ValidationPipeOptions,
+  type ValidationPipeOptions,
 } from '@nestjs/common';
-import { IExceptionFieldError, ValidationException } from '@packages/common';
+import {
+  type IExceptionFieldError,
+  ValidationException,
+} from '@packages/common';
 
 export class ValidationPipe extends NestValidationPipe {
   constructor(options?: ValidationPipeOptions) {

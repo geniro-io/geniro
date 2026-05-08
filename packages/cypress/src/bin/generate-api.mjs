@@ -1,4 +1,5 @@
-import { generateClient } from '../api-generator.js';
+#!/usr/bin/env node
+import { generateClient } from '@packages/cypress';
 
 const [url, output] = process.argv.slice(2);
 
