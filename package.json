@@ -4,7 +4,7 @@
   "private": true,
   "license": "Apache-2.0",
   "scripts": {
-    "full-check": "pnpm -s build && pnpm -s build:tests && pnpm -s lint:fix && pnpm -s test:unit && pnpm -s test:integration",
+    "full-check": "pnpm -s build && pnpm --filter @geniro/api -s check-types && pnpm -s build:tests && pnpm -s lint:fix && pnpm -s test:unit && pnpm -s test:integration",
     "build": "turbo run build",
     "build:tests": "turbo run build:tests",
     "build:packages": "turbo run build --filter='./packages/*'",
@@ -43,6 +43,7 @@
     "@commitlint/config-conventional": "^20.5.3",
     "@eslint/js": "^10.0.1",
     "@semantic-release/commit-analyzer": "^13.0.1",
+    "@swc/cli": "^0.6.0",
     "@swc/core": "^1.15.32",
     "@types/node": "^25.6.0",
     "@typescript-eslint/eslint-plugin": "^8.59.1",

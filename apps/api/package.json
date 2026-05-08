@@ -8,8 +8,9 @@
   "scripts": {
     "lint:fix": "pnpm run lint --fix",
     "lint": "pnpm eslint src cypress",
-    "build": "tsc -p tsconfig.build.json",
+    "build": "swc src -d dist --config-file .swcrc --copy-files --strip-leading-paths --ignore '**/*.spec.ts' --ignore '**/*.int.ts'",
     "build:tests": "tsc -p tsconfig.tests.json",
+    "check-types": "tsc --noEmit -p tsconfig.build.json",
     "prebuild": "rm -rf ./dist || true",
     "test": "vitest run --passWithNoTests",
     "test:unit": "vitest run --passWithNoTests",
