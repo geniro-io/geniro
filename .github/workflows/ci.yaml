@@ -47,8 +47,8 @@ jobs:
       - name: Build
         run: pnpm build
 
-      - name: Type-check apps/api
-        run: pnpm --filter @geniro/api -s check-types
+      - name: Type-check
+        run: pnpm -s check-types
 
       - name: ESM runtime smoke
         run: |

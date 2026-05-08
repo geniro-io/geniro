@@ -12,6 +12,11 @@
       "inputs": ["src/**"],
       "outputs": ["dist/**"]
     },
+    "check-types": {
+      "dependsOn": ["^build"],
+      "inputs": ["src/**"],
+      "outputs": []
+    },
     "lint": {
       "outputs": [],
       "inputs": ["src/**"]
