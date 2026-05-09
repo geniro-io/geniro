@@ -19,15 +19,17 @@ const config = defineConfig({
   schema: environment.postgresSchema || undefined,
   entities: [join(__dirname, '..', '**/*.entity.js')],
   entitiesTs: [join(__dirname, '..', '**/*.entity.ts')],
-  // MikroORM v7 (ESM) uses dynamic import() for entity discovery, which bypasses
-  // ts-node-dev's CJS require hooks and fails on .ts files. This provider falls
-  // back to require() for .ts files so ts-node-dev can compile them.
+  // MikroORM v7 (ESM) uses dynamic import() for entity discovery. In dev,
+  // @swc-node/register only hooks CJS require() for .ts files; Node's ESM
+  // loader has no .ts hook, so import() of a .ts entity fails. This provider
+  // falls back to require() for .ts files so SWC can compile them.
 
   dynamicImportProvider: async (id: string) => {
     // In vitest, import() is intercepted by the transform pipeline (SWC) which
     // handles decorators and TS syntax. CJS require() bypasses the pipeline and
     // hits Node's native parser which fails on decorators.
-    // In ts-node-dev, require() is needed because import() isn't hooked.
+    // Outside vitest (dev start:dev), require() is needed because import() of
+    // .ts files isn't hooked by @swc-node/register.
     const isVitest = typeof process !== 'undefined' && !!process.env['VITEST'];
     const path = id.startsWith('file://') ? new URL(id).pathname : id;
     if (!isVitest && (id.endsWith('.ts') || id.includes('.ts?'))) {
