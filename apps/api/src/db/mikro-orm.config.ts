@@ -29,12 +29,14 @@ const config = defineConfig({
     // hits Node's native parser which fails on decorators.
     // In ts-node-dev, require() is needed because import() isn't hooked.
     const isVitest = typeof process !== 'undefined' && !!process.env['VITEST'];
+    const path = id.startsWith('file://') ? new URL(id).pathname : id;
     if (!isVitest && (id.endsWith('.ts') || id.includes('.ts?'))) {
-      const path = id.startsWith('file://') ? new URL(id).pathname : id;
       return esmRequire(path);
     }
-
-    return import(id);
+    // SWC's commonjs transform rewrites `import(id)` to `require(p)`, which
+    // doesn't accept file:// URLs. MikroORM v7 emits file:// URLs for entity
+    // discovery, so we strip the prefix above before forwarding.
+    return import(path);
   },
   // Ignore undefined values in find queries instead of treating them as NULL.
   // This allows safely spreading optional DTO fields into FilterQuery without

@@ -1,8 +1,12 @@
 import Docker from 'dockerode';
 import { Client } from 'pg';
-import { GenericContainer, StartedTestContainer, Wait } from 'testcontainers';
+import {
+  GenericContainer,
+  type StartedTestContainer,
+  Wait,
+} from 'testcontainers';
 
-import migrationConfig from '../../db/mikro-orm.migration-config';
+import mikroOrmConfig from '../../db/mikro-orm.config';
 
 const WORKER_COUNT = 5;
 const CONTAINER_LABELS = { 'io.geniro.test': 'true' };
@@ -77,6 +81,8 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
 
   return async () => {
     await sweepRuntimeContainers(sessionStartedAtUnixSec);
+    // Networks can only be removed after their containers have stopped.
+    await sweepRuntimeNetworks(sessionStartedAtUnixSec);
     await dropWorkerDatabases(postgresUrl, workerDbNames);
     await Promise.allSettled(containers.map((c) => c.stop()));
   };
@@ -136,6 +142,60 @@ const sweepRuntimeContainers = async (
   );
 };
 
+/**
+ * Force-remove any bridge networks created by DockerRuntime during this test
+ * session. Must run after sweepRuntimeContainers so containers have already
+ * been removed — Docker refuses to delete a network that has active endpoints.
+ */
+const sweepRuntimeNetworks = async (
+  sessionStartedAtUnixSec: number,
+): Promise<void> => {
+  let docker: Docker;
+  try {
+    docker = new Docker();
+  } catch (err) {
+    process.stdout.write(
+      `[integration] network sweep skipped — dockerode init failed: ${(err as Error).message}\n`,
+    );
+    return;
+  }
+
+  let candidates: Awaited<ReturnType<Docker['listNetworks']>>;
+  try {
+    candidates = await docker.listNetworks({
+      filters: {
+        label: ['geniro/managed=true', 'geniro/created-by=docker-runtime'],
+      },
+    });
+  } catch (err) {
+    process.stdout.write(
+      `[integration] network sweep skipped — listNetworks failed: ${(err as Error).message}\n`,
+    );
+    return;
+  }
+
+  const testEra = candidates.filter(
+    (net) => new Date(net.Created).getTime() / 1000 >= sessionStartedAtUnixSec,
+  );
+  if (testEra.length === 0) {
+    return;
+  }
+
+  process.stdout.write(
+    `[integration] sweeping ${testEra.length} runtime network(s) spawned during tests\n`,
+  );
+
+  await Promise.allSettled(
+    testEra.map(async (info) => {
+      try {
+        await docker.getNetwork(info.Id).remove();
+      } catch {
+        // best-effort: network may already be removed or still have endpoints
+      }
+    }),
+  );
+};
+
 const runMigrations = async (postgresUrl: string): Promise<void> => {
   const previous = process.env.POSTGRES_URL;
   process.env.POSTGRES_URL = postgresUrl;
@@ -143,11 +203,14 @@ const runMigrations = async (postgresUrl: string): Promise<void> => {
     const { MikroORM } = await import('@mikro-orm/postgresql');
     const { Migrator } = await import('@mikro-orm/migrations');
     const orm = await MikroORM.init({
-      ...migrationConfig,
+      ...mikroOrmConfig,
       extensions: [Migrator],
       clientUrl: postgresUrl,
+      entities: [],
+      entitiesTs: [],
+      discovery: { ...mikroOrmConfig.discovery, warnWhenNoEntities: false },
       migrations: {
-        ...migrationConfig.migrations,
+        ...mikroOrmConfig.migrations,
         snapshot: false,
       },
     });

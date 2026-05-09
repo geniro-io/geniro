@@ -1,3 +1,4 @@
+import type { Ref } from '@mikro-orm/core';
 import {
   Entity,
   Index,
@@ -31,7 +32,7 @@ export class MessageEntity extends TimestampsEntity {
     nullable: true,
     persist: false,
   })
-  thread?: ThreadEntity;
+  thread?: Ref<ThreadEntity>;
 
   @Property({ type: 'varchar' })
   @Index()
