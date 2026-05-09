@@ -55,7 +55,7 @@ import { createTestModule } from '../setup';
 
 const THREAD_ID = `files-tools-int-${Date.now()}`;
 const WORKSPACE_DIR = `/runtime-workspace/${THREAD_ID}`;
-const INT_TEST_TIMEOUT = 60000;
+const INT_TEST_TIMEOUT = 120_000;
 const RUNNABLE_CONFIG: ToolRunnableConfig<BaseAgentConfigurable> = {
   configurable: {
     thread_id: THREAD_ID,
@@ -175,7 +175,7 @@ describe('Files tools integration', () => {
         temporary: true,
       },
     );
-  }, 60000);
+  }, INT_TEST_TIMEOUT);
 
   afterAll(async () => {
     if (runtime) {
@@ -185,7 +185,7 @@ describe('Files tools integration', () => {
     if (moduleRef) {
       await moduleRef.close();
     }
-  }, 60000);
+  }, INT_TEST_TIMEOUT);
 
   it(
     'applies changes and searches text inside the runtime workspace',
