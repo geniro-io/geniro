@@ -1,6 +1,6 @@
-import { createParamDecorator, ExecutionContext } from '@nestjs/common';
+import { createParamDecorator, type ExecutionContext } from '@nestjs/common';
 
-import { IContextData } from '../auth.types';
+import type { IContextData } from '../auth.types';
 import { AuthContextStorage } from '../auth-context-storage';
 
 export const CtxData = createParamDecorator(

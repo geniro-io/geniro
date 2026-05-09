@@ -2,14 +2,14 @@
 
 All URIs are relative to _http://localhost_
 
-| Method                  | HTTP request                            | Description |
-| ----------------------- | --------------------------------------- | ----------- |
-| [**getAll**](#getall)   | **GET** /api/v1/instruction-blocks      |             |
-| [**getById**](#getbyid) | **GET** /api/v1/instruction-blocks/{id} |             |
+| Method                                                  | HTTP request                            | Description |
+| ------------------------------------------------------- | --------------------------------------- | ----------- |
+| [**getInstructionBlockById**](#getinstructionblockbyid) | **GET** /api/v1/instruction-blocks/{id} |             |
+| [**listInstructionBlocks**](#listinstructionblocks)     | **GET** /api/v1/instruction-blocks      |             |
 
-# **getAll**
+# **getInstructionBlockById**
 
-> Array<InstructionBlockResponseDto> getAll()
+> InstructionBlockResponseDto getInstructionBlockById()
 
 ### Example
 
@@ -19,16 +19,20 @@ import { InstructionBlocksApi, Configuration } from './api';
 const configuration = new Configuration();
 const apiInstance = new InstructionBlocksApi(configuration);
 
-const { status, data } = await apiInstance.getAll();
+let id: string; // (default to undefined)
+
+const { status, data } = await apiInstance.getInstructionBlockById(id);
 ```
 
 ### Parameters
 
-This endpoint does not have any parameters.
+| Name   | Type         | Description | Notes                 |
+| ------ | ------------ | ----------- | --------------------- |
+| **id** | [**string**] |             | defaults to undefined |
 
 ### Return type
 
-**Array<InstructionBlockResponseDto>**
+**InstructionBlockResponseDto**
 
 ### Authorization
 
@@ -47,9 +51,9 @@ This endpoint does not have any parameters.
 
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
 
-# **getById**
+# **listInstructionBlocks**
 
-> InstructionBlockResponseDto getById()
+> Array<InstructionBlockResponseDto> listInstructionBlocks()
 
 ### Example
 
@@ -59,20 +63,16 @@ import { InstructionBlocksApi, Configuration } from './api';
 const configuration = new Configuration();
 const apiInstance = new InstructionBlocksApi(configuration);
 
-let id: string; // (default to undefined)
-
-const { status, data } = await apiInstance.getById(id);
+const { status, data } = await apiInstance.listInstructionBlocks();
 ```
 
 ### Parameters
 
-| Name   | Type         | Description | Notes                 |
-| ------ | ------------ | ----------- | --------------------- |
-| **id** | [**string**] |             | defaults to undefined |
+This endpoint does not have any parameters.
 
 ### Return type
 
-**InstructionBlockResponseDto**
+**Array<InstructionBlockResponseDto>**
 
 ### Authorization
 

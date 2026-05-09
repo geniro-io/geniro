@@ -1,6 +1,5 @@
 import { type CallHandler, type ExecutionContext } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { DECORATORS } from '@nestjs/swagger/dist/constants';
 import { of } from 'rxjs';
 import { describe, expect, it, vi } from 'vitest';
 import z from 'zod';
@@ -32,7 +31,7 @@ describe('ZodResponseInterceptor', () => {
     const reflector = new Reflector();
     // Spy to return Swagger-like metadata with Zod-powered DTO shape
     vi.spyOn(reflector, 'getAllAndOverride').mockImplementation((key) => {
-      if (key === DECORATORS.API_RESPONSE) {
+      if (key === 'swagger/apiResponse') {
         return {
           200: {
             type: { schema },
@@ -60,7 +59,7 @@ describe('ZodResponseInterceptor', () => {
 
     const reflector = new Reflector();
     vi.spyOn(reflector, 'getAllAndOverride').mockImplementation((key) => {
-      if (key === DECORATORS.API_RESPONSE) {
+      if (key === 'swagger/apiResponse') {
         return {
           200: {
             type: { schema },

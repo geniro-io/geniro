@@ -1,7 +1,10 @@
-import { DynamicModule, Type } from '@nestjs/common';
-import { ModuleMetadata } from '@nestjs/common/interfaces/modules/module-metadata.interface';
+import {
+  type DynamicModule,
+  type ModuleMetadata,
+  type Type,
+} from '@nestjs/common';
 
-import { BaseLogger } from './logger';
+import { type BaseLogger } from './logger/index';
 
 export interface IAppBootstrapperParams {
   environment: string;

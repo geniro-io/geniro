@@ -2,8 +2,8 @@
   "extends": "../../tsconfig.json",
   "include": ["src/**/*"],
   "compilerOptions": {
-    "plugins": [
-      { "transform": "@packages/http-server/swagger-plugin.js" }
-    ],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "verbatimModuleSyntax": false
   }
 }

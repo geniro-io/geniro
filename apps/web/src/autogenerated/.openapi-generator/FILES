@@ -24,10 +24,6 @@ docs/CreateSecretDto.md
 docs/ExecuteTriggerDto.md
 docs/ExecuteTriggerDtoMessagesInner.md
 docs/ExecuteTriggerDtoMessagesInnerAnyOf.md
-docs/ExecuteTriggerDtoMessagesInnerAnyOfContentInner.md
-docs/ExecuteTriggerDtoMessagesInnerAnyOfContentInnerOneOf.md
-docs/ExecuteTriggerDtoMessagesInnerAnyOfContentInnerOneOf1.md
-docs/ExecuteTriggerDtoMessagesInnerAnyOfContentInnerOneOf1ImageUrl.md
 docs/ExecuteTriggerResponseDto.md
 docs/GetRepoIndexesBranchesParameter.md
 docs/GitAuthApi.md
@@ -49,6 +45,8 @@ docs/KnowledgeContentSuggestionRequestDto.md
 docs/KnowledgeContentSuggestionResponseDto.md
 docs/KnowledgeDocCreateDto.md
 docs/KnowledgeDocDto.md
+docs/KnowledgeDocListResultDto.md
+docs/KnowledgeDocListResultDtoItemsInner.md
 docs/KnowledgeDocUpdateDto.md
 docs/LinkInstallationResponseDto.md
 docs/ListInstallationsResponseDto.md
@@ -105,6 +103,10 @@ docs/ThreadMessageDtoMessageOneOf2.md
 docs/ThreadMessageDtoMessageOneOf3.md
 docs/ThreadMessageDtoMessageOneOf4.md
 docs/ThreadMessageDtoMessageOneOfContent.md
+docs/ThreadMessageDtoMessageOneOfContentAnyOfInner.md
+docs/ThreadMessageDtoMessageOneOfContentAnyOfInnerOneOf.md
+docs/ThreadMessageDtoMessageOneOfContentAnyOfInnerOneOf1.md
+docs/ThreadMessageDtoMessageOneOfContentAnyOfInnerOneOf1ImageUrl.md
 docs/ThreadMessageDtoRequestTokenUsage.md
 docs/ThreadUsageStatisticsDto.md
 docs/ThreadUsageStatisticsDtoByNodeValue.md

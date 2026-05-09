@@ -3,14 +3,11 @@
   "compilerOptions": {
     "outDir": "./dist",
     "rootDir": "./src",
-    "plugins": [
-      { "transform": "@packages/http-server/swagger-plugin.js" }
-    ]
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "verbatimModuleSyntax": false
   },
   "include": [
     "src/**/*"
-  ],
-  "ts-node": {
-    "compiler": "ts-patch/compiler"
-  }
+  ]
 }

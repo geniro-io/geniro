@@ -105,7 +105,7 @@ void (empty response body)
 
 # **getRepoIndexByRepositoryId**
 
-> object getRepoIndexByRepositoryId()
+> RepoIndexDto getRepoIndexByRepositoryId()
 
 ### Example
 
@@ -116,19 +116,24 @@ const configuration = new Configuration();
 const apiInstance = new GitRepositoriesApi(configuration);
 
 let id: string; // (default to undefined)
+let branch: string; //Optional branch name to filter repo indexes (optional) (default to undefined)
 
-const { status, data } = await apiInstance.getRepoIndexByRepositoryId(id);
+const { status, data } = await apiInstance.getRepoIndexByRepositoryId(
+  id,
+  branch,
+);
 ```
 
 ### Parameters
 
-| Name   | Type         | Description | Notes                 |
-| ------ | ------------ | ----------- | --------------------- |
-| **id** | [**string**] |             | defaults to undefined |
+| Name       | Type         | Description                                 | Notes                            |
+| ---------- | ------------ | ------------------------------------------- | -------------------------------- |
+| **id**     | [**string**] |                                             | defaults to undefined            |
+| **branch** | [**string**] | Optional branch name to filter repo indexes | (optional) defaults to undefined |
 
 ### Return type
 
-**object**
+**RepoIndexDto**
 
 ### Authorization
 

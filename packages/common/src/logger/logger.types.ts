@@ -1,5 +1,5 @@
-import { SeverityLevel } from '@sentry/core';
-import { LevelWithSilent } from 'pino';
+import type { SeverityLevel } from '@sentry/core';
+import type { LevelWithSilent } from 'pino';
 
 export type LogLevel = LevelWithSilent | 'system';
 

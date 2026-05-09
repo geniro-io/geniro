@@ -1,4 +1,4 @@
-import { DynamicModule, Module, Type } from '@nestjs/common';
+import { type DynamicModule, Module, type Type } from '@nestjs/common';
 
 import { HealthCheckerController } from './health-checker.controller';
 

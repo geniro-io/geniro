@@ -9,7 +9,12 @@ import {
   Put,
   Query,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiCreatedResponse,
+  ApiOkResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { CtxStorage, OnlyForAuthorized } from '@packages/http-server';
 
 import { AppContextStorage } from '../../../auth/app-context-storage';
@@ -18,6 +23,7 @@ import {
   KnowledgeDocCreateDto,
   KnowledgeDocDto,
   KnowledgeDocListQueryDto,
+  KnowledgeDocListResultDto,
   KnowledgeDocUpdateDto,
 } from '../dto/knowledge.dto';
 import {
@@ -33,6 +39,7 @@ export class KnowledgeController {
   constructor(private readonly knowledgeService: KnowledgeService) {}
 
   @Post()
+  @ApiCreatedResponse({ type: KnowledgeDocDto })
   async createDoc(
     @Body() dto: KnowledgeDocCreateDto,
     @CtxStorage() contextDataStorage: AppContextStorage,
@@ -41,6 +48,7 @@ export class KnowledgeController {
   }
 
   @Put(':id')
+  @ApiOkResponse({ type: KnowledgeDocDto })
   async updateDoc(
     @Param() params: EntityUUIDDto,
     @Body() dto: KnowledgeDocUpdateDto,
@@ -59,6 +67,7 @@ export class KnowledgeController {
   }
 
   @Get()
+  @ApiOkResponse({ type: KnowledgeDocListResultDto })
   async listDocs(
     @Query() query: KnowledgeDocListQueryDto,
     @CtxStorage() contextDataStorage: AppContextStorage,
@@ -67,6 +76,7 @@ export class KnowledgeController {
   }
 
   @Get(':id')
+  @ApiOkResponse({ type: KnowledgeDocDto })
   async getDoc(
     @Param() params: EntityUUIDDto,
     @CtxStorage() contextDataStorage: AppContextStorage,

@@ -2,7 +2,7 @@ import { BaseLogger } from '@packages/common';
 import type { FastifyRequest } from 'fastify';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { IContextData } from '../auth.types';
+import type { IContextData } from '../auth.types';
 import { AuthContextService } from '../auth-context.service';
 import { AuthContextStorage } from '../auth-context-storage';
 import { FetchContextDataMiddleware } from './fetch-context-data.middleware';

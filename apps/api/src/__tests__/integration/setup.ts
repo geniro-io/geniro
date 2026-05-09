@@ -27,6 +27,7 @@ import { NotificationsService } from '../../v1/notifications/services/notificati
 import { OpenaiService } from '../../v1/openai/openai.service';
 import { RuntimeInstanceDao } from '../../v1/runtime/dao/runtime-instance.dao';
 import { RuntimeProvider } from '../../v1/runtime/services/runtime-provider';
+import { mockLiteLlmClient } from './helpers/test-stubs';
 import {
   installBaseAgentPatch,
   MockLlmModule,
@@ -46,7 +47,6 @@ import { setMockMcpService } from './mocks/mock-mcp/mock-mcp-singleton.utils';
 import { MockRuntimeModule } from './mocks/mock-runtime/mock-runtime.module';
 import { MockRuntimeService } from './mocks/mock-runtime/mock-runtime.service';
 import { MockRuntimeProvider } from './mocks/mock-runtime/mock-runtime-provider';
-import { mockLiteLlmClient } from './helpers/test-stubs';
 
 /**
  * Returns a `MockLlmService`-shaped proxy that resolves method calls to the

@@ -1,4 +1,4 @@
-import { DynamicModule, Global } from '@nestjs/common';
+import { type DynamicModule, Global } from '@nestjs/common';
 
 import { RequestContextService } from './request-context.service';
 import { RequestContextLogger } from './request-context-logger';

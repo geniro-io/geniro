@@ -1,4 +1,4 @@
-import { Collection } from '@mikro-orm/core';
+import { Collection, type Ref } from '@mikro-orm/core';
 import {
   Entity,
   Index,
@@ -46,7 +46,7 @@ export class ThreadEntity extends AuditEntity {
     nullable: true,
     persist: false,
   })
-  graph?: GraphEntity;
+  graph?: Ref<GraphEntity>;
 
   @OneToMany(() => MessageEntity, (m) => m.thread)
   messages?: Collection<MessageEntity>;

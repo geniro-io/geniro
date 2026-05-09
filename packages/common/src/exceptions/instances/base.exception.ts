@@ -1,5 +1,8 @@
 import { EXCEPTION_CODES } from '../exceptions.codes';
-import { IExceptionData, IExceptionFieldError } from '../exceptions.types';
+import {
+  type IExceptionData,
+  type IExceptionFieldError,
+} from '../exceptions.types';
 
 interface BaseExceptionData {
   description?: string;

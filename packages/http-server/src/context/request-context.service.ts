@@ -1,9 +1,9 @@
 import { Inject, Injectable, Scope } from '@nestjs/common';
 import { REQUEST } from '@nestjs/core';
 import rTracer from 'cls-rtracer';
-import { FastifyRequest } from 'fastify';
+import type { FastifyRequest } from 'fastify';
 
-import { IRequestBodySummary, IRequestData } from '../http-server.types';
+import type { IRequestBodySummary, IRequestData } from '../http-server.types';
 
 @Injectable({
   scope: Scope.REQUEST,

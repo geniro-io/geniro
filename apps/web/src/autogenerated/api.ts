@@ -635,10 +635,10 @@ export interface ExecuteTriggerDto {
 export interface ExecuteTriggerDtoMessagesInner {
   /**
    * Content blocks for multimodal messages
-   * @type {Array<ExecuteTriggerDtoMessagesInnerAnyOfContentInner>}
+   * @type {Array<ThreadMessageDtoMessageOneOfContentAnyOfInner>}
    * @memberof ExecuteTriggerDtoMessagesInner
    */
-  'content': Array<ExecuteTriggerDtoMessagesInnerAnyOfContentInner>;
+  'content': Array<ThreadMessageDtoMessageOneOfContentAnyOfInner>;
 }
 /**
  *
@@ -648,103 +648,11 @@ export interface ExecuteTriggerDtoMessagesInner {
 export interface ExecuteTriggerDtoMessagesInnerAnyOf {
   /**
    * Content blocks for multimodal messages
-   * @type {Array<ExecuteTriggerDtoMessagesInnerAnyOfContentInner>}
+   * @type {Array<ThreadMessageDtoMessageOneOfContentAnyOfInner>}
    * @memberof ExecuteTriggerDtoMessagesInnerAnyOf
    */
-  'content': Array<ExecuteTriggerDtoMessagesInnerAnyOfContentInner>;
+  'content': Array<ThreadMessageDtoMessageOneOfContentAnyOfInner>;
 }
-/**
- * @type ExecuteTriggerDtoMessagesInnerAnyOfContentInner
- * @export
- */
-export type ExecuteTriggerDtoMessagesInnerAnyOfContentInner =
-  | ExecuteTriggerDtoMessagesInnerAnyOfContentInnerOneOf
-  | ExecuteTriggerDtoMessagesInnerAnyOfContentInnerOneOf1;
-
-/**
- *
- * @export
- * @interface ExecuteTriggerDtoMessagesInnerAnyOfContentInnerOneOf
- */
-export interface ExecuteTriggerDtoMessagesInnerAnyOfContentInnerOneOf {
-  /**
-   *
-   * @type {string}
-   * @memberof ExecuteTriggerDtoMessagesInnerAnyOfContentInnerOneOf
-   */
-  'type': ExecuteTriggerDtoMessagesInnerAnyOfContentInnerOneOfTypeEnum;
-  /**
-   * Text content
-   * @type {string}
-   * @memberof ExecuteTriggerDtoMessagesInnerAnyOfContentInnerOneOf
-   */
-  'text': string;
-}
-
-export const ExecuteTriggerDtoMessagesInnerAnyOfContentInnerOneOfTypeEnum = {
-  Text: 'text',
-} as const;
-
-export type ExecuteTriggerDtoMessagesInnerAnyOfContentInnerOneOfTypeEnum =
-  (typeof ExecuteTriggerDtoMessagesInnerAnyOfContentInnerOneOfTypeEnum)[keyof typeof ExecuteTriggerDtoMessagesInnerAnyOfContentInnerOneOfTypeEnum];
-
-/**
- *
- * @export
- * @interface ExecuteTriggerDtoMessagesInnerAnyOfContentInnerOneOf1
- */
-export interface ExecuteTriggerDtoMessagesInnerAnyOfContentInnerOneOf1 {
-  /**
-   *
-   * @type {string}
-   * @memberof ExecuteTriggerDtoMessagesInnerAnyOfContentInnerOneOf1
-   */
-  'type': ExecuteTriggerDtoMessagesInnerAnyOfContentInnerOneOf1TypeEnum;
-  /**
-   *
-   * @type {ExecuteTriggerDtoMessagesInnerAnyOfContentInnerOneOf1ImageUrl}
-   * @memberof ExecuteTriggerDtoMessagesInnerAnyOfContentInnerOneOf1
-   */
-  'image_url': ExecuteTriggerDtoMessagesInnerAnyOfContentInnerOneOf1ImageUrl;
-}
-
-export const ExecuteTriggerDtoMessagesInnerAnyOfContentInnerOneOf1TypeEnum = {
-  ImageUrl: 'image_url',
-} as const;
-
-export type ExecuteTriggerDtoMessagesInnerAnyOfContentInnerOneOf1TypeEnum =
-  (typeof ExecuteTriggerDtoMessagesInnerAnyOfContentInnerOneOf1TypeEnum)[keyof typeof ExecuteTriggerDtoMessagesInnerAnyOfContentInnerOneOf1TypeEnum];
-
-/**
- *
- * @export
- * @interface ExecuteTriggerDtoMessagesInnerAnyOfContentInnerOneOf1ImageUrl
- */
-export interface ExecuteTriggerDtoMessagesInnerAnyOfContentInnerOneOf1ImageUrl {
-  /**
-   * Base64 data URL (data:image/...;base64,...)
-   * @type {string}
-   * @memberof ExecuteTriggerDtoMessagesInnerAnyOfContentInnerOneOf1ImageUrl
-   */
-  'url': string;
-  /**
-   * Vision detail level
-   * @type {string}
-   * @memberof ExecuteTriggerDtoMessagesInnerAnyOfContentInnerOneOf1ImageUrl
-   */
-  'detail'?: ExecuteTriggerDtoMessagesInnerAnyOfContentInnerOneOf1ImageUrlDetailEnum;
-}
-
-export const ExecuteTriggerDtoMessagesInnerAnyOfContentInnerOneOf1ImageUrlDetailEnum =
-  {
-    Auto: 'auto',
-    Low: 'low',
-    High: 'high',
-  } as const;
-
-export type ExecuteTriggerDtoMessagesInnerAnyOfContentInnerOneOf1ImageUrlDetailEnum =
-  (typeof ExecuteTriggerDtoMessagesInnerAnyOfContentInnerOneOf1ImageUrlDetailEnum)[keyof typeof ExecuteTriggerDtoMessagesInnerAnyOfContentInnerOneOf1ImageUrlDetailEnum];
-
 /**
  *
  * @export
@@ -1572,6 +1480,98 @@ export interface KnowledgeDocDto {
    *
    * @type {string}
    * @memberof KnowledgeDocDto
+   */
+  'updatedAt': string;
+}
+/**
+ *
+ * @export
+ * @interface KnowledgeDocListResultDto
+ */
+export interface KnowledgeDocListResultDto {
+  /**
+   *
+   * @type {Array<KnowledgeDocListResultDtoItemsInner>}
+   * @memberof KnowledgeDocListResultDto
+   */
+  'items': Array<KnowledgeDocListResultDtoItemsInner>;
+  /**
+   *
+   * @type {number}
+   * @memberof KnowledgeDocListResultDto
+   */
+  'total': number;
+}
+/**
+ *
+ * @export
+ * @interface KnowledgeDocListResultDtoItemsInner
+ */
+export interface KnowledgeDocListResultDtoItemsInner {
+  /**
+   *
+   * @type {string}
+   * @memberof KnowledgeDocListResultDtoItemsInner
+   */
+  'id': string;
+  /**
+   *
+   * @type {number}
+   * @memberof KnowledgeDocListResultDtoItemsInner
+   */
+  'publicId': number;
+  /**
+   *
+   * @type {string}
+   * @memberof KnowledgeDocListResultDtoItemsInner
+   */
+  'content': string;
+  /**
+   *
+   * @type {string}
+   * @memberof KnowledgeDocListResultDtoItemsInner
+   */
+  'title': string;
+  /**
+   *
+   * @type {string}
+   * @memberof KnowledgeDocListResultDtoItemsInner
+   */
+  'summary'?: string | null;
+  /**
+   *
+   * @type {string}
+   * @memberof KnowledgeDocListResultDtoItemsInner
+   */
+  'politic'?: string | null;
+  /**
+   *
+   * @type {string}
+   * @memberof KnowledgeDocListResultDtoItemsInner
+   */
+  'embeddingModel'?: string | null;
+  /**
+   *
+   * @type {Array<string>}
+   * @memberof KnowledgeDocListResultDtoItemsInner
+   */
+  'tags': Array<string>;
+  /**
+   *
+   * @type {string}
+   * @memberof KnowledgeDocListResultDtoItemsInner
+   */
+  'projectId': string | null;
+  /**
+   *
+   * @type {string}
+   * @memberof KnowledgeDocListResultDtoItemsInner
+   */
+  'createdAt': string;
+  /**
+   *
+   * @type {string}
+   * @memberof KnowledgeDocListResultDtoItemsInner
    */
   'updatedAt': string;
 }
@@ -3396,6 +3396,98 @@ export type ThreadMessageDtoMessageOneOf4RoleEnum =
  * @interface ThreadMessageDtoMessageOneOfContent
  */
 export interface ThreadMessageDtoMessageOneOfContent {}
+/**
+ * @type ThreadMessageDtoMessageOneOfContentAnyOfInner
+ * @export
+ */
+export type ThreadMessageDtoMessageOneOfContentAnyOfInner =
+  | ThreadMessageDtoMessageOneOfContentAnyOfInnerOneOf
+  | ThreadMessageDtoMessageOneOfContentAnyOfInnerOneOf1;
+
+/**
+ *
+ * @export
+ * @interface ThreadMessageDtoMessageOneOfContentAnyOfInnerOneOf
+ */
+export interface ThreadMessageDtoMessageOneOfContentAnyOfInnerOneOf {
+  /**
+   *
+   * @type {string}
+   * @memberof ThreadMessageDtoMessageOneOfContentAnyOfInnerOneOf
+   */
+  'type': ThreadMessageDtoMessageOneOfContentAnyOfInnerOneOfTypeEnum;
+  /**
+   * Text content
+   * @type {string}
+   * @memberof ThreadMessageDtoMessageOneOfContentAnyOfInnerOneOf
+   */
+  'text': string;
+}
+
+export const ThreadMessageDtoMessageOneOfContentAnyOfInnerOneOfTypeEnum = {
+  Text: 'text',
+} as const;
+
+export type ThreadMessageDtoMessageOneOfContentAnyOfInnerOneOfTypeEnum =
+  (typeof ThreadMessageDtoMessageOneOfContentAnyOfInnerOneOfTypeEnum)[keyof typeof ThreadMessageDtoMessageOneOfContentAnyOfInnerOneOfTypeEnum];
+
+/**
+ *
+ * @export
+ * @interface ThreadMessageDtoMessageOneOfContentAnyOfInnerOneOf1
+ */
+export interface ThreadMessageDtoMessageOneOfContentAnyOfInnerOneOf1 {
+  /**
+   *
+   * @type {string}
+   * @memberof ThreadMessageDtoMessageOneOfContentAnyOfInnerOneOf1
+   */
+  'type': ThreadMessageDtoMessageOneOfContentAnyOfInnerOneOf1TypeEnum;
+  /**
+   *
+   * @type {ThreadMessageDtoMessageOneOfContentAnyOfInnerOneOf1ImageUrl}
+   * @memberof ThreadMessageDtoMessageOneOfContentAnyOfInnerOneOf1
+   */
+  'image_url': ThreadMessageDtoMessageOneOfContentAnyOfInnerOneOf1ImageUrl;
+}
+
+export const ThreadMessageDtoMessageOneOfContentAnyOfInnerOneOf1TypeEnum = {
+  ImageUrl: 'image_url',
+} as const;
+
+export type ThreadMessageDtoMessageOneOfContentAnyOfInnerOneOf1TypeEnum =
+  (typeof ThreadMessageDtoMessageOneOfContentAnyOfInnerOneOf1TypeEnum)[keyof typeof ThreadMessageDtoMessageOneOfContentAnyOfInnerOneOf1TypeEnum];
+
+/**
+ *
+ * @export
+ * @interface ThreadMessageDtoMessageOneOfContentAnyOfInnerOneOf1ImageUrl
+ */
+export interface ThreadMessageDtoMessageOneOfContentAnyOfInnerOneOf1ImageUrl {
+  /**
+   * Base64 data URL (data:image/...;base64,...)
+   * @type {string}
+   * @memberof ThreadMessageDtoMessageOneOfContentAnyOfInnerOneOf1ImageUrl
+   */
+  'url': string;
+  /**
+   * Vision detail level
+   * @type {string}
+   * @memberof ThreadMessageDtoMessageOneOfContentAnyOfInnerOneOf1ImageUrl
+   */
+  'detail'?: ThreadMessageDtoMessageOneOfContentAnyOfInnerOneOf1ImageUrlDetailEnum;
+}
+
+export const ThreadMessageDtoMessageOneOfContentAnyOfInnerOneOf1ImageUrlDetailEnum =
+  {
+    Auto: 'auto',
+    Low: 'low',
+    High: 'high',
+  } as const;
+
+export type ThreadMessageDtoMessageOneOfContentAnyOfInnerOneOf1ImageUrlDetailEnum =
+  (typeof ThreadMessageDtoMessageOneOfContentAnyOfInnerOneOf1ImageUrlDetailEnum)[keyof typeof ThreadMessageDtoMessageOneOfContentAnyOfInnerOneOf1ImageUrlDetailEnum];
+
 /**
  *
  * @export
@@ -5841,11 +5933,13 @@ export const GitRepositoriesApiAxiosParamCreator = function (
     /**
      *
      * @param {string} id
+     * @param {string} [branch] Optional branch name to filter repo indexes
      * @param {*} [options] Override http request option.
      * @throws {RequiredError}
      */
     getRepoIndexByRepositoryId: async (
       id: string,
+      branch?: string,
       options: RawAxiosRequestConfig = {},
     ): Promise<RequestArgs> => {
       // verify required parameter 'id' is not null or undefined
@@ -5872,6 +5966,10 @@ export const GitRepositoriesApiAxiosParamCreator = function (
       // authentication bearer required
       // http bearer authentication required
       await setBearerAuthToObject(localVarHeaderParameter, configuration);
+
+      if (branch !== undefined) {
+        localVarQueryParameter['branch'] = branch;
+      }
 
       setSearchParams(localVarUrlObj, localVarQueryParameter);
       let headersFromBaseOptions =
@@ -6331,17 +6429,23 @@ export const GitRepositoriesApiFp = function (configuration?: Configuration) {
     /**
      *
      * @param {string} id
+     * @param {string} [branch] Optional branch name to filter repo indexes
      * @param {*} [options] Override http request option.
      * @throws {RequiredError}
      */
     async getRepoIndexByRepositoryId(
       id: string,
+      branch?: string,
       options?: RawAxiosRequestConfig,
     ): Promise<
-      (axios?: AxiosInstance, basePath?: string) => AxiosPromise<object>
+      (axios?: AxiosInstance, basePath?: string) => AxiosPromise<RepoIndexDto>
     > {
       const localVarAxiosArgs =
-        await localVarAxiosParamCreator.getRepoIndexByRepositoryId(id, options);
+        await localVarAxiosParamCreator.getRepoIndexByRepositoryId(
+          id,
+          branch,
+          options,
+        );
       const localVarOperationServerIndex = configuration?.serverIndex ?? 0;
       const localVarOperationServerBasePath =
         operationServerMap['GitRepositoriesApi.getRepoIndexByRepositoryId']?.[
@@ -6620,15 +6724,17 @@ export const GitRepositoriesApiFactory = function (
     /**
      *
      * @param {string} id
+     * @param {string} [branch] Optional branch name to filter repo indexes
      * @param {*} [options] Override http request option.
      * @throws {RequiredError}
      */
     getRepoIndexByRepositoryId(
       id: string,
+      branch?: string,
       options?: RawAxiosRequestConfig,
-    ): AxiosPromise<object> {
+    ): AxiosPromise<RepoIndexDto> {
       return localVarFp
-        .getRepoIndexByRepositoryId(id, options)
+        .getRepoIndexByRepositoryId(id, branch, options)
         .then((request) => request(axios, basePath));
     },
     /**
@@ -6793,16 +6899,18 @@ export class GitRepositoriesApi extends BaseAPI {
   /**
    *
    * @param {string} id
+   * @param {string} [branch] Optional branch name to filter repo indexes
    * @param {*} [options] Override http request option.
    * @throws {RequiredError}
    * @memberof GitRepositoriesApi
    */
   public getRepoIndexByRepositoryId(
     id: string,
+    branch?: string,
     options?: RawAxiosRequestConfig,
   ) {
     return GitRepositoriesApiFp(this.configuration)
-      .getRepoIndexByRepositoryId(id, options)
+      .getRepoIndexByRepositoryId(id, branch, options)
       .then((request) => request(this.axios, this.basePath));
   }
 
@@ -9019,13 +9127,21 @@ export const InstructionBlocksApiAxiosParamCreator = function (
   return {
     /**
      *
+     * @summary
+     * @param {string} id
      * @param {*} [options] Override http request option.
      * @throws {RequiredError}
      */
-    getAll: async (
+    getInstructionBlockById: async (
+      id: string,
       options: RawAxiosRequestConfig = {},
     ): Promise<RequestArgs> => {
-      const localVarPath = `/api/v1/instruction-blocks`;
+      // verify required parameter 'id' is not null or undefined
+      assertParamExists('getInstructionBlockById', 'id', id);
+      const localVarPath = `/api/v1/instruction-blocks/{id}`.replace(
+        `{${'id'}}`,
+        encodeURIComponent(String(id)),
+      );
       // use dummy base URL string because the URL constructor only accepts absolute URLs.
       const localVarUrlObj = new URL(localVarPath, DUMMY_BASE_URL);
       let baseOptions;
@@ -9061,20 +9177,14 @@ export const InstructionBlocksApiAxiosParamCreator = function (
     },
     /**
      *
-     * @param {string} id
+     * @summary
      * @param {*} [options] Override http request option.
      * @throws {RequiredError}
      */
-    getById: async (
-      id: string,
+    listInstructionBlocks: async (
       options: RawAxiosRequestConfig = {},
     ): Promise<RequestArgs> => {
-      // verify required parameter 'id' is not null or undefined
-      assertParamExists('getById', 'id', id);
-      const localVarPath = `/api/v1/instruction-blocks/{id}`.replace(
-        `{${'id'}}`,
-        encodeURIComponent(String(id)),
-      );
+      const localVarPath = `/api/v1/instruction-blocks`;
       // use dummy base URL string because the URL constructor only accepts absolute URLs.
       const localVarUrlObj = new URL(localVarPath, DUMMY_BASE_URL);
       let baseOptions;
@@ -9121,21 +9231,25 @@ export const InstructionBlocksApiFp = function (configuration?: Configuration) {
   return {
     /**
      *
+     * @summary
+     * @param {string} id
      * @param {*} [options] Override http request option.
      * @throws {RequiredError}
      */
-    async getAll(
+    async getInstructionBlockById(
+      id: string,
       options?: RawAxiosRequestConfig,
     ): Promise<
       (
         axios?: AxiosInstance,
         basePath?: string,
-      ) => AxiosPromise<Array<InstructionBlockResponseDto>>
+      ) => AxiosPromise<InstructionBlockResponseDto>
     > {
-      const localVarAxiosArgs = await localVarAxiosParamCreator.getAll(options);
+      const localVarAxiosArgs =
+        await localVarAxiosParamCreator.getInstructionBlockById(id, options);
       const localVarOperationServerIndex = configuration?.serverIndex ?? 0;
       const localVarOperationServerBasePath =
-        operationServerMap['InstructionBlocksApi.getAll']?.[
+        operationServerMap['InstructionBlocksApi.getInstructionBlockById']?.[
           localVarOperationServerIndex
         ]?.url;
       return (axios, basePath) =>
@@ -9148,26 +9262,23 @@ export const InstructionBlocksApiFp = function (configuration?: Configuration) {
     },
     /**
      *
-     * @param {string} id
+     * @summary
      * @param {*} [options] Override http request option.
      * @throws {RequiredError}
      */
-    async getById(
-      id: string,
+    async listInstructionBlocks(
       options?: RawAxiosRequestConfig,
     ): Promise<
       (
         axios?: AxiosInstance,
         basePath?: string,
-      ) => AxiosPromise<InstructionBlockResponseDto>
+      ) => AxiosPromise<Array<InstructionBlockResponseDto>>
     > {
-      const localVarAxiosArgs = await localVarAxiosParamCreator.getById(
-        id,
-        options,
-      );
+      const localVarAxiosArgs =
+        await localVarAxiosParamCreator.listInstructionBlocks(options);
       const localVarOperationServerIndex = configuration?.serverIndex ?? 0;
       const localVarOperationServerBasePath =
-        operationServerMap['InstructionBlocksApi.getById']?.[
+        operationServerMap['InstructionBlocksApi.listInstructionBlocks']?.[
           localVarOperationServerIndex
         ]?.url;
       return (axios, basePath) =>
@@ -9194,28 +9305,30 @@ export const InstructionBlocksApiFactory = function (
   return {
     /**
      *
-     * @param {*} [options] Override http request option.
-     * @throws {RequiredError}
-     */
-    getAll(
-      options?: RawAxiosRequestConfig,
-    ): AxiosPromise<Array<InstructionBlockResponseDto>> {
-      return localVarFp
-        .getAll(options)
-        .then((request) => request(axios, basePath));
-    },
-    /**
-     *
+     * @summary
      * @param {string} id
      * @param {*} [options] Override http request option.
      * @throws {RequiredError}
      */
-    getById(
+    getInstructionBlockById(
       id: string,
       options?: RawAxiosRequestConfig,
     ): AxiosPromise<InstructionBlockResponseDto> {
       return localVarFp
-        .getById(id, options)
+        .getInstructionBlockById(id, options)
+        .then((request) => request(axios, basePath));
+    },
+    /**
+     *
+     * @summary
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
+    listInstructionBlocks(
+      options?: RawAxiosRequestConfig,
+    ): AxiosPromise<Array<InstructionBlockResponseDto>> {
+      return localVarFp
+        .listInstructionBlocks(options)
         .then((request) => request(axios, basePath));
     },
   };
@@ -9230,26 +9343,28 @@ export const InstructionBlocksApiFactory = function (
 export class InstructionBlocksApi extends BaseAPI {
   /**
    *
-   * @param {*} [options] Override http request option.
-   * @throws {RequiredError}
-   * @memberof InstructionBlocksApi
-   */
-  public getAll(options?: RawAxiosRequestConfig) {
-    return InstructionBlocksApiFp(this.configuration)
-      .getAll(options)
-      .then((request) => request(this.axios, this.basePath));
-  }
-
-  /**
-   *
+   * @summary
    * @param {string} id
    * @param {*} [options] Override http request option.
    * @throws {RequiredError}
    * @memberof InstructionBlocksApi
    */
-  public getById(id: string, options?: RawAxiosRequestConfig) {
+  public getInstructionBlockById(id: string, options?: RawAxiosRequestConfig) {
     return InstructionBlocksApiFp(this.configuration)
-      .getById(id, options)
+      .getInstructionBlockById(id, options)
+      .then((request) => request(this.axios, this.basePath));
+  }
+
+  /**
+   *
+   * @summary
+   * @param {*} [options] Override http request option.
+   * @throws {RequiredError}
+   * @memberof InstructionBlocksApi
+   */
+  public listInstructionBlocks(options?: RawAxiosRequestConfig) {
+    return InstructionBlocksApiFp(this.configuration)
+      .listInstructionBlocks(options)
       .then((request) => request(this.axios, this.basePath));
   }
 }
@@ -9956,7 +10071,10 @@ export const KnowledgeApiFp = function (configuration?: Configuration) {
       offset?: number,
       options?: RawAxiosRequestConfig,
     ): Promise<
-      (axios?: AxiosInstance, basePath?: string) => AxiosPromise<object>
+      (
+        axios?: AxiosInstance,
+        basePath?: string,
+      ) => AxiosPromise<KnowledgeDocListResultDto>
     > {
       const localVarAxiosArgs = await localVarAxiosParamCreator.listDocs(
         tags,
@@ -10205,7 +10323,7 @@ export const KnowledgeApiFactory = function (
       limit?: number,
       offset?: number,
       options?: RawAxiosRequestConfig,
-    ): AxiosPromise<object> {
+    ): AxiosPromise<KnowledgeDocListResultDto> {
       return localVarFp
         .listDocs(tags, search, limit, offset, options)
         .then((request) => request(axios, basePath));
@@ -13590,13 +13708,21 @@ export const SystemAgentsApiAxiosParamCreator = function (
   return {
     /**
      *
+     * @summary
+     * @param {string} id
      * @param {*} [options] Override http request option.
      * @throws {RequiredError}
      */
-    getAll: async (
+    getSystemAgentById: async (
+      id: string,
       options: RawAxiosRequestConfig = {},
     ): Promise<RequestArgs> => {
-      const localVarPath = `/api/v1/system-agents`;
+      // verify required parameter 'id' is not null or undefined
+      assertParamExists('getSystemAgentById', 'id', id);
+      const localVarPath = `/api/v1/system-agents/{id}`.replace(
+        `{${'id'}}`,
+        encodeURIComponent(String(id)),
+      );
       // use dummy base URL string because the URL constructor only accepts absolute URLs.
       const localVarUrlObj = new URL(localVarPath, DUMMY_BASE_URL);
       let baseOptions;
@@ -13632,20 +13758,14 @@ export const SystemAgentsApiAxiosParamCreator = function (
     },
     /**
      *
-     * @param {string} id
+     * @summary
      * @param {*} [options] Override http request option.
      * @throws {RequiredError}
      */
-    getById: async (
-      id: string,
+    listSystemAgents: async (
       options: RawAxiosRequestConfig = {},
     ): Promise<RequestArgs> => {
-      // verify required parameter 'id' is not null or undefined
-      assertParamExists('getById', 'id', id);
-      const localVarPath = `/api/v1/system-agents/{id}`.replace(
-        `{${'id'}}`,
-        encodeURIComponent(String(id)),
-      );
+      const localVarPath = `/api/v1/system-agents`;
       // use dummy base URL string because the URL constructor only accepts absolute URLs.
       const localVarUrlObj = new URL(localVarPath, DUMMY_BASE_URL);
       let baseOptions;
@@ -13692,21 +13812,25 @@ export const SystemAgentsApiFp = function (configuration?: Configuration) {
   return {
     /**
      *
+     * @summary
+     * @param {string} id
      * @param {*} [options] Override http request option.
      * @throws {RequiredError}
      */
-    async getAll(
+    async getSystemAgentById(
+      id: string,
       options?: RawAxiosRequestConfig,
     ): Promise<
       (
         axios?: AxiosInstance,
         basePath?: string,
-      ) => AxiosPromise<Array<SystemAgentResponseDto>>
+      ) => AxiosPromise<SystemAgentResponseDto>
     > {
-      const localVarAxiosArgs = await localVarAxiosParamCreator.getAll(options);
+      const localVarAxiosArgs =
+        await localVarAxiosParamCreator.getSystemAgentById(id, options);
       const localVarOperationServerIndex = configuration?.serverIndex ?? 0;
       const localVarOperationServerBasePath =
-        operationServerMap['SystemAgentsApi.getAll']?.[
+        operationServerMap['SystemAgentsApi.getSystemAgentById']?.[
           localVarOperationServerIndex
         ]?.url;
       return (axios, basePath) =>
@@ -13719,26 +13843,23 @@ export const SystemAgentsApiFp = function (configuration?: Configuration) {
     },
     /**
      *
-     * @param {string} id
+     * @summary
      * @param {*} [options] Override http request option.
      * @throws {RequiredError}
      */
-    async getById(
-      id: string,
+    async listSystemAgents(
       options?: RawAxiosRequestConfig,
     ): Promise<
       (
         axios?: AxiosInstance,
         basePath?: string,
-      ) => AxiosPromise<SystemAgentResponseDto>
+      ) => AxiosPromise<Array<SystemAgentResponseDto>>
     > {
-      const localVarAxiosArgs = await localVarAxiosParamCreator.getById(
-        id,
-        options,
-      );
+      const localVarAxiosArgs =
+        await localVarAxiosParamCreator.listSystemAgents(options);
       const localVarOperationServerIndex = configuration?.serverIndex ?? 0;
       const localVarOperationServerBasePath =
-        operationServerMap['SystemAgentsApi.getById']?.[
+        operationServerMap['SystemAgentsApi.listSystemAgents']?.[
           localVarOperationServerIndex
         ]?.url;
       return (axios, basePath) =>
@@ -13765,28 +13886,30 @@ export const SystemAgentsApiFactory = function (
   return {
     /**
      *
-     * @param {*} [options] Override http request option.
-     * @throws {RequiredError}
-     */
-    getAll(
-      options?: RawAxiosRequestConfig,
-    ): AxiosPromise<Array<SystemAgentResponseDto>> {
-      return localVarFp
-        .getAll(options)
-        .then((request) => request(axios, basePath));
-    },
-    /**
-     *
+     * @summary
      * @param {string} id
      * @param {*} [options] Override http request option.
      * @throws {RequiredError}
      */
-    getById(
+    getSystemAgentById(
       id: string,
       options?: RawAxiosRequestConfig,
     ): AxiosPromise<SystemAgentResponseDto> {
       return localVarFp
-        .getById(id, options)
+        .getSystemAgentById(id, options)
+        .then((request) => request(axios, basePath));
+    },
+    /**
+     *
+     * @summary
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
+    listSystemAgents(
+      options?: RawAxiosRequestConfig,
+    ): AxiosPromise<Array<SystemAgentResponseDto>> {
+      return localVarFp
+        .listSystemAgents(options)
         .then((request) => request(axios, basePath));
     },
   };
@@ -13801,26 +13924,28 @@ export const SystemAgentsApiFactory = function (
 export class SystemAgentsApi extends BaseAPI {
   /**
    *
-   * @param {*} [options] Override http request option.
-   * @throws {RequiredError}
-   * @memberof SystemAgentsApi
-   */
-  public getAll(options?: RawAxiosRequestConfig) {
-    return SystemAgentsApiFp(this.configuration)
-      .getAll(options)
-      .then((request) => request(this.axios, this.basePath));
-  }
-
-  /**
-   *
+   * @summary
    * @param {string} id
    * @param {*} [options] Override http request option.
    * @throws {RequiredError}
    * @memberof SystemAgentsApi
    */
-  public getById(id: string, options?: RawAxiosRequestConfig) {
+  public getSystemAgentById(id: string, options?: RawAxiosRequestConfig) {
     return SystemAgentsApiFp(this.configuration)
-      .getById(id, options)
+      .getSystemAgentById(id, options)
+      .then((request) => request(this.axios, this.basePath));
+  }
+
+  /**
+   *
+   * @summary
+   * @param {*} [options] Override http request option.
+   * @throws {RequiredError}
+   * @memberof SystemAgentsApi
+   */
+  public listSystemAgents(options?: RawAxiosRequestConfig) {
+    return SystemAgentsApiFp(this.configuration)
+      .listSystemAgents(options)
       .then((request) => request(this.axios, this.basePath));
   }
 }
