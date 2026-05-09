@@ -43,7 +43,7 @@ cd apps/api && pnpm start:dev         # Dev server with hot-reload (port 5000)
 
 - Check registered models: `curl -s http://localhost:4000/model/info -H "Authorization: Bearer master" | jq '.data[] | {name: .model_name, in: .model_info.input_cost_per_token, out: .model_info.output_cost_per_token}'`
 - Look for zero-pricing entries — any `in: 0, out: 0` silently produces $0.000 cost reports in the UI.
-- To resync yaml → DB: `docker compose restart litellm` (or `podman-compose`). If the alias still doesn't appear, add it via LiteLLM's management API (`POST /model/new`) or clear the DB model table and restart.
+- To resync yaml → DB: `docker compose restart litellm`. If the alias still doesn't appear, add it via LiteLLM's management API (`POST /model/new`) or clear the DB model table and restart.
 
 ### Build & lint
 ```bash
