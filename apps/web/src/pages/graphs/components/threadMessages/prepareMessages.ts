@@ -60,27 +60,42 @@ const extractSubagentModel = (
 };
 
 /** Accumulates token usage from **prepared** messages to provide live
- *  statistics for a subagent/communication block.  Operating on the prepared
- *  (post-grouping) messages instead of raw ThreadMessageDtos avoids
- *  double-counting: nested subagent/communication blocks contribute their own
- *  `statistics` as single items rather than having every inner message counted
- *  again at the parent level.
+ *  statistics for a subagent/communication block.
  *
- *  For flat message types (chat, reasoning, system) we use the original DTO's
- *  `requestTokenUsage`; for tool messages we use the directly-attached
- *  `requestTokenUsage`; for nested blocks (subagent, communication) we use
- *  the block's already-computed `statistics`. */
+ *  Two-pass policy with reference-equality dedup:
+ *    Pass 1 — credit chat / reasoning / system items and nested
+ *      subagent/communication blocks; remember each item's `requestTokenUsage`
+ *      object identity in `credited` (a WeakSet).
+ *    Pass 2 — walk tool items.  Always contribute `count`.  Credit
+ *      `totalTokens` / `totalPrice` only when the item's `requestTokenUsage`
+ *      ref is NOT already in `credited`, then add it.
+ *
+ *  Why reference equality is sound: `prepareReadyMessages` propagates the
+ *  SAME `requestTokenUsage` object from a parent AI ThreadMessageDto to BOTH
+ *  the `type: 'chat'` prepared item (`message: m`) and each sibling
+ *  `type: 'tool'` prepared item (`requestTokenUsage: m.requestTokenUsage`),
+ *  so identity-based dedup is exact and cannot misfire across unrelated
+ *  AI calls.
+ *
+ *  Why this matters: an inner subagent AI message with `tool_calls` but
+ *  blank content does NOT produce a `'chat'` prepared item (guard:
+ *  `if (hasNonBlankContent && !hasCommToolCall)`).  The previous one-pass
+ *  implementation skipped price/tokens on tool items "because the sibling
+ *  chat carries it" — but with no sibling, the cost was lost entirely,
+ *  showing `0 ($0.000)` on every in-flight SubagentBlock that began with
+ *  tool-calling iterations.  The two-pass walk credits via the tool branch
+ *  only when no chat/reasoning sibling has already credited the same ref. */
 const accumulatePreparedStatistics = (
   prepared: PreparedMessage[],
 ): SubagentStatistics | undefined => {
   let totalTokens = 0;
   let totalPrice = 0;
   let count = 0;
+  const credited = new WeakSet<object>();
 
+  // Pass 1: chat / reasoning / system + nested blocks.
   for (const item of prepared) {
     if (item.type === 'subagent' || item.type === 'communication') {
-      // Nested block — use the block's aggregated statistics so we don't
-      // double-count its inner messages.
       const s = item.statistics;
       if (!s) {
         continue;
@@ -93,20 +108,7 @@ const accumulatePreparedStatistics = (
       if (typeof s.usage?.totalTokens === 'number') {
         totalTokens += s.usage.totalTokens;
       }
-    } else if (item.type === 'tool') {
-      // Tool messages carry requestTokenUsage directly (no .message wrapper).
-      const usage = item.requestTokenUsage;
-      if (!usage) {
-        continue;
-      }
-      count++;
-      if (typeof usage.totalTokens === 'number') {
-        totalTokens += usage.totalTokens;
-      }
-      if (typeof usage.totalPrice === 'number') {
-        totalPrice += usage.totalPrice;
-      }
-    } else {
+    } else if (item.type !== 'tool') {
       // chat / reasoning / system — have a .message (ThreadMessageDto).
       const usage =
         item.message?.requestTokenUsage ?? item.message?.toolTokenUsage;
@@ -114,6 +116,31 @@ const accumulatePreparedStatistics = (
         continue;
       }
       count++;
+      credited.add(usage as unknown as object);
+      if (typeof usage.totalTokens === 'number') {
+        totalTokens += usage.totalTokens;
+      }
+      if (typeof usage.totalPrice === 'number') {
+        totalPrice += usage.totalPrice;
+      }
+    }
+  }
+
+  // Pass 2: tool items.  Tokens/price only when no sibling chat (or earlier
+  // tool sibling) has already credited the usage.  Per-block durationMs has
+  // been removed in favour of the live thread-runtime timer; per-tool /
+  // per-LLM-call leaf durations are still surfaced on the tool block itself.
+  for (const item of prepared) {
+    if (item.type !== 'tool') {
+      continue;
+    }
+    const usage = item.requestTokenUsage;
+    if (!usage) {
+      continue;
+    }
+    count++;
+    if (!credited.has(usage as unknown as object)) {
+      credited.add(usage as unknown as object);
       if (typeof usage.totalTokens === 'number') {
         totalTokens += usage.totalTokens;
       }
@@ -127,13 +154,19 @@ const accumulatePreparedStatistics = (
     return undefined;
   }
 
+  // Preserve genuine 0 — collapsing it to undefined masks valid zero-cost output
+  // (e.g. unpriced models) as "unknown" and forces consumers to fall back to
+  // unrelated values.
   return {
     usage: {
-      totalTokens: totalTokens || undefined,
-      totalPrice: totalPrice || undefined,
+      totalTokens,
+      totalPrice,
     },
   };
 };
+
+/** @internal Exported for unit testing only. */
+export const _accumulatePreparedStatistics = accumulatePreparedStatistics;
 
 export const prepareReadyMessages = (
   msgs: ThreadMessageDto[],
@@ -746,6 +779,22 @@ export const prepareReadyMessages = (
           const model = extractSubagentModel(innerRawMessages);
 
           const subBlockId = `subagent-${tc.id || `${m.id || m.createdAt}-${idx}`}`;
+          const status: 'executed' | 'calling' | 'stopped' = matched
+            ? 'executed'
+            : allowCallingIndicators && isLatestRun(toolCallRunId)
+              ? 'calling'
+              : 'stopped';
+          // Stopped subagents have no tool result message — leaving errorText
+          // empty would put the badge in error state with no explanation.
+          // Only surface the synthetic message when the thread itself wasn't
+          // user-stopped: a manual thread stop is expected to leave in-flight
+          // tool calls without results, so showing an error there would be
+          // misleading.
+          const finalErrorText =
+            errorText ??
+            (status === 'stopped' && !isThreadStopped
+              ? 'Subagent run ended without producing a result.'
+              : undefined);
           prepared.push({
             type: 'subagent',
             toolCallId: tc.id!,
@@ -755,17 +804,13 @@ export const prepareReadyMessages = (
             innerMessages: innerPrepared,
             statistics,
             resultText,
-            errorText,
+            errorText: finalErrorText,
             model,
             rawToolArgs: parsedArgs ?? toolArgs,
             rawToolResult: resultContent,
             requestTokenUsageIn: m.requestTokenUsage,
             requestTokenUsageOut: matched?.requestTokenUsage,
-            status: matched
-              ? 'executed'
-              : allowCallingIndicators && isLatestRun(toolCallRunId)
-                ? 'calling'
-                : 'stopped',
+            status,
             id: subBlockId,
             nodeId: matched?.nodeId ?? m.nodeId,
             createdAt: m.createdAt,
@@ -846,6 +891,16 @@ export const prepareReadyMessages = (
             continue;
           }
 
+          const commStatus: 'executed' | 'calling' | 'stopped' = matched
+            ? 'executed'
+            : allowCallingIndicators && isLatestRun(toolCallRunId)
+              ? 'calling'
+              : 'stopped';
+          const finalCommErrorText =
+            commErrorText ??
+            (commStatus === 'stopped' && !isThreadStopped
+              ? 'Inter-agent communication ended without producing a result.'
+              : undefined);
           prepared.push({
             type: 'communication',
             toolCallId: tc.id!,
@@ -856,18 +911,14 @@ export const prepareReadyMessages = (
             innerMessages: innerPrepared,
             statistics: commStatistics,
             resultText: commResultText,
-            errorText: commErrorText,
+            errorText: finalCommErrorText,
             needsMoreInfo: commNeedsMoreInfo || undefined,
             model: commModel,
             rawToolArgs: parsedArgs ?? toolArgs,
             rawToolResult: resultContent,
             requestTokenUsageIn: m.requestTokenUsage,
             requestTokenUsageOut: matched?.requestTokenUsage,
-            status: matched
-              ? 'executed'
-              : allowCallingIndicators && isLatestRun(toolCallRunId)
-                ? 'calling'
-                : 'stopped',
+            status: commStatus,
             id: `comm-${tc.id || `${m.id || m.createdAt}-${idx}`}`,
             nodeId: matched?.nodeId ?? m.nodeId,
             createdAt: m.createdAt,

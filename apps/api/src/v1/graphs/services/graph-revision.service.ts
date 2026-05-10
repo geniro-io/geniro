@@ -570,7 +570,10 @@ export class GraphRevisionService {
     // BullMQ automatically retries jobs that weren't acknowledged.
     // We just continue with the work - the transaction will be idempotent or handle the state.
     if (revision.status === GraphRevisionStatus.Pending) {
-      // Mark as "Applying" OUTSIDE the transaction so observers can see it in real-time
+      // Mark as "Applying" OUTSIDE the transaction so observers can see it in real-time.
+      // The UoW path keeps the in-memory `revision` in sync with the DB write,
+      // so the notification (which requires `instanceof GraphRevisionEntity`)
+      // can emit the same entity reference.
       await this.graphRevisionDao.updateById(revision.id, {
         status: GraphRevisionStatus.Applying,
       });
@@ -578,7 +581,7 @@ export class GraphRevisionService {
       await this.notificationsService.emit({
         type: NotificationEvent.GraphRevisionApplying,
         graphId: revision.graphId,
-        data: { ...revision, status: GraphRevisionStatus.Applying },
+        data: revision,
       });
     }
 
@@ -610,26 +613,35 @@ export class GraphRevisionService {
     baseSchemaCache: GraphSchemaType | null,
     baseConfigCache: GraphRevisionConfig | null,
   ): Promise<void> {
+    // The revision worker runs concurrently with HTTP requests and other
+    // BullMQ workers. MikroORM v7's `em.transactional` does NOT fork the EM
+    // by default — it binds an async context to the global EM, so concurrent
+    // hydrations leak into each other's identity maps. Without `clear: true`,
+    // entities loaded by an HTTP request mid-flight can appear as "new" to
+    // the worker's flush and trigger PK conflicts. Each phase clears.
     // Phase 1: Short DB transaction -- re-merge and validate only
-    await this.em.transactional(async (em) => {
-      const graph = await this.graphDao.getOne(
-        { id: revision.graphId },
-        undefined,
-        em,
-      );
+    await this.em.transactional(
+      async (em) => {
+        const graph = await this.graphDao.getOne(
+          { id: revision.graphId },
+          undefined,
+          em,
+        );
 
-      if (!graph) {
-        throw new NotFoundException('GRAPH_NOT_FOUND');
-      }
+        if (!graph) {
+          throw new NotFoundException('GRAPH_NOT_FOUND');
+        }
 
-      await this.reMergeRevisionIfNeeded(
-        revision,
-        graph,
-        baseSchemaCache,
-        baseConfigCache,
-        em,
-      );
-    });
+        await this.reMergeRevisionIfNeeded(
+          revision,
+          graph,
+          baseSchemaCache,
+          baseConfigCache,
+          em,
+        );
+      },
+      { clear: true },
+    );
 
     // Phase 2: Live update OUTSIDE transaction (no DB lock held)
     const compiledGraph = this.graphRegistry.get(revision.graphId);
@@ -645,29 +657,30 @@ export class GraphRevisionService {
     }
 
     // Phase 3: Short DB transaction to finalize
-    await this.em.transactional(async (em) => {
-      const graph = await this.graphDao.getOne(
-        { id: revision.graphId },
-        undefined,
-        em,
-      );
+    await this.em.transactional(
+      async (em) => {
+        const graph = await this.graphDao.getOne(
+          { id: revision.graphId },
+          undefined,
+          em,
+        );
 
-      if (!graph) {
-        throw new NotFoundException('GRAPH_NOT_FOUND');
-      }
+        if (!graph) {
+          throw new NotFoundException('GRAPH_NOT_FOUND');
+        }
 
-      await this.finalizeAppliedRevision(graph, revision, em);
-    });
+        await this.finalizeAppliedRevision(graph, revision, em);
+      },
+      { clear: true },
+    );
 
     // Emit after Phase 3 transaction commits so the enrichment handler
     // can read the committed Applied status from the database.
+    revision.status = GraphRevisionStatus.Applied;
     await this.notificationsService.emit({
       type: NotificationEvent.GraphRevisionApplied,
       graphId: revision.graphId,
-      data: {
-        ...revision,
-        status: GraphRevisionStatus.Applied,
-      },
+      data: revision,
     });
   }
 
@@ -698,10 +711,13 @@ export class GraphRevisionService {
   ): Promise<void> {
     this.logger.error(error, `Failed to apply graph revision ${revision.id}`);
 
-    await this.em.transactional(async (em) => {
-      await this.resetTargetVersionIfNeeded(revision, em);
-      await this.markRevisionAsFailed(revision, error, em);
-    });
+    await this.em.transactional(
+      async (em) => {
+        await this.resetTargetVersionIfNeeded(revision, em);
+        await this.markRevisionAsFailed(revision, error, em);
+      },
+      { clear: true },
+    );
 
     const compiledGraph = this.graphRegistry.get(revision.graphId);
     if (compiledGraph && compiledGraph.status === GraphStatus.Running) {
@@ -724,14 +740,12 @@ export class GraphRevisionService {
       }
     }
 
+    revision.status = GraphRevisionStatus.Failed;
+    revision.error = error.message;
     await this.notificationsService.emit({
       type: NotificationEvent.GraphRevisionFailed,
       graphId: revision.graphId,
-      data: {
-        ...revision,
-        status: GraphRevisionStatus.Failed,
-        error: error.message,
-      },
+      data: revision,
     });
   }
 

@@ -62,10 +62,15 @@ const RequireAuth = ({
   const { token, initialized } = authModule.useAuth();
 
   // Set Axios Authorization header synchronously so child components
-  // (like ProjectProvider) have the header set before their effects run
+  // (like ProjectProvider) have the header set before their effects run.
+  // Using useEffect/useLayoutEffect would defer the mutation past child
+  // effects (children's effects run before parent's), so we intentionally
+  // mutate during render and silence the react-hooks/immutability rule.
   if (token) {
+    // eslint-disable-next-line react-hooks/immutability -- see comment above
     axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
   } else {
+    // eslint-disable-next-line react-hooks/immutability -- see comment above
     delete axios.defaults.headers.common['Authorization'];
   }
 

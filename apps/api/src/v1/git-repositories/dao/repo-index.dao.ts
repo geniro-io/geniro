@@ -14,12 +14,18 @@ export class RepoIndexDao extends BaseDao<RepoIndexEntity> {
   }
 
   async restoreById(id: string): Promise<void> {
-    await this.getRepo().nativeUpdate(
+    // The default `softDelete` filter restricts matches to `deletedAt IS NULL`,
+    // which would hide the very row we want to revive. Disable the filter so
+    // the load can find the soft-deleted row.
+    const entity = await this.getRepo().findOne(
       { id },
-      {
-        deletedAt: null,
-      },
+      { filters: { softDelete: false } },
     );
+    if (!entity) {
+      return;
+    }
+    entity.deletedAt = null;
+    await this.em.flush();
   }
 
   /**

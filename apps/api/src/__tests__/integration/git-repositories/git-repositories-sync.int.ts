@@ -93,6 +93,24 @@ describe('GitRepositoriesService sync (integration)', () => {
       );
       projectCreated = true;
     }
+
+    // Defensively wipe any rows leaked from prior failed runs. Soft-deleted
+    // rows still occupy the (owner, repo, created_by, provider) unique
+    // constraint, so a previous test that exercised the soft-delete path
+    // (e.g. "revoked repo deleted when not in GitHub response") would block
+    // the fresh `dao.create(...)` call here with a 23505. Hard-deleting at
+    // setup keeps the suite repeatable across runs.
+    const em = app.get(EntityManager);
+    await em
+      .getConnection()
+      .execute(`DELETE FROM git_repositories WHERE created_by = ?`, [
+        TEST_USER_ID,
+      ]);
+    await em
+      .getConnection()
+      .execute(`DELETE FROM git_provider_connections WHERE user_id = ?`, [
+        TEST_USER_ID,
+      ]);
   }, 360_000);
 
   beforeEach(() => {

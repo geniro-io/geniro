@@ -58,7 +58,9 @@ export const useChatsThreadList = (deps: UseChatsThreadListDeps) => {
     {},
   );
   const graphCacheRef = useRef(graphCache);
-  graphCacheRef.current = graphCache;
+  useEffect(() => {
+    graphCacheRef.current = graphCache;
+  }, [graphCache]);
   const [templatesLoading, setTemplatesLoading] = useState(false);
 
   const [triggerNodesForSelectedThread, setTriggerNodesForSelectedThread] =
@@ -76,13 +78,15 @@ export const useChatsThreadList = (deps: UseChatsThreadListDeps) => {
   const subscribedGraphsRef = useRef<Set<string>>(new Set());
   const threadsRef = useRef<ThreadDto[]>([]);
   const threadsHasMoreRef = useRef(threadsHasMore);
-  threadsHasMoreRef.current = threadsHasMore;
   const threadsLoadingRef = useRef(threadsLoading);
-  threadsLoadingRef.current = threadsLoading;
   const threadsLoadingMoreRef = useRef(threadsLoadingMore);
-  threadsLoadingMoreRef.current = threadsLoadingMore;
   const threadsOffsetRef = useRef(threadsOffset);
-  threadsOffsetRef.current = threadsOffset;
+  useEffect(() => {
+    threadsHasMoreRef.current = threadsHasMore;
+    threadsLoadingRef.current = threadsLoading;
+    threadsLoadingMoreRef.current = threadsLoadingMore;
+    threadsOffsetRef.current = threadsOffset;
+  }, [threadsHasMore, threadsLoading, threadsLoadingMore, threadsOffset]);
 
   const { subscribeToGraph, unsubscribeFromGraph } = useWebSocket();
   const location = useLocation();
@@ -119,6 +123,7 @@ export const useChatsThreadList = (deps: UseChatsThreadListDeps) => {
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     const incomingGraphId = params.get('graphId') ?? undefined;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- sync filter from URL search params
     setGraphFilterId((prev) =>
       prev === incomingGraphId ? prev : incomingGraphId,
     );
@@ -127,6 +132,7 @@ export const useChatsThreadList = (deps: UseChatsThreadListDeps) => {
   // Sync URL chatId param → selectedThreadId
   useEffect(() => {
     const incoming = chatIdParam ?? undefined;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- sync selection from URL chatId param
     setSelectedThreadId((prev) => {
       if (prev === incoming) {
         return prev;
@@ -200,6 +206,7 @@ export const useChatsThreadList = (deps: UseChatsThreadListDeps) => {
 
   useEffect(() => {
     if (!selectedThreadId || isDraftThreadId(selectedThreadId)) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- clear shadow when no real thread selected
       setSelectedThreadShadow(null);
       return;
     }
@@ -308,12 +315,14 @@ export const useChatsThreadList = (deps: UseChatsThreadListDeps) => {
     }
     if (draftThread && draftThread.id === selectedThreadId) {
       if (!shouldShowDraftThread) {
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- clear selection when draft thread becomes hidden
         setSelectedThreadId(undefined);
       }
     }
   }, [draftThread, selectedThreadId, shouldShowDraftThread]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reset agent node selection when thread changes
     setSelectedAgentNodeId(null);
   }, [selectedThreadId]);
 
@@ -321,6 +330,7 @@ export const useChatsThreadList = (deps: UseChatsThreadListDeps) => {
 
   useEffect(() => {
     if (!selectedThread) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- clear triggers when no thread selected
       setTriggerNodesForSelectedThread([]);
       return;
     }

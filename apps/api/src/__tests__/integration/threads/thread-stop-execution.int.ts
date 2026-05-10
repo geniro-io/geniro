@@ -14,7 +14,8 @@ import { ThreadsService } from '../../../v1/threads/services/threads.service';
 import { ThreadStatus } from '../../../v1/threads/threads.types';
 import { waitForCondition } from '../helpers/graph-helpers';
 import { createTestProject } from '../helpers/test-context';
-import { createTestModule } from '../setup';
+import { getMockRuntime } from '../mocks/mock-runtime';
+import { createTestModule, getMockLlm } from '../setup';
 
 const TRIGGER_NODE_ID = 'trigger-1';
 const AGENT_NODE_ID = 'agent-1';
@@ -42,6 +43,13 @@ describe('Thread Stop Execution Integration Tests', () => {
     const projectResult = await createTestProject(app);
     testProjectId = projectResult.projectId;
     contextDataStorage = projectResult.ctx;
+
+    // The shell-tool path needs MockRuntime to hang under signal so the abort
+    // races real exec semantics. Echo fallback handles the rerun command path.
+    getMockRuntime(app).onExec(
+      { cmd: 'sleep 60' },
+      { hangUntilAbort: true, exitCode: 124, stderr: 'Aborted' },
+    );
 
     const graph = await graphsService.create(
       contextDataStorage,
@@ -236,6 +244,13 @@ describe('Thread Stop Execution Integration Tests', () => {
   };
 
   const startShellExecution = async (threadSubId: string) => {
+    // Drive the mocked agent to call shell(sleep 60) before the trigger fires.
+    getMockLlm(app).queueChat({
+      kind: 'toolCall',
+      toolName: 'shell',
+      args: { purpose: 'sleep for stop test', command: 'sleep 60' },
+    });
+
     const execution = await graphsService.executeTrigger(
       contextDataStorage,
       graphId,
@@ -335,6 +350,13 @@ describe('Thread Stop Execution Integration Tests', () => {
       const threadSubId = `stop-rerun-${Date.now()}`;
       const sleepMessage = 'Run this command: sleep 60';
 
+      // Drive the agent: first call → shell(sleep 60).
+      getMockLlm(app).queueChat({
+        kind: 'toolCall',
+        toolName: 'shell',
+        args: { purpose: 'sleep for rerun test', command: 'sleep 60' },
+      });
+
       const execution1 = await graphsService.executeTrigger(
         contextDataStorage,
         graphId,
@@ -382,6 +404,17 @@ describe('Thread Stop Execution Integration Tests', () => {
 
       const rerunToken = `RERUN_OK_${Date.now()}`;
       const rerunMessage = `Run this command: echo "${rerunToken}"`;
+
+      // Drive the agent: rerun call → shell(echo rerunToken). The MockRuntime
+      // echo built-in returns the token as stdout so the assertions hold.
+      getMockLlm(app).queueChat({
+        kind: 'toolCall',
+        toolName: 'shell',
+        args: {
+          purpose: 'echo rerun token',
+          command: `echo "${rerunToken}"`,
+        },
+      });
 
       const execution2 = await graphsService.executeTrigger(
         contextDataStorage,

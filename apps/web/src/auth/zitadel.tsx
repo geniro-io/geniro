@@ -1,7 +1,7 @@
-import { createZitadelAuth, ZitadelConfig } from '@zitadel/react';
+import { createZitadelAuth, type ZitadelConfig } from '@zitadel/react';
 import axios from 'axios';
 import { WebStorageStateStore } from 'oidc-client-ts';
-import { ReactNode, useEffect, useState } from 'react';
+import { type ReactNode, useEffect, useState } from 'react';
 
 import { GraphStorageService } from '../services/GraphStorageService';
 import type { AuthModule, AuthProvider } from './types';

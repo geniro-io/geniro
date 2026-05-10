@@ -47,6 +47,7 @@ import {
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -385,6 +386,7 @@ function ModelFormDialog({
   useEffect(() => {
     if (open) {
       if (mode === 'edit' && editingModel) {
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- hydrate form from selected row when dialog opens
         setForm(formFromModel(editingModel));
       } else {
         setForm(EMPTY_FORM);
@@ -584,6 +586,10 @@ function ModelFormDialog({
           <DialogTitle>
             {mode === 'create' ? 'Add Model' : 'Edit Model'}
           </DialogTitle>
+          <DialogDescription className="sr-only">
+            Configure the LiteLLM model settings including provider, model name,
+            and optional credentials.
+          </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4 py-2 overflow-y-auto flex-1 px-1">
@@ -650,6 +656,14 @@ function ModelFormDialog({
                 handleFormChange('litellmModelName', e.target.value)
               }
             />
+            <p className="text-xs text-muted-foreground">
+              Important for cost tracking: this name must match a key in
+              LiteLLM's pricing catalog (e.g. <code>openai/gpt-4o</code>,
+              <code> anthropic/claude-sonnet-4-5</code>) — otherwise cost
+              displays as <code>$0.000</code>. If your model isn't in the
+              catalog, set <code>base_model</code> in <em>Model Info</em>{' '}
+              (Advanced Settings) to an equivalent priced model.
+            </p>
           </div>
 
           {/* Public Model Name */}
@@ -791,7 +805,7 @@ function ModelFormDialog({
                 <Label htmlFor="modelInfoJson">Model Info (JSON)</Label>
                 <Textarea
                   id="modelInfoJson"
-                  placeholder='{"max_tokens": 128000}'
+                  placeholder='{"base_model": "gpt-4o", "max_tokens": 128000}'
                   value={form.modelInfoJson}
                   onChange={(e) =>
                     handleFormChange('modelInfoJson', e.target.value)
@@ -805,6 +819,12 @@ function ModelFormDialog({
                 {modelInfoError && (
                   <p className="text-xs text-destructive">{modelInfoError}</p>
                 )}
+                <p className="text-xs text-muted-foreground">
+                  Set <code>base_model</code> here when the LiteLLM Model Name
+                  above isn't in LiteLLM's pricing catalog — pricing will be
+                  mapped from the base model (e.g.{' '}
+                  <code>{'{"base_model": "gpt-4o"}'}</code>).
+                </p>
               </div>
             </CollapsibleContent>
           </Collapsible>

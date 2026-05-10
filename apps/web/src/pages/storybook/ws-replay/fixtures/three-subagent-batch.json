@@ -1,0 +1,631 @@
+{
+  "name": "three-subagent-batch-openai-gpt5.4-mini",
+  "description": "Models the b86d6ee3 regression: interleaved agent.message (additive cost) + agent.state.update (currentContext replace) during a 3-subagent batch run on openai/gpt-5.4-mini. Expected total cost: $0.102. Playback ~15s at 1x.",
+  "threadId": "storybook-thread-001",
+  "graphId": "storybook-graph-001",
+  "events": [
+    {
+      "delayMs": 0,
+      "event": {
+        "type": "graph.preview",
+        "graphId": "storybook-graph-001",
+        "data": {
+          "status": "running",
+          "agents": [
+            { "nodeId": "supervisor" },
+            { "nodeId": "researcher-1" },
+            { "nodeId": "researcher-2" }
+          ],
+          "triggerNodes": [],
+          "nodeDisplayNames": {
+            "supervisor": "Supervisor",
+            "researcher-1": "Researcher 1",
+            "researcher-2": "Researcher 2"
+          }
+        }
+      }
+    },
+    {
+      "delayMs": 350,
+      "event": {
+        "type": "thread.create",
+        "threadId": "storybook-thread-001",
+        "internalThreadId": "storybook-thread-001",
+        "graphId": "storybook-graph-001",
+        "data": {
+          "id": "storybook-thread-001",
+          "graphId": "storybook-graph-001",
+          "status": "running",
+          "createdAt": "2026-04-24T00:00:00.000Z",
+          "updatedAt": "2026-04-24T00:00:00.000Z"
+        }
+      }
+    },
+    {
+      "delayMs": 150,
+      "event": {
+        "type": "thread.update",
+        "threadId": "storybook-thread-001",
+        "internalThreadId": "storybook-thread-001",
+        "graphId": "storybook-graph-001",
+        "data": {
+          "id": "storybook-thread-001",
+          "graphId": "storybook-graph-001",
+          "status": "running",
+          "createdAt": "2026-04-24T00:00:00.000Z",
+          "updatedAt": "2026-04-24T00:00:00.150Z"
+        }
+      }
+    },
+    {
+      "delayMs": 1000,
+      "event": {
+        "type": "agent.message",
+        "internalThreadId": "storybook-thread-001",
+        "threadId": "storybook-thread-001",
+        "nodeId": "supervisor",
+        "graphId": "storybook-graph-001",
+        "data": {
+          "id": "msg-001",
+          "threadId": "storybook-thread-001",
+          "createdAt": "2026-04-24T00:00:00.500Z",
+          "nodeId": "supervisor",
+          "message": {
+            "role": "ai",
+            "content": "Starting batch coordination across research subagents.",
+            "additionalKwargs": {
+              "__model": "openai/gpt-5.4-mini"
+            }
+          },
+          "requestTokenUsage": {
+            "inputTokens": 180,
+            "outputTokens": 95,
+            "totalTokens": 275,
+            "totalPrice": 0.012
+          }
+        }
+      }
+    },
+    {
+      "delayMs": 150,
+      "event": {
+        "type": "agent.state.update",
+        "threadId": "storybook-thread-001",
+        "nodeId": "supervisor",
+        "graphId": "storybook-graph-001",
+        "data": {
+          "currentContext": 12000,
+          "effectiveCostLimitUsd": null
+        }
+      }
+    },
+    {
+      "delayMs": 1000,
+      "event": {
+        "type": "agent.message",
+        "internalThreadId": "storybook-thread-001",
+        "threadId": "storybook-thread-001",
+        "nodeId": "researcher-1",
+        "graphId": "storybook-graph-001",
+        "data": {
+          "id": "msg-002",
+          "threadId": "storybook-thread-001",
+          "createdAt": "2026-04-24T00:00:01.000Z",
+          "nodeId": "researcher-1",
+          "message": {
+            "role": "ai",
+            "content": "Researcher 1 initializing — scanning primary sources.",
+            "additionalKwargs": {
+              "__model": "openai/gpt-5.4-mini"
+            }
+          },
+          "requestTokenUsage": {
+            "inputTokens": 120,
+            "outputTokens": 70,
+            "totalTokens": 190,
+            "totalPrice": 0.005
+          }
+        }
+      }
+    },
+    {
+      "delayMs": 500,
+      "event": {
+        "type": "agent.state.update",
+        "threadId": "storybook-thread-001",
+        "nodeId": "researcher-1",
+        "graphId": "storybook-graph-001",
+        "data": {
+          "currentContext": 8500,
+          "effectiveCostLimitUsd": null
+        }
+      }
+    },
+    {
+      "delayMs": 700,
+      "event": {
+        "type": "agent.message",
+        "internalThreadId": "storybook-thread-001",
+        "threadId": "storybook-thread-001",
+        "nodeId": "researcher-1",
+        "graphId": "storybook-graph-001",
+        "data": {
+          "id": "msg-003",
+          "threadId": "storybook-thread-001",
+          "createdAt": "2026-04-24T00:00:01.500Z",
+          "nodeId": "researcher-1",
+          "message": {
+            "role": "ai",
+            "content": "Researcher 1 found relevant data in secondary sources.",
+            "additionalKwargs": {
+              "__model": "openai/gpt-5.4-mini"
+            }
+          },
+          "requestTokenUsage": {
+            "inputTokens": 200,
+            "outputTokens": 120,
+            "totalTokens": 320,
+            "totalPrice": 0.007
+          }
+        }
+      }
+    },
+    {
+      "delayMs": 150,
+      "event": {
+        "type": "agent.state.update",
+        "threadId": "storybook-thread-001",
+        "nodeId": "researcher-1",
+        "graphId": "storybook-graph-001",
+        "data": {
+          "currentContext": 13200,
+          "effectiveCostLimitUsd": null
+        }
+      }
+    },
+    {
+      "delayMs": 700,
+      "event": {
+        "type": "agent.message",
+        "internalThreadId": "storybook-thread-001",
+        "threadId": "storybook-thread-001",
+        "nodeId": "researcher-1",
+        "graphId": "storybook-graph-001",
+        "data": {
+          "id": "msg-004",
+          "threadId": "storybook-thread-001",
+          "createdAt": "2026-04-24T00:00:02.000Z",
+          "nodeId": "researcher-1",
+          "message": {
+            "role": "ai",
+            "content": "Researcher 1 summarizing findings from first pass.",
+            "additionalKwargs": {
+              "__model": "openai/gpt-5.4-mini"
+            }
+          },
+          "requestTokenUsage": {
+            "inputTokens": 150,
+            "outputTokens": 80,
+            "totalTokens": 230,
+            "totalPrice": 0.004
+          }
+        }
+      }
+    },
+    {
+      "delayMs": 1000,
+      "event": {
+        "type": "agent.message",
+        "internalThreadId": "storybook-thread-001",
+        "threadId": "storybook-thread-001",
+        "nodeId": "researcher-2",
+        "graphId": "storybook-graph-001",
+        "data": {
+          "id": "msg-005",
+          "threadId": "storybook-thread-001",
+          "createdAt": "2026-04-24T00:00:02.500Z",
+          "nodeId": "researcher-2",
+          "message": {
+            "role": "ai",
+            "content": "Researcher 2 initializing — analyzing alternative datasets.",
+            "additionalKwargs": {
+              "__model": "openai/gpt-5.4-mini"
+            }
+          },
+          "requestTokenUsage": {
+            "inputTokens": 130,
+            "outputTokens": 75,
+            "totalTokens": 205,
+            "totalPrice": 0.006
+          }
+        }
+      }
+    },
+    {
+      "delayMs": 500,
+      "event": {
+        "type": "agent.state.update",
+        "threadId": "storybook-thread-001",
+        "nodeId": "researcher-2",
+        "graphId": "storybook-graph-001",
+        "data": {
+          "currentContext": 9200,
+          "effectiveCostLimitUsd": null
+        }
+      }
+    },
+    {
+      "delayMs": 700,
+      "event": {
+        "type": "agent.message",
+        "internalThreadId": "storybook-thread-001",
+        "threadId": "storybook-thread-001",
+        "nodeId": "researcher-2",
+        "graphId": "storybook-graph-001",
+        "data": {
+          "id": "msg-006",
+          "threadId": "storybook-thread-001",
+          "createdAt": "2026-04-24T00:00:03.000Z",
+          "nodeId": "researcher-2",
+          "message": {
+            "role": "ai",
+            "content": "Researcher 2 cross-referencing with Researcher 1 output.",
+            "additionalKwargs": {
+              "__model": "openai/gpt-5.4-mini"
+            }
+          },
+          "requestTokenUsage": {
+            "inputTokens": 190,
+            "outputTokens": 110,
+            "totalTokens": 300,
+            "totalPrice": 0.008
+          }
+        }
+      }
+    },
+    {
+      "delayMs": 150,
+      "event": {
+        "type": "agent.state.update",
+        "threadId": "storybook-thread-001",
+        "nodeId": "researcher-2",
+        "graphId": "storybook-graph-001",
+        "data": {
+          "currentContext": 14100,
+          "effectiveCostLimitUsd": null
+        }
+      }
+    },
+    {
+      "delayMs": 700,
+      "event": {
+        "type": "agent.message",
+        "internalThreadId": "storybook-thread-001",
+        "threadId": "storybook-thread-001",
+        "nodeId": "researcher-2",
+        "graphId": "storybook-graph-001",
+        "data": {
+          "id": "msg-007",
+          "threadId": "storybook-thread-001",
+          "createdAt": "2026-04-24T00:00:03.500Z",
+          "nodeId": "researcher-2",
+          "message": {
+            "role": "ai",
+            "content": "Researcher 2 completing analysis pass.",
+            "additionalKwargs": {
+              "__model": "openai/gpt-5.4-mini"
+            }
+          },
+          "requestTokenUsage": {
+            "inputTokens": 160,
+            "outputTokens": 85,
+            "totalTokens": 245,
+            "totalPrice": 0.005
+          }
+        }
+      }
+    },
+    {
+      "delayMs": 1000,
+      "event": {
+        "type": "agent.message",
+        "internalThreadId": "storybook-thread-001",
+        "threadId": "storybook-thread-001",
+        "nodeId": "supervisor",
+        "graphId": "storybook-graph-001",
+        "data": {
+          "id": "msg-008",
+          "threadId": "storybook-thread-001",
+          "createdAt": "2026-04-24T00:00:04.000Z",
+          "nodeId": "supervisor",
+          "message": {
+            "role": "ai",
+            "content": "Supervisor receiving subagent status update.",
+            "additionalKwargs": {
+              "__model": "openai/gpt-5.4-mini",
+              "__subagentCommunication": true
+            }
+          },
+          "requestTokenUsage": {
+            "inputTokens": 140,
+            "outputTokens": 65,
+            "totalTokens": 205,
+            "totalPrice": 0.003
+          }
+        }
+      }
+    },
+    {
+      "delayMs": 150,
+      "event": {
+        "type": "agent.state.update",
+        "threadId": "storybook-thread-001",
+        "nodeId": "supervisor",
+        "graphId": "storybook-graph-001",
+        "data": {
+          "currentContext": 14500,
+          "effectiveCostLimitUsd": null
+        }
+      }
+    },
+    {
+      "delayMs": 150,
+      "event": {
+        "type": "agent.state.update",
+        "threadId": "storybook-thread-001",
+        "nodeId": "supervisor",
+        "graphId": "storybook-graph-001",
+        "data": {
+          "currentContext": 15800,
+          "effectiveCostLimitUsd": null
+        }
+      }
+    },
+    {
+      "delayMs": 1000,
+      "event": {
+        "type": "agent.message",
+        "internalThreadId": "storybook-thread-001",
+        "threadId": "storybook-thread-001",
+        "nodeId": "supervisor",
+        "graphId": "storybook-graph-001",
+        "data": {
+          "id": "msg-009",
+          "threadId": "storybook-thread-001",
+          "createdAt": "2026-04-24T00:00:04.500Z",
+          "nodeId": "supervisor",
+          "message": {
+            "role": "ai",
+            "content": "Supervisor synthesizing interim results from all researchers.",
+            "additionalKwargs": {
+              "__model": "openai/gpt-5.4-mini"
+            }
+          },
+          "requestTokenUsage": {
+            "inputTokens": 210,
+            "outputTokens": 130,
+            "totalTokens": 340,
+            "totalPrice": 0.009
+          }
+        }
+      }
+    },
+    {
+      "delayMs": 700,
+      "event": {
+        "type": "agent.message",
+        "internalThreadId": "storybook-thread-001",
+        "threadId": "storybook-thread-001",
+        "nodeId": "researcher-1",
+        "graphId": "storybook-graph-001",
+        "data": {
+          "id": "msg-010",
+          "threadId": "storybook-thread-001",
+          "createdAt": "2026-04-24T00:00:05.000Z",
+          "nodeId": "researcher-1",
+          "message": {
+            "role": "ai",
+            "content": "Researcher 1 confirming final data point.",
+            "additionalKwargs": {
+              "__model": "openai/gpt-5.4-mini"
+            }
+          },
+          "requestTokenUsage": {
+            "inputTokens": 110,
+            "outputTokens": 55,
+            "totalTokens": 165,
+            "totalPrice": 0.002
+          }
+        }
+      }
+    },
+    {
+      "delayMs": 500,
+      "event": {
+        "type": "agent.message",
+        "internalThreadId": "storybook-thread-001",
+        "threadId": "storybook-thread-001",
+        "nodeId": "supervisor",
+        "graphId": "storybook-graph-001",
+        "data": {
+          "id": "msg-011",
+          "threadId": "storybook-thread-001",
+          "createdAt": "2026-04-24T00:00:05.500Z",
+          "nodeId": "supervisor",
+          "message": {
+            "role": "ai",
+            "content": "Supervisor generating comprehensive report from research findings.",
+            "additionalKwargs": {
+              "__model": "openai/gpt-5.4-mini"
+            }
+          },
+          "requestTokenUsage": {
+            "inputTokens": 240,
+            "outputTokens": 150,
+            "totalTokens": 390,
+            "totalPrice": 0.014
+          }
+        }
+      }
+    },
+    {
+      "delayMs": 150,
+      "event": {
+        "type": "agent.state.update",
+        "threadId": "storybook-thread-001",
+        "nodeId": "supervisor",
+        "graphId": "storybook-graph-001",
+        "data": {
+          "currentContext": 17200,
+          "effectiveCostLimitUsd": null
+        }
+      }
+    },
+    {
+      "delayMs": 1000,
+      "event": {
+        "type": "agent.message",
+        "internalThreadId": "storybook-thread-001",
+        "threadId": "storybook-thread-001",
+        "nodeId": "supervisor",
+        "graphId": "storybook-graph-001",
+        "data": {
+          "id": "msg-012",
+          "threadId": "storybook-thread-001",
+          "createdAt": "2026-04-24T00:00:06.000Z",
+          "nodeId": "supervisor",
+          "message": {
+            "role": "ai",
+            "content": "Supervisor producing final structured output for delivery.",
+            "additionalKwargs": {
+              "__model": "openai/gpt-5.4-mini"
+            }
+          },
+          "requestTokenUsage": {
+            "inputTokens": 260,
+            "outputTokens": 160,
+            "totalTokens": 420,
+            "totalPrice": 0.015
+          }
+        }
+      }
+    },
+    {
+      "delayMs": 700,
+      "event": {
+        "type": "agent.message",
+        "internalThreadId": "storybook-thread-001",
+        "threadId": "storybook-thread-001",
+        "nodeId": "supervisor",
+        "graphId": "storybook-graph-001",
+        "data": {
+          "id": "msg-013",
+          "threadId": "storybook-thread-001",
+          "createdAt": "2026-04-24T00:00:06.500Z",
+          "nodeId": "supervisor",
+          "message": {
+            "role": "ai",
+            "content": "Supervisor appending citations and validation notes.",
+            "additionalKwargs": {
+              "__model": "openai/gpt-5.4-mini"
+            }
+          },
+          "requestTokenUsage": {
+            "inputTokens": 170,
+            "outputTokens": 90,
+            "totalTokens": 260,
+            "totalPrice": 0.008
+          }
+        }
+      }
+    },
+    {
+      "delayMs": 700,
+      "event": {
+        "type": "agent.message",
+        "internalThreadId": "storybook-thread-001",
+        "threadId": "storybook-thread-001",
+        "nodeId": "supervisor",
+        "graphId": "storybook-graph-001",
+        "data": {
+          "id": "msg-014",
+          "threadId": "storybook-thread-001",
+          "createdAt": "2026-04-24T00:00:07.000Z",
+          "nodeId": "supervisor",
+          "message": {
+            "role": "ai",
+            "content": "Supervisor finalizing batch completion signal.",
+            "additionalKwargs": {
+              "__model": "openai/gpt-5.4-mini"
+            }
+          },
+          "requestTokenUsage": {
+            "inputTokens": 125,
+            "outputTokens": 60,
+            "totalTokens": 185,
+            "totalPrice": 0.004
+          }
+        }
+      }
+    },
+    {
+      "delayMs": 150,
+      "event": {
+        "type": "agent.state.update",
+        "threadId": "storybook-thread-001",
+        "nodeId": "supervisor",
+        "graphId": "storybook-graph-001",
+        "data": {
+          "currentContext": 20000,
+          "effectiveCostLimitUsd": null
+        }
+      }
+    },
+    {
+      "delayMs": 350,
+      "event": {
+        "type": "agent.message",
+        "internalThreadId": "storybook-thread-001",
+        "threadId": "storybook-thread-001",
+        "nodeId": "supervisor",
+        "graphId": "storybook-graph-001",
+        "data": {
+          "id": "msg-015",
+          "threadId": "storybook-thread-001",
+          "createdAt": "2026-04-24T00:00:07.500Z",
+          "nodeId": "supervisor",
+          "message": {
+            "role": "ai",
+            "content": "",
+            "additionalKwargs": {
+              "__model": "openai/gpt-5.4-mini",
+              "__subagentCommunication": true
+            }
+          },
+          "requestTokenUsage": {
+            "inputTokens": 0,
+            "outputTokens": 0,
+            "totalTokens": 0,
+            "totalPrice": 0.0
+          }
+        }
+      }
+    },
+    {
+      "delayMs": 700,
+      "event": {
+        "type": "thread.update",
+        "threadId": "storybook-thread-001",
+        "internalThreadId": "storybook-thread-001",
+        "graphId": "storybook-graph-001",
+        "data": {
+          "id": "storybook-thread-001",
+          "graphId": "storybook-graph-001",
+          "status": "done",
+          "createdAt": "2026-04-24T00:00:00.000Z",
+          "updatedAt": "2026-04-24T00:00:15.000Z"
+        }
+      }
+    }
+  ]
+}

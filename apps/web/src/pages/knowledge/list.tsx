@@ -20,6 +20,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -104,6 +105,7 @@ export const KnowledgeListPage = () => {
   useEffect(() => {
     let mounted = true;
     const requestId = ++requestIdRef.current;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- enter loading state for new search/tag filter
     setLoading(true);
     setError(null);
 
@@ -739,6 +741,9 @@ export const KnowledgeListPage = () => {
             <DialogTitle className="text-lg leading-snug pr-8">
               {viewDoc?.title || 'Untitled'}
             </DialogTitle>
+            <DialogDescription className="sr-only">
+              Read-only view of this knowledge document's content and metadata.
+            </DialogDescription>
           </DialogHeader>
 
           {viewDoc && (
@@ -822,6 +827,10 @@ export const KnowledgeListPage = () => {
         <DialogContent className="sm:max-w-[440px]">
           <DialogHeader>
             <DialogTitle>Delete Knowledge Document</DialogTitle>
+            <DialogDescription className="sr-only">
+              Permanently delete this knowledge document. This action cannot be
+              undone.
+            </DialogDescription>
           </DialogHeader>
           <p className="text-sm text-muted-foreground py-2">
             Are you sure you want to delete{' '}

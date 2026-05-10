@@ -13,6 +13,7 @@ import {
   KnowledgeDocCreateDto,
   KnowledgeDocDto,
   KnowledgeDocListQuery,
+  KnowledgeDocListResultDto,
   KnowledgeDocUpdateDto,
 } from '../dto/knowledge.dto';
 import { KnowledgeDocEntity } from '../entity/knowledge-doc.entity';
@@ -33,10 +34,7 @@ const KnowledgeSummarySchema = z.object({
   summary: z.string().min(1),
 });
 
-export type KnowledgeDocListResult = {
-  items: KnowledgeDocDto[];
-  total: number;
-};
+export type KnowledgeDocListResult = KnowledgeDocListResultDto;
 
 @Injectable()
 export class KnowledgeService {

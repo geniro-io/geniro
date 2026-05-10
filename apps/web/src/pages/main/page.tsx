@@ -178,6 +178,7 @@ export const MainPage = () => {
 
   useEffect(() => {
     let mounted = true;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- enter loading state for new date-range query
     setLoading(true);
     (async () => {
       try {

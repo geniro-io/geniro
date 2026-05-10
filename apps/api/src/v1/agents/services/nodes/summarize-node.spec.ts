@@ -114,22 +114,16 @@ describe('SummarizeNode', () => {
         currentContext: 2000,
       });
 
-      // Mock token counting - countTokens is called on each message content
-      // For messages, return high token count per message to exceed maxTokens
-      // For summary strings, return string length
       countTokensMock.mockImplementation(
         async (_model: string, text: unknown) => {
           const s = String(text ?? '');
-          // Check if this is a message content (starts with "Message")
           if (s.startsWith('Message')) {
-            return 200; // High token count per message
+            return 200;
           }
-          // For summary or other strings
           return s.length;
         },
       );
 
-      // Mock the fold operation to return a new summary
       const newSummary = 'Summarized conversation';
       mockInvoke.mockResolvedValue(new AIMessage(newSummary));
 
@@ -219,20 +213,16 @@ describe('SummarizeNode', () => {
         currentContext: 2000,
       });
 
-      // Mock token counting to exceed maxTokens
       countTokensMock.mockImplementation(
         async (_model: string, text: unknown) => {
           const s = String(text ?? '');
           if (s.includes('Test message')) {
-            return 2000; // High token count to exceed maxTokens
+            return 2000;
           }
           return s.length;
         },
       );
 
-      // Mock fold to return empty summary (simulating no older messages scenario)
-      // But actually, if there are older messages, fold will be called
-      // Let's simulate the case where fold returns empty
       mockInvoke.mockResolvedValue(new AIMessage(''));
 
       const result = await node.invoke(state, createMockConfig());
@@ -549,12 +539,11 @@ describe('SummarizeNode', () => {
         currentContext: 2000,
       });
 
-      // Mock token counting to trigger summarization
       countTokensMock.mockImplementation(
         async (_model: string, text: unknown) => {
           const s = String(text ?? '');
           if (s.includes('Test message')) {
-            return 500; // High token count to exceed maxTokens
+            return 500;
           }
           return 50;
         },
@@ -776,6 +765,56 @@ describe('SummarizeNode', () => {
       expect(resolverSpy).toHaveBeenCalledWith(45000, undefined);
     });
 
+    it('fold() passes providerCost to extractTokenUsageFromResponse when cost is present in response_metadata', async () => {
+      // Two messages are required so that splitKeepingLastBlock() has at least 2 blocks
+      // and can produce a non-empty messagesForSummarize slice, reaching fold().
+      const messages = [
+        new HumanMessage('Old message'),
+        new HumanMessage('Newer message'),
+      ];
+      const state = createMockState({ messages, currentContext: 2000 });
+
+      // keepTokens = 500; each message at 200 tokens → older message gets folded.
+      countTokensMock.mockResolvedValue(200);
+
+      const aiResponseWithCost = new AIMessage('Summary');
+      aiResponseWithCost.response_metadata = {
+        usage: { total_tokens: 100, cost: 0.0005 },
+      };
+      mockInvoke.mockResolvedValue(aiResponseWithCost);
+
+      await node.invoke(state, createMockConfig());
+
+      expect(extractTokenUsageFromResponseMock).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({ cost: 0.0005 }),
+      );
+    });
+
+    it('fold() does not pass cost to extractTokenUsageFromResponse when cost absent from response_metadata', async () => {
+      // Two messages are required so splitKeepingLastBlock() reaches fold().
+      const messages = [
+        new HumanMessage('Old message'),
+        new HumanMessage('Newer message'),
+      ];
+      const state = createMockState({ messages, currentContext: 2000 });
+
+      countTokensMock.mockResolvedValue(200);
+
+      const aiResponseWithoutCost = new AIMessage('Summary');
+      aiResponseWithoutCost.response_metadata = {
+        usage: { total_tokens: 100 },
+      };
+      mockInvoke.mockResolvedValue(aiResponseWithoutCost);
+
+      await node.invoke(state, createMockConfig());
+
+      expect(extractTokenUsageFromResponseMock).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.not.objectContaining({ cost: expect.anything() }),
+      );
+    });
+
     it('should return token usage deltas for accumulation (not reset existing stats)', async () => {
       const messages = Array.from(
         { length: 10 },
@@ -793,18 +832,16 @@ describe('SummarizeNode', () => {
         totalPrice: 0.05,
       });
 
-      // Mock token counting to trigger summarization
       countTokensMock.mockImplementation(
         async (_model: string, text: unknown) => {
           const s = String(text ?? '');
           if (s.startsWith('Message')) {
-            return 200; // High token count to exceed maxTokens
+            return 200;
           }
           return 50;
         },
       );
 
-      // Mock the summarization call to return usage
       const mockUsage = {
         inputTokens: 100,
         cachedInputTokens: 20,

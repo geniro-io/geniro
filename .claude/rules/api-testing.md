@@ -11,11 +11,14 @@ paths:
 
 ```bash
 pnpm test:unit                                    # all unit tests
-pnpm test:integration src/__tests__/integration/path/to/file.int.ts  # specific integration test
-pnpm run full-check                               # build + lint + unit tests (mandatory before finishing)
+pnpm test:integration src/__tests__/integration/path/to/file.int.ts  # specific integration test (preferred for iteration)
+pnpm test:integration                             # full integration suite — hermetic (LLM mocked, runtimes mocked, services spawned via testcontainers when not already running locally)
+pnpm run full-check                               # build + lint + unit + integration (mandatory before finishing)
 ```
 
-Never call `vitest` directly. Never run full test suites (`pnpm test` or bare `pnpm test:integration`).
+Never call `vitest` directly. `pnpm test` (whole monorepo) is forbidden — too coarse. The bulk integration run is hermetic and required by `pnpm full-check`; targeted runs are preferred while iterating.
+
+The integration setup always boots ephemeral Postgres/Redis/Qdrant testcontainers and runs migrations against the base DB before cloning per-worker databases. Files run in parallel (5 workers, each with its own DB clone); within a file, tests still run sequentially.
 
 ## Unit Tests (*.spec.ts)
 
@@ -121,6 +124,6 @@ describe('Feature Integration', () => {
 ### Rules
 
 - Mandatory when modifying code that already has integration tests.
-- Always run with a specific filename: `pnpm test:integration <file>`.
+- Prefer the targeted form `pnpm test:integration <file>` while iterating; run the bulk `pnpm test:integration` for pre-push verification.
 - No `it.skip`, `describe.skip`, or conditional skipping. Missing prerequisites must cause test failure.
 - Clean up all created resources in `afterEach`/`afterAll`.

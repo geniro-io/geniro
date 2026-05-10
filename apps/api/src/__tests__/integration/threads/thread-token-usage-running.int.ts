@@ -10,7 +10,37 @@ import { ThreadsService } from '../../../v1/threads/services/threads.service';
 import { ThreadStatus } from '../../../v1/threads/threads.types';
 import { waitForCondition } from '../helpers/graph-helpers';
 import { createTestProject } from '../helpers/test-context';
-import { createTestModule } from '../setup';
+import type { MockLlmService } from '../mocks/mock-llm';
+import { createTestModule, getMockLlm } from '../setup';
+
+// Default usage applied to every fixture so that totalTokens > 0 / totalPrice > 0
+// across the aggregator pipeline without hand-rolling values per test.
+const DEFAULT_USAGE = {
+  inputTokens: 100,
+  outputTokens: 50,
+  totalTokens: 150,
+  totalPrice: 0.0001,
+} as const;
+
+// Sentinel used as the `message` arg for every `communication_exec` call so the
+// callee's `lastUserMessage` matches the dedicated callee fixture below — and so
+// it never collides with substrings in the caller's user prompt (e.g.
+// "Worker Agent 2") that drive caller-stage routing.
+const CALLEE_INPUT_SENTINEL = 'do the delegated task';
+
+// Args matching `CommunicationExecSchema` — { agent, message, purpose } all required.
+const buildCommArgs = (agent: string) => ({
+  agent,
+  message: CALLEE_INPUT_SENTINEL,
+  purpose: `delegate to ${agent}`,
+});
+
+// Args matching `finish` tool schema.
+const FINISH_ARGS = {
+  purpose: 'done',
+  message: 'OK',
+  needsMoreInfo: false,
+} as const;
 
 // Assigned in beforeAll once the test project is created.
 let contextDataStorage: AppContextStorage;
@@ -19,6 +49,7 @@ describe('Thread token usage + cost from running graph state (integration)', () 
   let app: INestApplication;
   let graphsService: GraphsService;
   let threadsService: ThreadsService;
+  let mockLlm: MockLlmService;
   let testProjectId: string;
 
   const createdGraphIds: string[] = [];
@@ -35,10 +66,119 @@ describe('Thread token usage + cost from running graph state (integration)', () 
     app = await createTestModule();
     graphsService = app.get(GraphsService);
     threadsService = app.get(ThreadsService);
+    mockLlm = getMockLlm(app);
 
     const projectResult = await createTestProject(app);
     testProjectId = projectResult.projectId;
     contextDataStorage = projectResult.ctx;
+
+    // The caller agent's `communication_exec` tool is *deferred* (see
+    // `simple-agent.ts` initTools) — it isn't bound on the first LLM call, so
+    // the agent must call `tool_search` to load it. The fixture flow per run is:
+    //
+    //   Stage A: bound=[tool_search,finish,wait_for]                → tool_search('communication_exec')
+    //   Stage B: bound includes communication_exec, lastTool=tool_search → communication_exec(<target>)
+    //   Stage C: lastTool=communication_exec                         → finish
+    //
+    // Specificity ranks (count of defined matcher fields; arrays contribute per
+    // element) decide which fixture wins; ties fall back to registration order.
+    // Stage-B test-4 variants (specificity 4) beat the test-3 default
+    // (specificity 3). Stage A is gated on a `systemMessage: 'communication_exec'`
+    // substring so it does NOT fire for tests 1/2 (single-agent, no comm tool).
+    // The dedicated CALLEE matcher uses the comm-tool's `args.message` sentinel
+    // to short-circuit callee runs straight to `finish` instead of `tool_search`.
+    //
+    // Registration order matters on specificity-3 ties — the earlier fixture
+    // wins. Stage C is registered before Stage A so that "after comm_exec
+    // returns" branches to `finish` rather than re-entering `tool_search`.
+
+    // CALLEE: any agent invoked via comm_exec sees the sentinel message.
+    mockLlm.onChat(
+      {
+        hasTools: ['tool_search', 'finish'],
+        lastUserMessage: CALLEE_INPUT_SENTINEL,
+      },
+      {
+        kind: 'toolCall',
+        toolName: 'finish',
+        args: { ...FINISH_ARGS },
+        usage: { ...DEFAULT_USAGE },
+      },
+    );
+
+    // Stage C: caller, after comm_exec returned → finish.
+    mockLlm.onChat(
+      {
+        hasTools: ['communication_exec', 'finish'],
+        hasToolResult: 'communication_exec',
+      },
+      {
+        kind: 'toolCall',
+        toolName: 'finish',
+        args: { ...FINISH_ARGS },
+        usage: { ...DEFAULT_USAGE },
+      },
+    );
+
+    // Stage B (test-4 run 1): comm_exec → Worker Agent 2.
+    mockLlm.onChat(
+      {
+        hasTools: ['communication_exec', 'finish'],
+        hasToolResult: 'tool_search',
+        lastUserMessage: 'Worker Agent 2',
+      },
+      {
+        kind: 'toolCall',
+        toolName: 'communication_exec',
+        args: buildCommArgs('Worker Agent 2'),
+        usage: { ...DEFAULT_USAGE },
+      },
+    );
+
+    // Stage B (test-4 run 2): comm_exec → Worker Agent 3.
+    mockLlm.onChat(
+      {
+        hasTools: ['communication_exec', 'finish'],
+        hasToolResult: 'tool_search',
+        lastUserMessage: 'Worker Agent 3',
+      },
+      {
+        kind: 'toolCall',
+        toolName: 'communication_exec',
+        args: buildCommArgs('Worker Agent 3'),
+        usage: { ...DEFAULT_USAGE },
+      },
+    );
+
+    // Stage B (test-3 default): comm_exec → Callee Agent.
+    mockLlm.onChat(
+      {
+        hasTools: ['communication_exec', 'finish'],
+        hasToolResult: 'tool_search',
+      },
+      {
+        kind: 'toolCall',
+        toolName: 'communication_exec',
+        args: buildCommArgs('Callee Agent'),
+        usage: { ...DEFAULT_USAGE },
+      },
+    );
+
+    // Stage A: caller, no comm_exec bound yet → tool_search to load it.
+    // `systemMessage: 'communication_exec'` ensures this only fires for graphs
+    // whose deferred-tools block lists communication_exec (i.e. tests 3 and 4).
+    mockLlm.onChat(
+      {
+        hasTools: ['tool_search', 'finish'],
+        systemMessage: 'communication_exec',
+      },
+      {
+        kind: 'toolCall',
+        toolName: 'tool_search',
+        args: { query: 'communication_exec' },
+        usage: { ...DEFAULT_USAGE },
+      },
+    );
   });
 
   afterEach(async () => {
@@ -71,7 +211,7 @@ describe('Thread token usage + cost from running graph state (integration)', () 
         }
       }
     }
-  }, 180_000);
+  }, 60_000);
 
   afterAll(async () => {
     if (testProjectId) {
@@ -87,7 +227,7 @@ describe('Thread token usage + cost from running graph state (integration)', () 
 
   it(
     'creates a graph, executes it, returns tokenUsage statistics via separate endpoint while running and after stop',
-    { timeout: 180_000 },
+    { timeout: 60_000 },
     async () => {
       const graph = await graphsService.create(contextDataStorage, {
         name: `Thread token usage test ${Date.now()}`,
@@ -123,7 +263,7 @@ describe('Thread token usage + cost from running graph state (integration)', () 
       await waitForCondition(
         () => graphsService.findById(contextDataStorage, graph.id),
         (g) => g.status === GraphStatus.Running,
-        { timeout: 60_000, interval: 1_000 },
+        { timeout: 15_000, interval: 200, maxInterval: 500 },
       );
 
       const execution = await graphsService.executeTrigger(
@@ -144,7 +284,7 @@ describe('Thread token usage + cost from running graph state (integration)', () 
             execution.externalThreadId,
           ),
         (t) => Boolean(t),
-        { timeout: 30_000, interval: 1_000 },
+        { timeout: 10_000, interval: 200, maxInterval: 500 },
       );
 
       // Thread response should not include tokenUsage field anymore
@@ -159,7 +299,7 @@ describe('Thread token usage + cost from running graph state (integration)', () 
           }
         },
         (stats) => (stats?.total?.totalTokens ?? 0) > 0,
-        { timeout: 120_000, interval: 2_000 },
+        { timeout: 20_000, interval: 200, maxInterval: 500 },
       );
       expect(runningUsageStats).not.toBeNull();
       expect(runningUsageStats!.total.totalTokens).toBeGreaterThan(0);
@@ -180,7 +320,7 @@ describe('Thread token usage + cost from running graph state (integration)', () 
           msgs.some(
             (m) => m.message.role === 'ai' && m.requestTokenUsage !== null,
           ),
-        { timeout: 30_000, interval: 1_000 },
+        { timeout: 10_000, interval: 200, maxInterval: 500 },
       );
 
       const aiMessageWhileRunning = messagesWhileRunning.find(
@@ -199,7 +339,7 @@ describe('Thread token usage + cost from running graph state (integration)', () 
         (t) =>
           t.status === ThreadStatus.Done ||
           t.status === ThreadStatus.NeedMoreInfo,
-        { timeout: 120_000, interval: 2_000 },
+        { timeout: 20_000, interval: 200, maxInterval: 500 },
       );
 
       // Stop the graph (unregisters it) so ThreadsService uses checkpoint fallback.
@@ -207,7 +347,7 @@ describe('Thread token usage + cost from running graph state (integration)', () 
       await waitForCondition(
         () => graphsService.findById(contextDataStorage, graph.id),
         (g) => g.status !== GraphStatus.Running,
-        { timeout: 60_000, interval: 1_000 },
+        { timeout: 15_000, interval: 200, maxInterval: 500 },
       );
 
       // Get usage statistics after stop - should still be available from message history
@@ -220,7 +360,7 @@ describe('Thread token usage + cost from running graph state (integration)', () 
           }
         },
         (stats) => (stats?.total?.totalTokens ?? 0) > 0,
-        { timeout: 60_000, interval: 2_000 },
+        { timeout: 15_000, interval: 200, maxInterval: 500 },
       );
       expect(stoppedUsageStats).not.toBeNull();
       expect(stoppedUsageStats!.total.totalTokens).toBeGreaterThan(0);
@@ -241,7 +381,7 @@ describe('Thread token usage + cost from running graph state (integration)', () 
           msgs.some(
             (m) => m.message.role === 'ai' && m.requestTokenUsage !== null,
           ),
-        { timeout: 30_000, interval: 1_000 },
+        { timeout: 10_000, interval: 200, maxInterval: 500 },
       );
 
       const aiMessageAfterStop = messagesAfterStop.find(
@@ -257,7 +397,7 @@ describe('Thread token usage + cost from running graph state (integration)', () 
 
   it(
     'accumulates token usage and cost across two executions on the same thread (integration)',
-    { timeout: 240_000 },
+    { timeout: 60_000 },
     async () => {
       const graph = await graphsService.create(contextDataStorage, {
         name: `Thread token usage two-runs test ${Date.now()}`,
@@ -290,7 +430,7 @@ describe('Thread token usage + cost from running graph state (integration)', () 
       await waitForCondition(
         () => graphsService.findById(contextDataStorage, graph.id),
         (g) => g.status === GraphStatus.Running,
-        { timeout: 60_000, interval: 1_000 },
+        { timeout: 15_000, interval: 200, maxInterval: 500 },
       );
 
       const threadSubId = `token-usage-two-runs-${Date.now()}`;
@@ -313,7 +453,7 @@ describe('Thread token usage + cost from running graph state (integration)', () 
             exec1.externalThreadId,
           ),
         (t) => Boolean(t),
-        { timeout: 30_000, interval: 1_000 },
+        { timeout: 10_000, interval: 200, maxInterval: 500 },
       );
 
       const usageAfterFirst = await waitForCondition(
@@ -325,7 +465,7 @@ describe('Thread token usage + cost from running graph state (integration)', () 
           }
         },
         (stats) => (stats?.total?.totalTokens ?? 0) > 0,
-        { timeout: 120_000, interval: 2_000 },
+        { timeout: 20_000, interval: 200, maxInterval: 500 },
       );
 
       expect(usageAfterFirst).not.toBeNull();
@@ -364,7 +504,7 @@ describe('Thread token usage + cost from running graph state (integration)', () 
           }
         },
         (stats) => (stats?.total?.totalTokens ?? 0) > firstTotalTokens,
-        { timeout: 120_000, interval: 2_000 },
+        { timeout: 20_000, interval: 200, maxInterval: 500 },
       );
 
       expect(usageAfterSecond).not.toBeNull();
@@ -389,14 +529,14 @@ describe('Thread token usage + cost from running graph state (integration)', () 
         (t) =>
           t.status === ThreadStatus.Done ||
           t.status === ThreadStatus.NeedMoreInfo,
-        { timeout: 120_000, interval: 2_000 },
+        { timeout: 20_000, interval: 200, maxInterval: 500 },
       );
 
       await graphsService.destroy(contextDataStorage, graph.id);
       await waitForCondition(
         () => graphsService.findById(contextDataStorage, graph.id),
         (g) => g.status !== GraphStatus.Running,
-        { timeout: 60_000, interval: 1_000 },
+        { timeout: 15_000, interval: 200, maxInterval: 500 },
       );
 
       const stoppedUsageStats = await waitForCondition(
@@ -408,7 +548,7 @@ describe('Thread token usage + cost from running graph state (integration)', () 
           }
         },
         (stats) => (stats?.total?.totalTokens ?? 0) >= secondTotalTokens,
-        { timeout: 60_000, interval: 2_000 },
+        { timeout: 15_000, interval: 200, maxInterval: 500 },
       );
       expect(stoppedUsageStats).not.toBeNull();
       expect(stoppedUsageStats!.total.totalTokens).toBeGreaterThanOrEqual(
@@ -419,7 +559,7 @@ describe('Thread token usage + cost from running graph state (integration)', () 
 
   it(
     'does not reset tokenUsage when a communication tool triggers nested agent runs (integration)',
-    { timeout: 240_000 },
+    { timeout: 90_000 },
     async () => {
       const graph = await graphsService.create(contextDataStorage, {
         name: `Thread token usage comm test ${Date.now()}`,
@@ -476,7 +616,7 @@ describe('Thread token usage + cost from running graph state (integration)', () 
       await waitForCondition(
         () => graphsService.findById(contextDataStorage, graph.id),
         (g) => g.status === GraphStatus.Running,
-        { timeout: 60_000, interval: 1_000 },
+        { timeout: 15_000, interval: 200, maxInterval: 500 },
       );
 
       const threadSubId = `token-usage-comm-${Date.now()}`;
@@ -499,7 +639,7 @@ describe('Thread token usage + cost from running graph state (integration)', () 
             exec1.externalThreadId,
           ),
         (t) => Boolean(t),
-        { timeout: 30_000, interval: 1_000 },
+        { timeout: 10_000, interval: 200, maxInterval: 500 },
       );
 
       // Ensure the communication tool actually ran (so we hit the "nested agent" path).
@@ -515,7 +655,7 @@ describe('Thread token usage + cost from running graph state (integration)', () 
               m.message.role === 'tool' &&
               m.message.name === 'communication_exec',
           ),
-        { timeout: 120_000, interval: 2_000 },
+        { timeout: 20_000, interval: 200, maxInterval: 500 },
       );
 
       const usageAfterFirst = await waitForCondition(
@@ -527,7 +667,7 @@ describe('Thread token usage + cost from running graph state (integration)', () 
           }
         },
         (stats) => (stats?.total?.totalTokens ?? 0) > 0,
-        { timeout: 120_000, interval: 2_000 },
+        { timeout: 20_000, interval: 200, maxInterval: 500 },
       );
 
       expect(usageAfterFirst).not.toBeNull();
@@ -564,7 +704,7 @@ describe('Thread token usage + cost from running graph state (integration)', () 
           const total = stats?.total?.totalTokens ?? 0;
           return total > firstTotalTokens && total > 0;
         },
-        { timeout: 120_000, interval: 2_000 },
+        { timeout: 20_000, interval: 200, maxInterval: 500 },
       );
 
       expect(usageAfterSecond).not.toBeNull();
@@ -578,7 +718,7 @@ describe('Thread token usage + cost from running graph state (integration)', () 
 
   it(
     'preserves per-node token usage across multiple runs with different agents (integration)',
-    { timeout: 300_000 },
+    { timeout: 120_000 },
     async () => {
       // This test verifies the fix for per-node token usage preservation:
       // - First run: agents 1 and 2 execute
@@ -654,7 +794,7 @@ describe('Thread token usage + cost from running graph state (integration)', () 
       await waitForCondition(
         () => graphsService.findById(contextDataStorage, graph.id),
         (g) => g.status === GraphStatus.Running,
-        { timeout: 60_000, interval: 1_000 },
+        { timeout: 15_000, interval: 200, maxInterval: 500 },
       );
 
       const threadSubId = `token-usage-per-node-${Date.now()}`;
@@ -678,7 +818,7 @@ describe('Thread token usage + cost from running graph state (integration)', () 
             exec1.externalThreadId,
           ),
         (t) => Boolean(t),
-        { timeout: 30_000, interval: 1_000 },
+        { timeout: 10_000, interval: 200, maxInterval: 500 },
       );
 
       // Wait for communication tool to execute
@@ -694,7 +834,7 @@ describe('Thread token usage + cost from running graph state (integration)', () 
               m.message.role === 'tool' &&
               m.message.name === 'communication_exec',
           ),
-        { timeout: 180_000, interval: 2_000 },
+        { timeout: 30_000, interval: 200, maxInterval: 500 },
       );
 
       // Check token usage DURING first run
@@ -707,7 +847,7 @@ describe('Thread token usage + cost from running graph state (integration)', () 
           }
         },
         (stats) => (stats?.total?.totalTokens ?? 0) > 0,
-        { timeout: 180_000, interval: 2_000 },
+        { timeout: 30_000, interval: 200, maxInterval: 500 },
       );
 
       expect(usageAfterFirstRun).not.toBeNull();
@@ -730,7 +870,7 @@ describe('Thread token usage + cost from running graph state (integration)', () 
         (t) =>
           t.status === ThreadStatus.Done ||
           t.status === ThreadStatus.NeedMoreInfo,
-        { timeout: 180_000, interval: 2_000 },
+        { timeout: 30_000, interval: 200, maxInterval: 500 },
       );
 
       // Check token usage AFTER first run completes
@@ -768,7 +908,7 @@ describe('Thread token usage + cost from running graph state (integration)', () 
           );
           return commExecMessages.length >= 2;
         },
-        { timeout: 180_000, interval: 2_000 },
+        { timeout: 30_000, interval: 200, maxInterval: 500 },
       );
 
       // Check token usage DURING second run
@@ -791,7 +931,7 @@ describe('Thread token usage + cost from running graph state (integration)', () 
             (byNode['agent-1']?.totalTokens ?? 0) > agent1TokensFirstRun
           );
         },
-        { timeout: 180_000, interval: 2_000 },
+        { timeout: 30_000, interval: 200, maxInterval: 500 },
       );
 
       // Verify all three agents are present in byNode
@@ -824,7 +964,7 @@ describe('Thread token usage + cost from running graph state (integration)', () 
         (t) =>
           t.status === ThreadStatus.Done ||
           t.status === ThreadStatus.NeedMoreInfo,
-        { timeout: 180_000, interval: 2_000 },
+        { timeout: 30_000, interval: 200, maxInterval: 500 },
       );
 
       // Check token usage AFTER second run completes

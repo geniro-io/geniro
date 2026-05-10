@@ -139,6 +139,11 @@ describe('Graph Templates Integration Tests', () => {
         value: NodeKind.Mcp,
         multiple: true,
       },
+      {
+        type: 'kind',
+        value: NodeKind.Instruction,
+        multiple: true,
+      },
     ]);
     expect(simpleAgent?.schema).toMatchObject({
       type: 'object',

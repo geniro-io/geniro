@@ -61,6 +61,7 @@ vi.mock('../../../environments', () => {
       k8sWarmPoolTtlMs: 1800000,
       k8sInCluster: false,
     },
+    getInstanceFingerprint: () => 'test',
   };
 });
 
@@ -90,13 +91,17 @@ vi.mock('ioredis', () => ({
 const mockQueueAdd = vi.fn().mockResolvedValue({});
 const mockQueueClose = vi.fn().mockResolvedValue(undefined);
 const mockWorkerClose = vi.fn().mockResolvedValue(undefined);
+const mockWorkerOn = vi.fn();
 
 vi.mock('bullmq', () => ({
   Queue: vi.fn(function (this: unknown) {
     Object.assign(this as object, { add: mockQueueAdd, close: mockQueueClose });
   }),
   Worker: vi.fn(function (this: unknown) {
-    Object.assign(this as object, { close: mockWorkerClose });
+    Object.assign(this as object, {
+      close: mockWorkerClose,
+      on: mockWorkerOn,
+    });
   }),
 }));
 

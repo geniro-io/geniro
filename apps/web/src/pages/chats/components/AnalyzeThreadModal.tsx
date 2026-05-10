@@ -7,6 +7,7 @@ import { Button } from '../../../components/ui/button';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -54,6 +55,10 @@ export const AnalyzeThreadModal: FC<AnalyzeThreadModalProps> = ({
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>Analyze thread</DialogTitle>
+          <DialogDescription className="sr-only">
+            AI will analyze this thread and share hints about improvements or
+            potential problems.
+          </DialogDescription>
         </DialogHeader>
         <div className="flex flex-col gap-3">
           <p className="text-sm text-foreground">

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { threadsApi } from '../../../api';
 import type {
@@ -191,13 +191,47 @@ export const useChatsUsageStats = (deps: UseChatsUsageStatsDeps) => {
     threadTokenUsageByNode,
   ]);
 
+  // Compute the sum of all in-flight subagent prices across all nodes.
+  // Only meaningful while the thread is running; callers are responsible for
+  // ignoring this value when !isRunning (REST becomes authoritative then).
+  const selectedThreadInFlightSum = useMemo(() => {
+    let sum = 0;
+    let hasAny = false;
+    for (const nodeSnap of Object.values(selectedThreadUsageByNode)) {
+      if (!nodeSnap.inFlightSubagentPrice) {
+        continue;
+      }
+      for (const price of Object.values(nodeSnap.inFlightSubagentPrice)) {
+        if (typeof price === 'number' && Number.isFinite(price) && price > 0) {
+          sum += price;
+          hasAny = true;
+        }
+      }
+    }
+    return hasAny ? sum : 0;
+  }, [selectedThreadUsageByNode]);
+
   const selectedThreadAggregateUsage = useMemo(() => {
     const nodeUsages = Object.values(selectedThreadUsageByNode);
     if (!nodeUsages.length) {
       return undefined;
     }
-    return sumUsage(nodeUsages);
-  }, [selectedThreadUsageByNode]);
+    const base = sumUsage(nodeUsages);
+    const isRunning =
+      selectedThread &&
+      'status' in selectedThread &&
+      selectedThread.status === 'running';
+    // Fold in-flight subagent prices into totalPrice ONLY while running, so the
+    // header total reflects costs accumulating in child subagents. When !isRunning,
+    // inflight is excluded — REST is authoritative, and this aggregate may serve as
+    // the fallback when the REST snapshot has not yet arrived (running→done race window).
+    if (isRunning && selectedThreadInFlightSum > 0) {
+      const basePrice =
+        typeof base.totalPrice === 'number' ? base.totalPrice : 0;
+      return { ...base, totalPrice: basePrice + selectedThreadInFlightSum };
+    }
+    return base;
+  }, [selectedThread, selectedThreadUsageByNode, selectedThreadInFlightSum]);
 
   const selectedThreadThreadUsage = useMemo(() => {
     if (!selectedThread || selectedThreadIsDraft) {
@@ -206,15 +240,33 @@ export const useChatsUsageStats = (deps: UseChatsUsageStatsDeps) => {
 
     const isRunning =
       'status' in selectedThread && selectedThread.status === 'running';
+    const apiTotal = selectedThreadTokenUsageFromApi;
+    const aggregate = selectedThreadAggregateUsage;
 
-    // While the thread is running, prefer the real-time aggregated per-node
-    // sum so the UI updates live as messages stream in.  Once the thread
-    // stops, prefer the authoritative API total — it includes all agents,
-    // tools, and sub-calls and is the single source of truth.
-    if (isRunning && selectedThreadAggregateUsage) {
-      return selectedThreadAggregateUsage;
+    const limitSource =
+      'effectiveCostLimitUsd' in selectedThread
+        ? ((selectedThread as ThreadDto).effectiveCostLimitUsd ?? null)
+        : null;
+
+    const withLimit = (snap: ThreadTokenUsageSnapshot | undefined) =>
+      snap ? { ...snap, effectiveCostLimitUsd: limitSource } : undefined;
+
+    if (!isRunning) {
+      // REST is authoritative once done/stopped. inFlightSubagentPrice is ignored.
+      return withLimit(apiTotal ?? aggregate);
     }
-    return selectedThreadTokenUsageFromApi ?? selectedThreadAggregateUsage;
+    if (!apiTotal) {
+      return withLimit(aggregate);
+    }
+    if (!aggregate) {
+      return withLimit(apiTotal);
+    }
+
+    // Single-source policy: while running, trust the WS aggregate so the UI
+    // doesn't regress when real-time events arrive ahead of the API snapshot;
+    // once done, trust the authoritative REST snapshot. Reaching here means
+    // both apiTotal and aggregate are non-null (the guards above returned early).
+    return withLimit(aggregate);
   }, [
     selectedThread,
     selectedThreadAggregateUsage,
@@ -235,6 +287,7 @@ export const useChatsUsageStats = (deps: UseChatsUsageStatsDeps) => {
       return;
     }
 
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- merge per-node usage stats from REST snapshot
     setThreadTokenUsageByNode((prev) => {
       const existing = prev[selectedThreadId] ?? {};
       const merged = mergeTokenUsageByNode(byNode, existing);
@@ -345,6 +398,21 @@ export const useChatsUsageStats = (deps: UseChatsUsageStatsDeps) => {
     selectedThreadThreadUsage,
     selectedThreadTokenUsageFromApi,
   ]);
+
+  // Expose the in-flight sum for the header cost display. The component uses
+  // this to render "$X.XX + $Y.YY in-flight" when subagents are accumulating
+  // costs mid-run. When !isRunning the value is always 0 (aggregate is replaced
+  // by REST snapshot and selectedThreadInFlightSum stays 0 after stop/done).
+  const selectedThreadHeaderInFlightSum = useMemo(() => {
+    const isRunning =
+      selectedThread &&
+      'status' in selectedThread &&
+      selectedThread.status === 'running';
+    if (!isRunning) {
+      return 0;
+    }
+    return selectedThreadInFlightSum;
+  }, [selectedThread, selectedThreadInFlightSum]);
 
   const selectedThreadHeaderContextPercent = useMemo(() => {
     if (selectedAgentNodeId) {
@@ -507,6 +575,29 @@ export const useChatsUsageStats = (deps: UseChatsUsageStatsDeps) => {
     fetchUsageStatsWithRetry,
   ]);
 
+  // Re-fetch authoritative REST snapshot on running→done/stopped transition.
+  // Both refs are updated unconditionally so React 18 StrictMode double-invocation
+  // observes prev === curr on the second pass and no-ops.
+  // prevThreadIdRef guards against cross-thread status changes being mistaken for
+  // a single-thread running→done transition (H1 fix).
+  const prevThreadIdRef = useRef<string | undefined>(undefined);
+  const prevStatusRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    const prevThreadId = prevThreadIdRef.current;
+    const currThreadId = selectedThreadId;
+    const prev =
+      prevThreadId === currThreadId ? prevStatusRef.current : undefined;
+    const curr = selectedThread?.status;
+    prevThreadIdRef.current = currThreadId;
+    prevStatusRef.current = curr;
+    if (!selectedThreadId) {
+      return;
+    }
+    if (prev === 'running' && (curr === 'done' || curr === 'stopped')) {
+      return fetchUsageStatsWithRetry(selectedThreadId); // H2: return cancel fn for cleanup
+    }
+  }, [selectedThread?.status, selectedThreadId, fetchUsageStatsWithRetry]);
+
   const handleOpenUsageStatsModal = useCallback(() => {
     if (!selectedThreadId || selectedThreadIsDraft) {
       return;
@@ -562,6 +653,7 @@ export const useChatsUsageStats = (deps: UseChatsUsageStatsDeps) => {
     selectedThreadContextPercent,
     selectedThreadContextMaxTokens,
     selectedThreadHeaderUsage,
+    selectedThreadHeaderInFlightSum,
     selectedThreadHeaderContextPercent,
     selectedThreadHeaderContextMaxTokens,
     selectedThreadNodeDisplayNames,

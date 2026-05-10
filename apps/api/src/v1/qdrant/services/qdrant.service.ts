@@ -386,9 +386,17 @@ export class QdrantService {
       });
     } catch (error) {
       // Qdrant returns an error if the index already exists — ignore it
-      if (!QdrantService.isAlreadyExistsError(error)) {
-        throw error;
+      if (QdrantService.isAlreadyExistsError(error)) {
+        return;
       }
+      // Collection vanished between collectionExists() (cache hit) and this
+      // call — invalidate the cache so the next ensureCollection recreates it.
+      // The next indexing run will add the payload index then.
+      if (QdrantService.isCollectionNotFoundError(error)) {
+        this.invalidateCollectionCache(collection);
+        return;
+      }
+      throw error;
     }
   }
 

@@ -6,6 +6,7 @@ import { simpleMarkdownComponents } from '../../../components/markdown/markdownC
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from '../../../components/ui/dialog';
@@ -25,6 +26,9 @@ export const NodeInstructionsModal: FC<NodeInstructionsModalProps> = ({
     <DialogContent className="sm:max-w-[520px]">
       <DialogHeader>
         <DialogTitle>Agent instructions</DialogTitle>
+        <DialogDescription className="sr-only">
+          Full instructions configured for this agent node.
+        </DialogDescription>
       </DialogHeader>
       <div style={{ maxHeight: 420, overflowY: 'auto' }}>
         {instructionsText ? (

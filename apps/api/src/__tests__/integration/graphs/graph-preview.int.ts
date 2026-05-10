@@ -5,7 +5,10 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { AppContextStorage } from '../../../auth/app-context-storage';
 import { ReasoningEffort } from '../../../v1/agents/agents.types';
 import { GraphDao } from '../../../v1/graphs/dao/graph.dao';
-import { CreateGraphDto } from '../../../v1/graphs/dto/graphs.dto';
+import {
+  CreateGraphDto,
+  UpdateGraphDto,
+} from '../../../v1/graphs/dto/graphs.dto';
 import { GraphStatus } from '../../../v1/graphs/graphs.types';
 import { GraphsService } from '../../../v1/graphs/services/graphs.service';
 import { ProjectsDao } from '../../../v1/projects/dao/projects.dao';
@@ -226,6 +229,29 @@ describe('Graph Preview Integration Tests', () => {
 
       expect(previews).toEqual([]);
     });
+
+    it('returns DTO costLimitUsd from graph.settings.costLimitUsd', async () => {
+      const graph = await graphsService.create(
+        contextDataStorage,
+        createMockGraphData({ name: `CostLimit Preview ${Date.now()}` }),
+      );
+      registerGraph(graph.id);
+
+      await graphsService.update(contextDataStorage, graph.id, {
+        currentVersion: graph.version,
+        costLimitUsd: 2.5,
+      } as UpdateGraphDto);
+
+      const previews = await graphsService.getGraphsPreview(
+        contextDataStorage,
+        {
+          ids: [graph.id],
+        },
+      );
+
+      expect(previews).toHaveLength(1);
+      expect(previews[0]!.costLimitUsd).toBe(2.5);
+    });
   });
 
   describe('GraphDao.getPreview', () => {
@@ -253,6 +279,26 @@ describe('Graph Preview Integration Tests', () => {
       expect(rowRecord.schema).toBeUndefined();
       expect(rowRecord.metadata).toBeUndefined();
       expect(rowRecord.agents).toBeUndefined();
+    });
+
+    it('projects settings column including costLimitUsd', async () => {
+      const graph = await graphsService.create(
+        contextDataStorage,
+        createMockGraphData({ name: `DAO Settings Preview ${Date.now()}` }),
+      );
+      registerGraph(graph.id);
+
+      await graphsService.update(contextDataStorage, graph.id, {
+        currentVersion: graph.version,
+        costLimitUsd: 2.5,
+      } as UpdateGraphDto);
+
+      const result = await graphDao.getPreview({ id: graph.id });
+
+      expect(result).toHaveLength(1);
+      const row = result[0]!;
+      expect(row.settings).toBeDefined();
+      expect(row.settings.costLimitUsd).toBe(2.5);
     });
   });
 

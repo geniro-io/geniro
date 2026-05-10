@@ -19,7 +19,8 @@ import {
   waitForCondition,
 } from '../helpers/graph-helpers';
 import { createTestProject } from '../helpers/test-context';
-import { createTestModule } from '../setup';
+import type { MockLlmService } from '../mocks/mock-llm/mock-llm.service';
+import { createTestModule, getMockLlm } from '../setup';
 
 // Assigned in beforeAll once the test project is created.
 let contextDataStorage: AppContextStorage;
@@ -29,6 +30,7 @@ describe('Thread Management Integration Tests', () => {
   let graphsService: GraphsService;
   let threadsService: ThreadsService;
   let graphRegistry: GraphRegistry;
+  let mockLlm: MockLlmService;
   const createdGraphIds: string[] = [];
   let basicGraphId: string;
   let multiAgentGraphId: string;
@@ -43,6 +45,7 @@ describe('Thread Management Integration Tests', () => {
     graphsService = app.get<GraphsService>(GraphsService);
     threadsService = app.get<ThreadsService>(ThreadsService);
     graphRegistry = app.get<GraphRegistry>(GraphRegistry);
+    mockLlm = getMockLlm(app);
 
     const projectResult = await createTestProject(app);
     testProjectId = projectResult.projectId;
@@ -58,7 +61,7 @@ describe('Thread Management Integration Tests', () => {
       await waitForCondition(
         () => graphsService.findById(contextDataStorage, graphId),
         (g) => g.status === GraphStatus.Running,
-        { timeout: 60_000, interval: 1_000 },
+        { timeout: 30_000, interval: 200, maxInterval: 500 },
       );
     };
 
@@ -266,7 +269,7 @@ describe('Thread Management Integration Tests', () => {
     await waitForCondition(
       () => graphsService.findById(contextDataStorage, graphId),
       (g) => g.status === GraphStatus.Running,
-      { timeout: 60_000, interval: 1_000 },
+      { timeout: 30_000, interval: 200, maxInterval: 500 },
     );
   };
 
@@ -504,6 +507,23 @@ describe('Thread Management Integration Tests', () => {
 
       expect(execResult.externalThreadId).toBeDefined();
       expect(execResult.checkpointNs).toBeDefined();
+
+      // Drain pending agent work before next test starts so the in-flight
+      // em.transactional from this run doesn't collide with the next
+      // executeTrigger call (manifests as `ROLLBACK TO SAVEPOINT can only be
+      // used in transaction blocks`).
+      await waitForCondition(
+        () =>
+          threadsService.getThreadByExternalId(
+            contextDataStorage,
+            execResult.externalThreadId,
+          ),
+        (t) =>
+          t.status === ThreadStatus.Done ||
+          t.status === ThreadStatus.NeedMoreInfo ||
+          t.status === ThreadStatus.Stopped,
+        { timeout: 15_000, interval: 200 },
+      );
     });
   });
 
@@ -704,6 +724,31 @@ describe('Thread Management Integration Tests', () => {
         const userMessage =
           `Call the finish tool with needsMoreInfo=false and set the finish message to include this token: ${token}. ` +
           'Do not call any other tools.';
+
+        // Token-aware finish fixture — applyDefaults' generic finish stub returns
+        // `message: 'OK'`, but this test asserts the token round-trips through the
+        // finish tool result.
+        mockLlm.onChat(
+          {
+            lastUserMessage: token,
+            hasTools: ['finish'],
+          },
+          {
+            kind: 'toolCall',
+            toolName: 'finish',
+            args: {
+              purpose: 'done',
+              message: `Done. Including token ${token}`,
+              needsMoreInfo: false,
+            },
+            usage: {
+              inputTokens: 100,
+              outputTokens: 50,
+              totalTokens: 150,
+              totalPrice: 0.0001,
+            },
+          },
+        );
 
         const triggerResult = await graphsService.executeTrigger(
           contextDataStorage,
@@ -1037,23 +1082,81 @@ describe('Thread Management Integration Tests', () => {
       async () => {
         await ensureGraphRunning(injectModeGraphId);
         const threadSubId = uniqueThreadSubId('inject-active');
+        const firstUserMessage = 'Tell me what is the 2+2?';
+        const secondUserMessage = 'Oh not, 2+3, sorry';
+
+        // Slow the first agent call so the second trigger lands while the run
+        // is still active — otherwise the first call finishes before the
+        // second message arrives, the messages persist within microseconds of
+        // each other, and the createdAt ordering assertion is flaky (or the
+        // test never observes the inject_after_tool_call path at all). The
+        // second call's matcher is more specific so it doesn't pick up this
+        // delay. Same pattern as the wait_for_completion test below.
+        mockLlm.onChat(
+          { lastUserMessage: firstUserMessage, hasTools: ['finish'] },
+          {
+            kind: 'toolCall',
+            toolName: 'finish',
+            args: {
+              purpose: 'done',
+              message: '2+3 equals 5',
+              needsMoreInfo: false,
+            },
+            usage: {
+              inputTokens: 100,
+              outputTokens: 50,
+              totalTokens: 150,
+              totalPrice: 0.0001,
+            },
+            delayMs: 3_000,
+          },
+        );
+        mockLlm.onChat(
+          { lastUserMessage: secondUserMessage, hasTools: ['finish'] },
+          {
+            kind: 'toolCall',
+            toolName: 'finish',
+            args: {
+              purpose: 'done',
+              message: '2+3 equals 5',
+              needsMoreInfo: false,
+            },
+            usage: {
+              inputTokens: 100,
+              outputTokens: 50,
+              totalTokens: 150,
+              totalPrice: 0.0001,
+            },
+          },
+        );
+
         const firstResult = await graphsService.executeTrigger(
           contextDataStorage,
           injectModeGraphId,
           'trigger-1',
           {
-            messages: ['Tell me what is the 2+2?'],
+            messages: [firstUserMessage],
             threadSubId,
             async: true,
           },
         );
+
+        // Wait for the first human message to land in the DB before sending
+        // the second trigger. With async:true the first message is persisted
+        // by the agent's notification handler on a separate event chain, so
+        // sending the second (synchronous) trigger immediately can persist the
+        // second message microseconds before the first lands — flipping the
+        // createdAt ordering. The 3s mock-LLM delay above keeps the first run
+        // active well past this wait, so the second message still hits the
+        // inject_after_tool_call path.
+        await waitForHumanMessageContents(firstResult.externalThreadId, 1);
 
         const secondResult = await graphsService.executeTrigger(
           contextDataStorage,
           injectModeGraphId,
           'trigger-1',
           {
-            messages: ['Oh not, 2+3, sorry'],
+            messages: [secondUserMessage],
             threadSubId,
           },
         );
@@ -1068,11 +1171,11 @@ describe('Thread Management Integration Tests', () => {
         );
 
         const firstMessage = humanMessages.find(
-          (m) => m.message.content === 'Tell me what is the 2+2?',
+          (m) => m.message.content === firstUserMessage,
         );
 
         const secondMessage = humanMessages.find(
-          (m) => m.message.content === 'Oh not, 2+3, sorry',
+          (m) => m.message.content === secondUserMessage,
         );
 
         expect(firstMessage).toBeDefined();
@@ -1193,6 +1296,54 @@ describe('Thread Management Integration Tests', () => {
           'Start a long running reasoning task and share your thoughts.';
         const secondMessage = 'Also list some mitigation strategies.';
 
+        // First call must stay running long enough for the second message to be
+        // queued by WaitForCompletion mode — otherwise both messages persist near
+        // simultaneously and the createdAt ordering assertion is flaky. The second
+        // call's matcher is more specific so it overrides the first delay.
+        mockLlm.onChat(
+          {
+            lastUserMessage: secondMessage,
+            hasTools: ['finish'],
+          },
+          {
+            kind: 'toolCall',
+            toolName: 'finish',
+            args: {
+              purpose: 'done',
+              message: 'Mitigation strategies enumerated',
+              needsMoreInfo: false,
+            },
+            usage: {
+              inputTokens: 100,
+              outputTokens: 50,
+              totalTokens: 150,
+              totalPrice: 0.0001,
+            },
+          },
+        );
+        mockLlm.onChat(
+          {
+            lastUserMessage: firstMessage,
+            hasTools: ['finish'],
+          },
+          {
+            kind: 'toolCall',
+            toolName: 'finish',
+            args: {
+              purpose: 'done',
+              message: 'Reasoning complete',
+              needsMoreInfo: false,
+            },
+            usage: {
+              inputTokens: 100,
+              outputTokens: 50,
+              totalTokens: 150,
+              totalPrice: 0.0001,
+            },
+            delayMs: 3_000,
+          },
+        );
+
         const firstResult = await graphsService.executeTrigger(
           contextDataStorage,
           waitModeGraphId,
@@ -1290,6 +1441,32 @@ describe('Thread Management Integration Tests', () => {
         const threadSubId = uniqueThreadSubId('wait-mode-active');
         const firstMessage = 'Start a long running analysis.';
         const secondMessage = 'Add mitigation strategies when ready.';
+
+        // Slow the first agent run so the test can observe the queued state of
+        // the second message. Without this delay the first run finishes before
+        // the second message arrives and pendingMessages stays empty.
+        mockLlm.onChat(
+          {
+            lastUserMessage: 'long running analysis',
+            hasTools: ['finish'],
+          },
+          {
+            kind: 'toolCall',
+            toolName: 'finish',
+            args: {
+              purpose: 'done',
+              message: 'Analysis complete',
+              needsMoreInfo: false,
+            },
+            usage: {
+              inputTokens: 100,
+              outputTokens: 50,
+              totalTokens: 150,
+              totalPrice: 0.0001,
+            },
+            delayMs: 5_000,
+          },
+        );
 
         const firstResult = await graphsService.executeTrigger(
           contextDataStorage,
@@ -1943,6 +2120,7 @@ describe('Thread Management Integration Tests', () => {
         createdGraphIds.push(graphId);
 
         await graphsService.run(contextDataStorage, graphId);
+        await ensureGraphRunning(graphId);
 
         const threadSubId = uniqueThreadSubId(
           'conservative-summarization-test',
@@ -1957,6 +2135,23 @@ describe('Thread Management Integration Tests', () => {
             messages: ['First message'],
             threadSubId,
           },
+        );
+
+        // Drain pending agent work between sequential executeTriggers — leftover
+        // em.transactional state from the first call's run can otherwise collide
+        // with the second call's pessimistic-write lock acquisition (manifests as
+        // `ROLLBACK TO SAVEPOINT can only be used in transaction blocks`).
+        await waitForCondition(
+          () =>
+            threadsService.getThreadByExternalId(
+              contextDataStorage,
+              exec1.externalThreadId,
+            ),
+          (t) =>
+            t.status === ThreadStatus.Done ||
+            t.status === ThreadStatus.NeedMoreInfo ||
+            t.status === ThreadStatus.Stopped,
+          { timeout: 15_000, interval: 200 },
         );
 
         const exec2 = await graphsService.executeTrigger(

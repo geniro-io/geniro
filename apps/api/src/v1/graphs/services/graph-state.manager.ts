@@ -372,6 +372,13 @@ export class GraphStateManager {
       | Record<string, unknown>
       | undefined;
 
+    const rawEffectiveCostLimitUsd = cfg?.effective_cost_limit_usd;
+    const effectiveCostLimitUsd =
+      typeof rawEffectiveCostLimitUsd === 'number' ||
+      rawEffectiveCostLimitUsd === null
+        ? rawEffectiveCostLimitUsd
+        : undefined;
+
     await this.notificationsService.emit({
       type: NotificationEvent.AgentInvoke,
       graphId: cfg?.graph_id || this.graphId,
@@ -383,6 +390,7 @@ export class GraphStateManager {
       ...(runId ? { runId } : {}),
       source: cfg?.source,
       ...(threadMetadata ? { threadMetadata } : {}),
+      ...(effectiveCostLimitUsd !== undefined ? { effectiveCostLimitUsd } : {}),
       data: {
         messages: data.messages,
       },
@@ -505,6 +513,17 @@ export class GraphStateManager {
     // use !== undefined checks instead of 'in' operator so that inherited
     // prototype keys cannot accidentally trigger the spread.
     for (const threadId of activeThreads) {
+      // Child-agent (reached via communication_exec) stops must not rewrite
+      // the parent thread's status/metadata — the parent agent's own
+      // run/stop lifecycle events are the sole authority over that row.
+      // When parentThreadId is set AND differs from the stopping thread,
+      // this execution belongs to a child agent whose effectiveThreadId
+      // has no standalone thread row; the notification handler would
+      // otherwise resolve parentThreadId as the lookup key and clobber
+      // the parent thread's metadata with the child's cost-limit state.
+      if (parentThreadId && parentThreadId !== threadId) {
+        continue;
+      }
       await this.notificationsService.emit({
         type: NotificationEvent.ThreadUpdate,
         graphId: this.graphId,

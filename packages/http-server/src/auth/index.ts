@@ -1,7 +1,7 @@
-import { IAppBootstrapperExtension } from '@packages/common';
+import type { IAppBootstrapperExtension } from '@packages/common';
 
 import { AuthModule } from './auth.module';
-import { IAuthModuleParams } from './auth.types';
+import type { IAuthModuleParams } from './auth.types';
 import { AuthContextService } from './auth-context.service';
 import { AuthContextStorage } from './auth-context-storage';
 

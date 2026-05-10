@@ -108,6 +108,7 @@ export interface AgentStateUpdateNotification extends BaseNotification {
     totalPrice?: number;
     currentContext?: number;
     effectiveCostLimitUsd?: number | null;
+    inFlightSubagentPrice?: Record<string, number>;
   };
 }
 

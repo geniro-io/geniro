@@ -1,12 +1,13 @@
 import {
-  CallHandler,
-  ExecutionContext,
+  type CallHandler,
+  type ExecutionContext,
   Injectable,
-  NestInterceptor,
+  type NestInterceptor,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { DECORATORS } from '@nestjs/swagger/dist/constants';
-import { pick } from 'lodash';
+import lodash from 'lodash';
+
+const { pick } = lodash;
 import { Observable } from 'rxjs';
 import { map } from 'rxjs/operators';
 import z from 'zod';
@@ -24,7 +25,7 @@ export class ZodResponseInterceptor implements NestInterceptor {
   constructor(private readonly reflector: Reflector) {}
 
   intercept(ctx: ExecutionContext, next: CallHandler): Observable<unknown> {
-    const meta = (this.reflector.getAllAndOverride(DECORATORS.API_RESPONSE, [
+    const meta = (this.reflector.getAllAndOverride('swagger/apiResponse', [
       ctx.getHandler(),
       ctx.getClass(),
     ]) || {}) as Record<string, { type?: MaybeZodDto; isArray?: boolean }>;

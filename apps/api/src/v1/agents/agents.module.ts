@@ -1,10 +1,11 @@
-import { Module } from '@nestjs/common';
+import { forwardRef, Module } from '@nestjs/common';
 import { registerEntities } from '@packages/mikroorm';
 
 import { AgentToolsModule } from '../agent-tools/agent-tools.module';
 import { LitellmModule } from '../litellm/litellm.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { RuntimeModule } from '../runtime/runtime.module';
+import { ThreadsModule } from '../threads/threads.module';
 import { GraphCheckpointsDao } from './dao/graph-checkpoints.dao';
 import { GraphCheckpointsWritesDao } from './dao/graph-checkpoints-writes.dao';
 import { GraphCheckpointEntity } from './entity/graph-chekpoints.entity';
@@ -21,6 +22,7 @@ import { PgCheckpointSaver } from './services/pg-checkpoint-saver';
     AgentToolsModule,
     NotificationsModule,
     LitellmModule,
+    forwardRef(() => ThreadsModule),
   ],
   controllers: [],
   providers: [

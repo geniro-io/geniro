@@ -330,6 +330,145 @@ describe('GraphStateManager', () => {
       expect(threadUpdate).toBeUndefined();
     });
 
+    it('should not mark parent thread stopped when a child agent (via communication_exec) stops', async () => {
+      const agent: any = {
+        subscribe: vi.fn(),
+        getGraphNodeMetadata: vi.fn(),
+      };
+      let agentHandler: any;
+      agent.subscribe.mockImplementation((handler: any) => {
+        agentHandler = handler;
+        return vi.fn();
+      });
+
+      const node: CompiledGraphNode = {
+        id: 'agent-1',
+        type: NodeKind.SimpleAgent,
+        template: 'simple-agent',
+        config: {},
+        instance: agent,
+        handle: makeHandle(agent),
+      };
+
+      manager.registerNode('agent-1');
+      manager.attachGraphNode('agent-1', node);
+
+      // Register the child thread as an active execution
+      await agentHandler({
+        type: 'invoke',
+        data: {
+          threadId: 'child-thread',
+          config: {
+            configurable: {
+              graph_id: 'graph-1',
+              node_id: 'agent-1',
+              parent_thread_id: 'parent-thread',
+            },
+          },
+        },
+      });
+
+      vi.mocked(notifications.emit).mockClear();
+
+      // Fire a cost-limit stop for the child agent
+      await agentHandler({
+        type: 'stop',
+        data: {
+          stopReason: 'cost_limit',
+          stopCostUsd: 2.5,
+          config: {
+            configurable: {
+              graph_id: 'graph-1',
+              node_id: 'agent-1',
+              parent_thread_id: 'parent-thread',
+            },
+          },
+        },
+      });
+
+      const threadUpdate = vi
+        .mocked(notifications.emit)
+        .mock.calls.find(
+          (call: any) => call[0].type === NotificationEvent.ThreadUpdate,
+        );
+
+      expect(threadUpdate).toBeUndefined();
+    });
+
+    it('should emit ThreadUpdate(Stopped) for the root thread on handleAgentStop', async () => {
+      const agent: any = {
+        subscribe: vi.fn(),
+        getGraphNodeMetadata: vi.fn(),
+      };
+      let agentHandler: any;
+      agent.subscribe.mockImplementation((handler: any) => {
+        agentHandler = handler;
+        return vi.fn();
+      });
+
+      const node: CompiledGraphNode = {
+        id: 'agent-1',
+        type: NodeKind.SimpleAgent,
+        template: 'simple-agent',
+        config: {},
+        instance: agent,
+        handle: makeHandle(agent),
+      };
+
+      manager.registerNode('agent-1');
+      manager.attachGraphNode('agent-1', node);
+
+      // Register the root thread as an active execution (no parent_thread_id)
+      await agentHandler({
+        type: 'invoke',
+        data: {
+          threadId: 'root-thread',
+          config: {
+            configurable: {
+              graph_id: 'graph-1',
+              node_id: 'agent-1',
+            },
+          },
+        },
+      });
+
+      vi.mocked(notifications.emit).mockClear();
+
+      // Fire a cost-limit stop for the root agent
+      await agentHandler({
+        type: 'stop',
+        data: {
+          stopReason: 'cost_limit',
+          stopCostUsd: 2.5,
+          config: {
+            configurable: {
+              graph_id: 'graph-1',
+              node_id: 'agent-1',
+            },
+          },
+        },
+      });
+
+      const threadUpdateCall = vi
+        .mocked(notifications.emit)
+        .mock.calls.find(
+          (call: any) => call[0].type === NotificationEvent.ThreadUpdate,
+        );
+
+      expect(threadUpdateCall).toBeDefined();
+      expect(threadUpdateCall![0]).toEqual(
+        expect.objectContaining({
+          type: NotificationEvent.ThreadUpdate,
+          threadId: 'root-thread',
+          data: expect.objectContaining({
+            status: ThreadStatus.Stopped,
+            stopReason: 'cost_limit',
+            stopCostUsd: 2.5,
+          }),
+        }),
+      );
+    });
+
     it('should keep agent node status as Idle regardless of active threads', async () => {
       const agent: any = {
         subscribe: vi.fn(),

@@ -1,5 +1,10 @@
 import { Controller, Get } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiOkResponse,
+  ApiOperation,
+  ApiTags,
+} from '@nestjs/swagger';
 import type { IContextData } from '@packages/http-server';
 import { CtxData, OnlyForAuthorized } from '@packages/http-server';
 
@@ -19,6 +24,7 @@ export class SystemController {
   @Get('settings')
   @ApiBearerAuth()
   @OnlyForAuthorized()
+  @ApiOkResponse({ type: SystemSettingsResponseDto })
   getSettings(@CtxData() ctx: IContextData): SystemSettingsResponseDto {
     return {
       githubAppEnabled: this.gitHubAppService.isConfigured(),
@@ -37,6 +43,11 @@ export class SystemController {
    * Only expose non-sensitive values here (provider type, issuer URL, client ID).
    */
   @Get('config')
+  @ApiOperation({
+    summary:
+      'Public endpoint (no @OnlyForAuthorized) — intentionally unauthenticated. Returns OIDC provider config needed by the frontend before login. Only expose non-sensitive values here (provider type, issuer URL, client ID).',
+  })
+  @ApiOkResponse({ type: AuthConfigResponseDto })
   getAuthConfig(): AuthConfigResponseDto {
     const isZitadel = environment.authProvider === 'zitadel';
     return {

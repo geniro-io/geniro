@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -221,6 +222,11 @@ export const ProjectsListPage = () => {
             <DialogTitle>
               {editingProject ? 'Edit Project' : 'New Project'}
             </DialogTitle>
+            <DialogDescription className="sr-only">
+              {editingProject
+                ? 'Update the name, description, icon, and color for this project.'
+                : 'Create a new project to organize your agent graphs and knowledge.'}
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
@@ -315,6 +321,9 @@ export const ProjectsListPage = () => {
         <DialogContent className="sm:max-w-[425px]">
           <DialogHeader>
             <DialogTitle>Delete project</DialogTitle>
+            <DialogDescription className="sr-only">
+              Permanently delete this project and all its contents.
+            </DialogDescription>
           </DialogHeader>
           <p className="text-sm text-muted-foreground py-2">
             Are you sure you want to delete &quot;

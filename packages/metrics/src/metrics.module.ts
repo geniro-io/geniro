@@ -1,9 +1,9 @@
 import {
-  DynamicModule,
+  type DynamicModule,
   Global,
-  MiddlewareConsumer,
+  type MiddlewareConsumer,
   Module,
-  OnModuleInit,
+  type OnModuleInit,
 } from '@nestjs/common';
 import { AppBootstrapperConfigService } from '@packages/common';
 

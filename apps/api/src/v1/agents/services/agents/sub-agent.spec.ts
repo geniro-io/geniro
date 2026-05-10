@@ -372,6 +372,7 @@ describe('SubAgent', () => {
         inputTokens: 200,
         outputTokens: 50,
         totalTokens: 250,
+        totalPrice: 0,
       });
 
       mockLlmInvokeRef.mockResolvedValueOnce(
@@ -447,6 +448,7 @@ describe('SubAgent', () => {
         inputTokens: 100,
         outputTokens: 30,
         totalTokens: 130,
+        totalPrice: 0,
       });
 
       const toolCallMsg = new AIMessage({
@@ -481,6 +483,7 @@ describe('SubAgent', () => {
         outputTokens: 30,
         totalTokens: 630,
         currentContext: 600,
+        totalPrice: 0,
       });
 
       mockLlmInvokeRef.mockResolvedValueOnce(
@@ -516,6 +519,7 @@ describe('SubAgent', () => {
         outputTokens: 30,
         totalTokens: 230,
         currentContext: 200,
+        totalPrice: 0,
       });
 
       mockLlmInvokeRef.mockResolvedValueOnce(

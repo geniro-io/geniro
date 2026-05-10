@@ -5,6 +5,7 @@ import { Tiktoken, TiktokenModel } from 'js-tiktoken/lite';
 
 import { LiteLlmModelDto } from '../dto/models.dto';
 import {
+  AggregatedTokenUsage,
   LiteLLMModelInfo,
   LLMTokenCostRates,
   RequestTokenUsage,
@@ -76,9 +77,20 @@ export class LitellmService {
     return tiktoken.encode(text).length;
   }
 
+  /**
+   * Sums an array of per-request token usages into a single aggregate.
+   *
+   * Returns `null` when no input usage was provided (all elements are null/undefined).
+   * When non-null, `totalPrice` is always a number (zero-coerced from missing/unknown
+   * pricing inputs via `Decimal.toNumber()`). Callers MUST NOT need `?? 0` or
+   * `typeof === 'number'` guards on the returned `totalPrice`. This contract widens
+   * `RequestTokenUsage.totalPrice` (which is `number | undefined`) for the sum-result
+   * use case only — per-message ingestion paths still preserve `undefined` to distinguish
+   * unpriced calls.
+   */
   sumTokenUsages(
     usages: (RequestTokenUsage | null | undefined)[],
-  ): RequestTokenUsage | null {
+  ): AggregatedTokenUsage | null {
     let inputTokens = 0;
     let cachedInputTokens = 0;
     let outputTokens = 0;
@@ -87,7 +99,6 @@ export class LitellmService {
     let totalPriceDecimal = new Decimal(0);
     let currentContext = 0;
     let sawAny = false;
-    let sawPrice = false;
     let sawContext = false;
 
     for (const usage of usages) {
@@ -100,10 +111,7 @@ export class LitellmService {
       outputTokens += usage.outputTokens;
       reasoningTokens += usage.reasoningTokens ?? 0;
       totalTokens += usage.totalTokens;
-      if (typeof usage.totalPrice === 'number') {
-        totalPriceDecimal = totalPriceDecimal.plus(usage.totalPrice);
-        sawPrice = true;
-      }
+      totalPriceDecimal = totalPriceDecimal.plus(usage.totalPrice ?? 0);
       if (typeof usage.currentContext === 'number') {
         currentContext = Math.max(currentContext, usage.currentContext);
         sawContext = true;
@@ -120,7 +128,7 @@ export class LitellmService {
       outputTokens,
       ...(reasoningTokens ? { reasoningTokens } : {}),
       totalTokens,
-      ...(sawPrice ? { totalPrice: totalPriceDecimal.toNumber() } : {}),
+      totalPrice: totalPriceDecimal.toNumber(),
       ...(sawContext ? { currentContext } : {}),
     };
   }
@@ -150,12 +158,13 @@ export class LitellmService {
     const cachedInputTokens =
       inputTokensDetails?.cached_tokens ?? inputTokensDetails?.cache_read ?? 0;
 
-    const outputTokensDetails =
-      usageMetadata?.output_tokens_details ||
-      usageMetadata?.completion_tokens_details;
     const reasoningTokens =
-      outputTokensDetails?.reasoning_tokens ??
-      outputTokensDetails?.reasoning ??
+      usageMetadata?.output_tokens_details?.reasoning_tokens ??
+      usageMetadata?.output_tokens_details?.reasoning ??
+      usageMetadata?.completion_tokens_details?.reasoning_tokens ??
+      usageMetadata?.completion_tokens_details?.reasoning ??
+      usageMetadata?.output_token_details?.reasoning_tokens ??
+      usageMetadata?.output_token_details?.reasoning ??
       0;
 
     // cachedInputTokens is a subset of inputTokens, and reasoningTokens is a subset

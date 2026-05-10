@@ -16,6 +16,15 @@ export class CacheService implements OnModuleDestroy {
     this.redis = new IORedis(environment.redisUrl, {
       maxRetriesPerRequest: null,
       lazyConnect: false,
+      // `disableClientInfo: true` skips the telemetry CLIENT SETINFO
+      // command on (re)connect. It is purely metadata for `CLIENT INFO`
+      // debug output; skipping has zero functional impact and removes one
+      // synchronous-write source that can throw EPIPE during teardown.
+      // We deliberately KEEP `enableReadyCheck` at its default `true` so
+      // commands wait for Redis to finish loading after restart/failover —
+      // the cache has no BullMQ-style retry layer to compensate for
+      // LOADING errors.
+      disableClientInfo: true,
     });
 
     this.redis.on('error', (error) => {

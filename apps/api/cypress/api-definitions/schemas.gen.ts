@@ -181,13 +181,13 @@ export const CreateRepositoryDtoSchema = {
       format: 'uri',
     },
     provider: {
-      type: 'string',
       default: 'GITHUB',
+      type: 'string',
       enum: ['GITHUB'],
     },
     defaultBranch: {
-      type: 'string',
       default: 'main',
+      type: 'string',
     },
   },
   required: ['owner', 'repo', 'url'],
@@ -1176,8 +1176,8 @@ export const CreateProjectDtoSchema = {
       ],
     },
     settings: {
-      type: 'object',
       default: {},
+      type: 'object',
       propertyNames: {
         type: 'string',
       },
@@ -1338,8 +1338,8 @@ export const UpdateProjectDtoSchema = {
       ],
     },
     settings: {
-      type: 'object',
       default: {},
+      type: 'object',
       propertyNames: {
         type: 'string',
       },
@@ -1649,165 +1649,790 @@ export const KnowledgeDocUpdateDtoSchema = {
   },
 } as const;
 
-export const SuggestAgentInstructionsDtoSchema = {
+export const KnowledgeDocListResultDtoSchema = {
   type: 'object',
   properties: {
-    userRequest: {
-      type: 'string',
-      minLength: 1,
-    },
-    threadId: {
-      type: 'string',
-    },
-    model: {
-      type: 'string',
-      minLength: 1,
-    },
-  },
-  required: ['userRequest'],
-} as const;
-
-export const SuggestAgentInstructionsResponseDtoSchema = {
-  type: 'object',
-  properties: {
-    instructions: {
-      type: 'string',
-    },
-    threadId: {
-      type: 'string',
-    },
-  },
-  required: ['instructions', 'threadId'],
-} as const;
-
-export const SuggestGraphInstructionsDtoSchema = {
-  type: 'object',
-  properties: {
-    userRequest: {
-      type: 'string',
-      minLength: 1,
-    },
-    model: {
-      type: 'string',
-      minLength: 1,
-    },
-  },
-  required: ['userRequest'],
-} as const;
-
-export const SuggestGraphInstructionsResponseDtoSchema = {
-  type: 'object',
-  properties: {
-    updates: {
+    items: {
       type: 'array',
       items: {
         type: 'object',
         properties: {
-          nodeId: {
+          id: {
             type: 'string',
-            minLength: 1,
+            format: 'uuid',
+            pattern:
+              '^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$',
           },
-          name: {
-            type: 'string',
-            minLength: 1,
+          publicId: {
+            type: 'integer',
+            minimum: -9007199254740991,
+            maximum: 9007199254740991,
           },
-          instructions: {
+          content: {
             type: 'string',
-            minLength: 1,
+          },
+          title: {
+            type: 'string',
+          },
+          summary: {
+            anyOf: [
+              {
+                type: 'string',
+              },
+              {
+                type: 'null',
+              },
+            ],
+          },
+          politic: {
+            anyOf: [
+              {
+                type: 'string',
+              },
+              {
+                type: 'null',
+              },
+            ],
+          },
+          embeddingModel: {
+            anyOf: [
+              {
+                type: 'string',
+              },
+              {
+                type: 'null',
+              },
+            ],
+          },
+          tags: {
+            type: 'array',
+            items: {
+              type: 'string',
+            },
+          },
+          projectId: {
+            anyOf: [
+              {
+                type: 'string',
+                format: 'uuid',
+                pattern:
+                  '^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$',
+              },
+              {
+                type: 'null',
+              },
+            ],
+          },
+          createdAt: {
+            type: 'string',
+            format: 'date-time',
+            pattern:
+              '^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$',
+          },
+          updatedAt: {
+            type: 'string',
+            format: 'date-time',
+            pattern:
+              '^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$',
           },
         },
-        required: ['nodeId', 'instructions'],
+        required: [
+          'id',
+          'publicId',
+          'content',
+          'title',
+          'tags',
+          'projectId',
+          'createdAt',
+          'updatedAt',
+        ],
       },
     },
+    total: {
+      type: 'integer',
+      minimum: 0,
+      maximum: 9007199254740991,
+    },
   },
-  required: ['updates'],
+  required: ['items', 'total'],
 } as const;
 
-export const ThreadAnalysisRequestDtoSchema = {
+export const ThreadDtoSchema = {
   type: 'object',
   properties: {
-    userInput: {
+    id: {
       type: 'string',
-      minLength: 1,
-      maxLength: 5000,
+      format: 'uuid',
+      pattern:
+        '^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$',
+    },
+    graphId: {
+      type: 'string',
+      format: 'uuid',
+      pattern:
+        '^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$',
+    },
+    externalThreadId: {
+      type: 'string',
+    },
+    lastRunId: {
+      anyOf: [
+        {
+          type: 'string',
+          format: 'uuid',
+          pattern:
+            '^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$',
+        },
+        {
+          type: 'null',
+        },
+      ],
+    },
+    createdAt: {
+      type: 'string',
+      format: 'date-time',
+      pattern:
+        '^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$',
+    },
+    updatedAt: {
+      type: 'string',
+      format: 'date-time',
+      pattern:
+        '^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$',
+    },
+    metadata: {
+      anyOf: [
+        {
+          type: 'object',
+          propertyNames: {
+            type: 'string',
+          },
+          additionalProperties: {},
+        },
+        {
+          type: 'null',
+        },
+      ],
+    },
+    source: {
+      anyOf: [
+        {
+          type: 'string',
+        },
+        {
+          type: 'null',
+        },
+      ],
+    },
+    name: {
+      anyOf: [
+        {
+          type: 'string',
+        },
+        {
+          type: 'null',
+        },
+      ],
+    },
+    status: {
+      type: 'string',
+      enum: ['running', 'done', 'need_more_info', 'stopped', 'waiting'],
+    },
+    agents: {
+      anyOf: [
+        {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              nodeId: {
+                type: 'string',
+              },
+              name: {
+                type: 'string',
+              },
+              description: {
+                type: 'string',
+              },
+            },
+            required: ['nodeId', 'name'],
+          },
+        },
+        {
+          type: 'null',
+        },
+      ],
+    },
+    stopReason: {
+      anyOf: [
+        {
+          type: 'string',
+        },
+        {
+          type: 'null',
+        },
+      ],
+    },
+    effectiveCostLimitUsd: {
+      anyOf: [
+        {
+          type: 'number',
+        },
+        {
+          type: 'null',
+        },
+      ],
+    },
+  },
+  required: [
+    'id',
+    'graphId',
+    'externalThreadId',
+    'createdAt',
+    'updatedAt',
+    'status',
+  ],
+} as const;
+
+export const ThreadMessageDtoSchema = {
+  type: 'object',
+  properties: {
+    id: {
+      type: 'string',
+      format: 'uuid',
+      pattern:
+        '^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$',
     },
     threadId: {
       type: 'string',
+      format: 'uuid',
+      pattern:
+        '^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$',
     },
-    model: {
+    nodeId: {
       type: 'string',
-      minLength: 1,
+    },
+    externalThreadId: {
+      type: 'string',
+    },
+    createdAt: {
+      type: 'string',
+      format: 'date-time',
+      pattern:
+        '^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$',
+    },
+    updatedAt: {
+      type: 'string',
+      format: 'date-time',
+      pattern:
+        '^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$',
+    },
+    message: {
+      oneOf: [
+        {
+          type: 'object',
+          properties: {
+            role: {
+              type: 'string',
+              const: 'human',
+            },
+            content: {
+              anyOf: [
+                {
+                  type: 'string',
+                },
+                {
+                  minItems: 1,
+                  type: 'array',
+                  items: {
+                    oneOf: [
+                      {
+                        type: 'object',
+                        properties: {
+                          type: {
+                            type: 'string',
+                            const: 'text',
+                          },
+                          text: {
+                            type: 'string',
+                            minLength: 1,
+                          },
+                        },
+                        required: ['type', 'text'],
+                      },
+                      {
+                        type: 'object',
+                        properties: {
+                          type: {
+                            type: 'string',
+                            const: 'image_url',
+                          },
+                          image_url: {
+                            type: 'object',
+                            properties: {
+                              url: {
+                                type: 'string',
+                              },
+                              detail: {
+                                default: 'auto',
+                                type: 'string',
+                                enum: ['auto', 'low', 'high'],
+                              },
+                            },
+                            required: ['url'],
+                          },
+                        },
+                        required: ['type', 'image_url'],
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+            runId: {
+              anyOf: [
+                {
+                  type: 'string',
+                },
+                {
+                  type: 'null',
+                },
+              ],
+            },
+            additionalKwargs: {
+              type: 'object',
+              propertyNames: {
+                type: 'string',
+              },
+              additionalProperties: {},
+            },
+          },
+          required: ['role', 'content'],
+        },
+        {
+          type: 'object',
+          properties: {
+            role: {
+              type: 'string',
+              const: 'ai',
+            },
+            content: {
+              type: 'string',
+            },
+            id: {
+              type: 'string',
+            },
+            runId: {
+              anyOf: [
+                {
+                  type: 'string',
+                },
+                {
+                  type: 'null',
+                },
+              ],
+            },
+            toolCalls: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  name: {
+                    type: 'string',
+                  },
+                  args: {
+                    type: 'object',
+                    propertyNames: {
+                      type: 'string',
+                    },
+                    additionalProperties: {},
+                  },
+                  type: {
+                    type: 'string',
+                  },
+                  id: {
+                    type: 'string',
+                  },
+                  title: {
+                    type: 'string',
+                  },
+                },
+                required: ['name', 'args', 'type', 'id'],
+              },
+            },
+            additionalKwargs: {
+              type: 'object',
+              propertyNames: {
+                type: 'string',
+              },
+              additionalProperties: {},
+            },
+          },
+          required: ['role', 'content'],
+        },
+        {
+          type: 'object',
+          properties: {
+            id: {
+              type: 'string',
+            },
+            role: {
+              type: 'string',
+              const: 'reasoning',
+            },
+            content: {
+              type: 'string',
+            },
+            runId: {
+              anyOf: [
+                {
+                  type: 'string',
+                },
+                {
+                  type: 'null',
+                },
+              ],
+            },
+            additionalKwargs: {
+              type: 'object',
+              propertyNames: {
+                type: 'string',
+              },
+              additionalProperties: {},
+            },
+          },
+          required: ['role', 'content'],
+        },
+        {
+          type: 'object',
+          properties: {
+            role: {
+              type: 'string',
+              const: 'system',
+            },
+            content: {
+              type: 'string',
+            },
+            runId: {
+              anyOf: [
+                {
+                  type: 'string',
+                },
+                {
+                  type: 'null',
+                },
+              ],
+            },
+            additionalKwargs: {
+              type: 'object',
+              propertyNames: {
+                type: 'string',
+              },
+              additionalProperties: {},
+            },
+          },
+          required: ['role', 'content'],
+        },
+        {
+          type: 'object',
+          properties: {
+            role: {
+              type: 'string',
+              const: 'tool',
+            },
+            name: {
+              type: 'string',
+            },
+            content: {
+              type: 'object',
+              propertyNames: {
+                type: 'string',
+              },
+              additionalProperties: {},
+            },
+            toolCallId: {
+              type: 'string',
+            },
+            runId: {
+              anyOf: [
+                {
+                  type: 'string',
+                },
+                {
+                  type: 'null',
+                },
+              ],
+            },
+            title: {
+              type: 'string',
+            },
+            additionalKwargs: {
+              type: 'object',
+              propertyNames: {
+                type: 'string',
+              },
+              additionalProperties: {},
+            },
+          },
+          required: ['role', 'name', 'content', 'toolCallId'],
+        },
+      ],
+    },
+    requestTokenUsage: {
+      anyOf: [
+        {
+          type: 'object',
+          properties: {
+            inputTokens: {
+              type: 'number',
+            },
+            cachedInputTokens: {
+              type: 'number',
+            },
+            outputTokens: {
+              type: 'number',
+            },
+            reasoningTokens: {
+              type: 'number',
+            },
+            totalTokens: {
+              type: 'number',
+            },
+            totalPrice: {
+              type: 'number',
+            },
+            currentContext: {
+              type: 'number',
+            },
+          },
+          required: ['inputTokens', 'outputTokens', 'totalTokens'],
+        },
+        {
+          type: 'null',
+        },
+      ],
+    },
+    toolTokenUsage: {
+      anyOf: [
+        {
+          type: 'object',
+          properties: {
+            inputTokens: {
+              type: 'number',
+            },
+            cachedInputTokens: {
+              type: 'number',
+            },
+            outputTokens: {
+              type: 'number',
+            },
+            reasoningTokens: {
+              type: 'number',
+            },
+            totalTokens: {
+              type: 'number',
+            },
+            totalPrice: {
+              type: 'number',
+            },
+            currentContext: {
+              type: 'number',
+            },
+          },
+          required: ['inputTokens', 'outputTokens', 'totalTokens'],
+        },
+        {
+          type: 'null',
+        },
+      ],
     },
   },
+  required: [
+    'id',
+    'threadId',
+    'nodeId',
+    'externalThreadId',
+    'createdAt',
+    'updatedAt',
+    'message',
+  ],
 } as const;
 
-export const ThreadAnalysisResponseDtoSchema = {
+export const ThreadUsageStatisticsDto__schema0Schema = {
   type: 'object',
   properties: {
-    analysis: {
+    toolName: {
       type: 'string',
     },
-    conversationId: {
-      type: 'string',
+    totalTokens: {
+      type: 'number',
+    },
+    totalPrice: {
+      type: 'number',
+    },
+    callCount: {
+      type: 'number',
+    },
+    toolTokens: {
+      type: 'number',
+    },
+    toolPrice: {
+      type: 'number',
+    },
+    subCalls: {
+      type: 'array',
+      items: {
+        $ref: '#/components/schemas/ThreadUsageStatisticsDto__schema0',
+      },
     },
   },
-  required: ['analysis', 'conversationId'],
+  required: ['toolName', 'totalTokens', 'callCount'],
 } as const;
 
-export const KnowledgeContentSuggestionRequestDtoSchema = {
+export const ThreadUsageStatisticsDtoSchema = {
   type: 'object',
   properties: {
-    userRequest: {
-      type: 'string',
-      minLength: 1,
+    total: {
+      type: 'object',
+      properties: {
+        inputTokens: {
+          type: 'number',
+        },
+        cachedInputTokens: {
+          type: 'number',
+        },
+        outputTokens: {
+          type: 'number',
+        },
+        reasoningTokens: {
+          type: 'number',
+        },
+        totalTokens: {
+          type: 'number',
+        },
+        totalPrice: {
+          type: 'number',
+        },
+        currentContext: {
+          type: 'number',
+        },
+      },
+      required: ['inputTokens', 'outputTokens', 'totalTokens'],
     },
-    currentTitle: {
-      type: 'string',
+    requests: {
+      type: 'number',
     },
-    currentContent: {
-      type: 'string',
+    byNode: {
+      type: 'object',
+      propertyNames: {
+        type: 'string',
+      },
+      additionalProperties: {
+        type: 'object',
+        properties: {
+          inputTokens: {
+            type: 'number',
+          },
+          cachedInputTokens: {
+            type: 'number',
+          },
+          outputTokens: {
+            type: 'number',
+          },
+          reasoningTokens: {
+            type: 'number',
+          },
+          totalTokens: {
+            type: 'number',
+          },
+          totalPrice: {
+            type: 'number',
+          },
+          currentContext: {
+            type: 'number',
+          },
+        },
+        required: ['inputTokens', 'outputTokens', 'totalTokens'],
+      },
     },
-    currentTags: {
+    byTool: {
+      type: 'array',
+      items: {
+        $ref: '#/components/schemas/ThreadUsageStatisticsDto__schema0',
+      },
+    },
+    toolsAggregate: {
+      type: 'object',
+      properties: {
+        inputTokens: {
+          type: 'number',
+        },
+        cachedInputTokens: {
+          type: 'number',
+        },
+        outputTokens: {
+          type: 'number',
+        },
+        reasoningTokens: {
+          type: 'number',
+        },
+        totalTokens: {
+          type: 'number',
+        },
+        totalPrice: {
+          type: 'number',
+        },
+        currentContext: {
+          type: 'number',
+        },
+        requestCount: {
+          type: 'number',
+        },
+      },
+      required: ['inputTokens', 'outputTokens', 'totalTokens', 'requestCount'],
+    },
+    userMessageCount: {
+      type: 'number',
+    },
+    modelsUsed: {
       type: 'array',
       items: {
         type: 'string',
-        minLength: 1,
       },
     },
-    threadId: {
-      type: 'string',
-    },
-    model: {
-      type: 'string',
-      minLength: 1,
-    },
   },
-  required: ['userRequest'],
+  required: [
+    'total',
+    'requests',
+    'byNode',
+    'byTool',
+    'toolsAggregate',
+    'userMessageCount',
+    'modelsUsed',
+  ],
 } as const;
 
-export const KnowledgeContentSuggestionResponseDtoSchema = {
+export const SetThreadMetadataDtoSchema = {
   type: 'object',
   properties: {
-    title: {
-      type: 'string',
-      minLength: 1,
-    },
-    content: {
-      type: 'string',
-      minLength: 1,
-    },
-    tags: {
-      type: 'array',
-      items: {
+    metadata: {
+      type: 'object',
+      propertyNames: {
         type: 'string',
-        minLength: 1,
       },
+      additionalProperties: {},
     },
-    threadId: {
+  },
+  required: ['metadata'],
+} as const;
+
+export const ResumeThreadDtoSchema = {
+  type: 'object',
+  properties: {
+    message: {
       type: 'string',
     },
   },
-  required: ['title', 'content', 'threadId'],
 } as const;
 
 export const CreateGraphDtoSchema = {
@@ -2194,32 +2819,32 @@ export const GraphPreviewDtoSchema = {
       enum: ['created', 'compiling', 'running', 'stopped', 'error'],
     },
     runningThreads: {
-      type: 'integer',
       default: 0,
+      type: 'integer',
       minimum: 0,
       maximum: 9007199254740991,
     },
     totalThreads: {
-      type: 'integer',
       default: 0,
+      type: 'integer',
       minimum: 0,
       maximum: 9007199254740991,
     },
     nodeCount: {
-      type: 'integer',
       default: 0,
+      type: 'integer',
       minimum: 0,
       maximum: 9007199254740991,
     },
     edgeCount: {
-      type: 'integer',
       default: 0,
+      type: 'integer',
       minimum: 0,
       maximum: 9007199254740991,
     },
     agents: {
-      type: 'array',
       default: [],
+      type: 'array',
       items: {
         type: 'object',
         properties: {
@@ -3034,8 +3659,8 @@ export const ExecuteTriggerDtoSchema = {
   type: 'object',
   properties: {
     messages: {
-      type: 'array',
       minItems: 1,
+      type: 'array',
       items: {
         anyOf: [
           {
@@ -3572,704 +4197,6 @@ export const TemplateDtoSchema = {
   required: ['id', 'name', 'description', 'kind', 'schema'],
 } as const;
 
-export const ThreadDtoSchema = {
-  type: 'object',
-  properties: {
-    id: {
-      type: 'string',
-      format: 'uuid',
-      pattern:
-        '^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$',
-    },
-    graphId: {
-      type: 'string',
-      format: 'uuid',
-      pattern:
-        '^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$',
-    },
-    externalThreadId: {
-      type: 'string',
-    },
-    lastRunId: {
-      anyOf: [
-        {
-          type: 'string',
-          format: 'uuid',
-          pattern:
-            '^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$',
-        },
-        {
-          type: 'null',
-        },
-      ],
-    },
-    runningStartedAt: {
-      anyOf: [
-        {
-          type: 'string',
-          format: 'date-time',
-          pattern:
-            '^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$',
-        },
-        {
-          type: 'null',
-        },
-      ],
-    },
-    totalRunningMs: {
-      type: 'integer',
-      minimum: 0,
-      maximum: 9007199254740991,
-    },
-    createdAt: {
-      type: 'string',
-      format: 'date-time',
-      pattern:
-        '^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$',
-    },
-    updatedAt: {
-      type: 'string',
-      format: 'date-time',
-      pattern:
-        '^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$',
-    },
-    metadata: {
-      anyOf: [
-        {
-          type: 'object',
-          propertyNames: {
-            type: 'string',
-          },
-          additionalProperties: {},
-        },
-        {
-          type: 'null',
-        },
-      ],
-    },
-    source: {
-      anyOf: [
-        {
-          type: 'string',
-        },
-        {
-          type: 'null',
-        },
-      ],
-    },
-    name: {
-      anyOf: [
-        {
-          type: 'string',
-        },
-        {
-          type: 'null',
-        },
-      ],
-    },
-    status: {
-      type: 'string',
-      enum: ['running', 'done', 'need_more_info', 'stopped', 'waiting'],
-    },
-    agents: {
-      anyOf: [
-        {
-          type: 'array',
-          items: {
-            type: 'object',
-            properties: {
-              nodeId: {
-                type: 'string',
-              },
-              name: {
-                type: 'string',
-              },
-              description: {
-                type: 'string',
-              },
-            },
-            required: ['nodeId', 'name'],
-          },
-        },
-        {
-          type: 'null',
-        },
-      ],
-    },
-    stopReason: {
-      anyOf: [
-        {
-          type: 'string',
-        },
-        {
-          type: 'null',
-        },
-      ],
-    },
-    effectiveCostLimitUsd: {
-      anyOf: [
-        {
-          type: 'number',
-        },
-        {
-          type: 'null',
-        },
-      ],
-    },
-  },
-  required: [
-    'id',
-    'graphId',
-    'externalThreadId',
-    'runningStartedAt',
-    'totalRunningMs',
-    'createdAt',
-    'updatedAt',
-    'status',
-  ],
-} as const;
-
-export const ThreadMessageDtoSchema = {
-  type: 'object',
-  properties: {
-    id: {
-      type: 'string',
-      format: 'uuid',
-      pattern:
-        '^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$',
-    },
-    threadId: {
-      type: 'string',
-      format: 'uuid',
-      pattern:
-        '^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$',
-    },
-    nodeId: {
-      type: 'string',
-    },
-    externalThreadId: {
-      type: 'string',
-    },
-    createdAt: {
-      type: 'string',
-      format: 'date-time',
-      pattern:
-        '^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$',
-    },
-    updatedAt: {
-      type: 'string',
-      format: 'date-time',
-      pattern:
-        '^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$',
-    },
-    message: {
-      oneOf: [
-        {
-          type: 'object',
-          properties: {
-            role: {
-              type: 'string',
-              const: 'human',
-            },
-            content: {
-              anyOf: [
-                {
-                  type: 'string',
-                },
-                {
-                  minItems: 1,
-                  type: 'array',
-                  items: {
-                    oneOf: [
-                      {
-                        type: 'object',
-                        properties: {
-                          type: {
-                            type: 'string',
-                            const: 'text',
-                          },
-                          text: {
-                            type: 'string',
-                            minLength: 1,
-                          },
-                        },
-                        required: ['type', 'text'],
-                      },
-                      {
-                        type: 'object',
-                        properties: {
-                          type: {
-                            type: 'string',
-                            const: 'image_url',
-                          },
-                          image_url: {
-                            type: 'object',
-                            properties: {
-                              url: {
-                                type: 'string',
-                              },
-                              detail: {
-                                default: 'auto',
-                                type: 'string',
-                                enum: ['auto', 'low', 'high'],
-                              },
-                            },
-                            required: ['url'],
-                          },
-                        },
-                        required: ['type', 'image_url'],
-                      },
-                    ],
-                  },
-                },
-              ],
-            },
-            runId: {
-              anyOf: [
-                {
-                  type: 'string',
-                },
-                {
-                  type: 'null',
-                },
-              ],
-            },
-            additionalKwargs: {
-              type: 'object',
-              propertyNames: {
-                type: 'string',
-              },
-              additionalProperties: {},
-            },
-          },
-          required: ['role', 'content'],
-        },
-        {
-          type: 'object',
-          properties: {
-            role: {
-              type: 'string',
-              const: 'ai',
-            },
-            content: {
-              type: 'string',
-            },
-            id: {
-              type: 'string',
-            },
-            runId: {
-              anyOf: [
-                {
-                  type: 'string',
-                },
-                {
-                  type: 'null',
-                },
-              ],
-            },
-            toolCalls: {
-              type: 'array',
-              items: {
-                type: 'object',
-                properties: {
-                  name: {
-                    type: 'string',
-                  },
-                  args: {
-                    type: 'object',
-                    propertyNames: {
-                      type: 'string',
-                    },
-                    additionalProperties: {},
-                  },
-                  type: {
-                    type: 'string',
-                  },
-                  id: {
-                    type: 'string',
-                  },
-                  title: {
-                    type: 'string',
-                  },
-                },
-                required: ['name', 'args', 'type', 'id'],
-              },
-            },
-            additionalKwargs: {
-              type: 'object',
-              propertyNames: {
-                type: 'string',
-              },
-              additionalProperties: {},
-            },
-          },
-          required: ['role', 'content'],
-        },
-        {
-          type: 'object',
-          properties: {
-            id: {
-              type: 'string',
-            },
-            role: {
-              type: 'string',
-              const: 'reasoning',
-            },
-            content: {
-              type: 'string',
-            },
-            runId: {
-              anyOf: [
-                {
-                  type: 'string',
-                },
-                {
-                  type: 'null',
-                },
-              ],
-            },
-            additionalKwargs: {
-              type: 'object',
-              propertyNames: {
-                type: 'string',
-              },
-              additionalProperties: {},
-            },
-          },
-          required: ['role', 'content'],
-        },
-        {
-          type: 'object',
-          properties: {
-            role: {
-              type: 'string',
-              const: 'system',
-            },
-            content: {
-              type: 'string',
-            },
-            runId: {
-              anyOf: [
-                {
-                  type: 'string',
-                },
-                {
-                  type: 'null',
-                },
-              ],
-            },
-            additionalKwargs: {
-              type: 'object',
-              propertyNames: {
-                type: 'string',
-              },
-              additionalProperties: {},
-            },
-          },
-          required: ['role', 'content'],
-        },
-        {
-          type: 'object',
-          properties: {
-            role: {
-              type: 'string',
-              const: 'tool',
-            },
-            name: {
-              type: 'string',
-            },
-            content: {
-              type: 'object',
-              propertyNames: {
-                type: 'string',
-              },
-              additionalProperties: {},
-            },
-            toolCallId: {
-              type: 'string',
-            },
-            runId: {
-              anyOf: [
-                {
-                  type: 'string',
-                },
-                {
-                  type: 'null',
-                },
-              ],
-            },
-            title: {
-              type: 'string',
-            },
-            additionalKwargs: {
-              type: 'object',
-              propertyNames: {
-                type: 'string',
-              },
-              additionalProperties: {},
-            },
-          },
-          required: ['role', 'name', 'content', 'toolCallId'],
-        },
-      ],
-    },
-    requestTokenUsage: {
-      anyOf: [
-        {
-          type: 'object',
-          properties: {
-            inputTokens: {
-              type: 'number',
-            },
-            cachedInputTokens: {
-              type: 'number',
-            },
-            outputTokens: {
-              type: 'number',
-            },
-            reasoningTokens: {
-              type: 'number',
-            },
-            totalTokens: {
-              type: 'number',
-            },
-            totalPrice: {
-              type: 'number',
-            },
-            currentContext: {
-              type: 'number',
-            },
-          },
-          required: ['inputTokens', 'outputTokens', 'totalTokens'],
-        },
-        {
-          type: 'null',
-        },
-      ],
-    },
-    toolTokenUsage: {
-      anyOf: [
-        {
-          type: 'object',
-          properties: {
-            inputTokens: {
-              type: 'number',
-            },
-            cachedInputTokens: {
-              type: 'number',
-            },
-            outputTokens: {
-              type: 'number',
-            },
-            reasoningTokens: {
-              type: 'number',
-            },
-            totalTokens: {
-              type: 'number',
-            },
-            totalPrice: {
-              type: 'number',
-            },
-            currentContext: {
-              type: 'number',
-            },
-          },
-          required: ['inputTokens', 'outputTokens', 'totalTokens'],
-        },
-        {
-          type: 'null',
-        },
-      ],
-    },
-  },
-  required: [
-    'id',
-    'threadId',
-    'nodeId',
-    'externalThreadId',
-    'createdAt',
-    'updatedAt',
-    'message',
-  ],
-} as const;
-
-export const ThreadUsageStatisticsDto__schema0Schema = {
-  type: 'object',
-  properties: {
-    toolName: {
-      type: 'string',
-    },
-    totalTokens: {
-      type: 'number',
-    },
-    totalPrice: {
-      type: 'number',
-    },
-    callCount: {
-      type: 'number',
-    },
-    toolTokens: {
-      type: 'number',
-    },
-    toolPrice: {
-      type: 'number',
-    },
-    subCalls: {
-      type: 'array',
-      items: {
-        $ref: '#/components/schemas/ThreadUsageStatisticsDto__schema0',
-      },
-    },
-  },
-  required: ['toolName', 'totalTokens', 'callCount'],
-} as const;
-
-export const ThreadUsageStatisticsDtoSchema = {
-  type: 'object',
-  properties: {
-    total: {
-      type: 'object',
-      properties: {
-        inputTokens: {
-          type: 'number',
-        },
-        cachedInputTokens: {
-          type: 'number',
-        },
-        outputTokens: {
-          type: 'number',
-        },
-        reasoningTokens: {
-          type: 'number',
-        },
-        totalTokens: {
-          type: 'number',
-        },
-        totalPrice: {
-          type: 'number',
-        },
-        currentContext: {
-          type: 'number',
-        },
-      },
-      required: ['inputTokens', 'outputTokens', 'totalTokens'],
-    },
-    requests: {
-      type: 'number',
-    },
-    byNode: {
-      type: 'object',
-      propertyNames: {
-        type: 'string',
-      },
-      additionalProperties: {
-        type: 'object',
-        properties: {
-          inputTokens: {
-            type: 'number',
-          },
-          cachedInputTokens: {
-            type: 'number',
-          },
-          outputTokens: {
-            type: 'number',
-          },
-          reasoningTokens: {
-            type: 'number',
-          },
-          totalTokens: {
-            type: 'number',
-          },
-          totalPrice: {
-            type: 'number',
-          },
-          currentContext: {
-            type: 'number',
-          },
-        },
-        required: ['inputTokens', 'outputTokens', 'totalTokens'],
-      },
-    },
-    byTool: {
-      type: 'array',
-      items: {
-        $ref: '#/components/schemas/ThreadUsageStatisticsDto__schema0',
-      },
-    },
-    toolsAggregate: {
-      type: 'object',
-      properties: {
-        inputTokens: {
-          type: 'number',
-        },
-        cachedInputTokens: {
-          type: 'number',
-        },
-        outputTokens: {
-          type: 'number',
-        },
-        reasoningTokens: {
-          type: 'number',
-        },
-        totalTokens: {
-          type: 'number',
-        },
-        totalPrice: {
-          type: 'number',
-        },
-        currentContext: {
-          type: 'number',
-        },
-        requestCount: {
-          type: 'number',
-        },
-      },
-      required: ['inputTokens', 'outputTokens', 'totalTokens', 'requestCount'],
-    },
-    userMessageCount: {
-      type: 'number',
-    },
-    modelsUsed: {
-      type: 'array',
-      items: {
-        type: 'string',
-      },
-    },
-  },
-  required: [
-    'total',
-    'requests',
-    'byNode',
-    'byTool',
-    'toolsAggregate',
-    'userMessageCount',
-    'modelsUsed',
-  ],
-} as const;
-
-export const SetThreadMetadataDtoSchema = {
-  type: 'object',
-  properties: {
-    metadata: {
-      type: 'object',
-      propertyNames: {
-        type: 'string',
-      },
-      additionalProperties: {},
-    },
-  },
-  required: ['metadata'],
-} as const;
-
-export const ResumeThreadDtoSchema = {
-  type: 'object',
-  properties: {
-    message: {
-      type: 'string',
-    },
-  },
-} as const;
-
 export const CreateSecretDtoSchema = {
   type: 'object',
   properties: {
@@ -4364,6 +4291,167 @@ export const UpdateSecretDtoSchema = {
       ],
     },
   },
+} as const;
+
+export const SuggestAgentInstructionsDtoSchema = {
+  type: 'object',
+  properties: {
+    userRequest: {
+      type: 'string',
+      minLength: 1,
+    },
+    threadId: {
+      type: 'string',
+    },
+    model: {
+      type: 'string',
+      minLength: 1,
+    },
+  },
+  required: ['userRequest'],
+} as const;
+
+export const SuggestAgentInstructionsResponseDtoSchema = {
+  type: 'object',
+  properties: {
+    instructions: {
+      type: 'string',
+    },
+    threadId: {
+      type: 'string',
+    },
+  },
+  required: ['instructions', 'threadId'],
+} as const;
+
+export const SuggestGraphInstructionsDtoSchema = {
+  type: 'object',
+  properties: {
+    userRequest: {
+      type: 'string',
+      minLength: 1,
+    },
+    model: {
+      type: 'string',
+      minLength: 1,
+    },
+  },
+  required: ['userRequest'],
+} as const;
+
+export const SuggestGraphInstructionsResponseDtoSchema = {
+  type: 'object',
+  properties: {
+    updates: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          nodeId: {
+            type: 'string',
+            minLength: 1,
+          },
+          name: {
+            type: 'string',
+            minLength: 1,
+          },
+          instructions: {
+            type: 'string',
+            minLength: 1,
+          },
+        },
+        required: ['nodeId', 'instructions'],
+      },
+    },
+  },
+  required: ['updates'],
+} as const;
+
+export const ThreadAnalysisRequestDtoSchema = {
+  type: 'object',
+  properties: {
+    userInput: {
+      type: 'string',
+      minLength: 1,
+      maxLength: 5000,
+    },
+    threadId: {
+      type: 'string',
+    },
+    model: {
+      type: 'string',
+      minLength: 1,
+    },
+  },
+} as const;
+
+export const ThreadAnalysisResponseDtoSchema = {
+  type: 'object',
+  properties: {
+    analysis: {
+      type: 'string',
+    },
+    conversationId: {
+      type: 'string',
+    },
+  },
+  required: ['analysis', 'conversationId'],
+} as const;
+
+export const KnowledgeContentSuggestionRequestDtoSchema = {
+  type: 'object',
+  properties: {
+    userRequest: {
+      type: 'string',
+      minLength: 1,
+    },
+    currentTitle: {
+      type: 'string',
+    },
+    currentContent: {
+      type: 'string',
+    },
+    currentTags: {
+      type: 'array',
+      items: {
+        type: 'string',
+        minLength: 1,
+      },
+    },
+    threadId: {
+      type: 'string',
+    },
+    model: {
+      type: 'string',
+      minLength: 1,
+    },
+  },
+  required: ['userRequest'],
+} as const;
+
+export const KnowledgeContentSuggestionResponseDtoSchema = {
+  type: 'object',
+  properties: {
+    title: {
+      type: 'string',
+      minLength: 1,
+    },
+    content: {
+      type: 'string',
+      minLength: 1,
+    },
+    tags: {
+      type: 'array',
+      items: {
+        type: 'string',
+        minLength: 1,
+      },
+    },
+    threadId: {
+      type: 'string',
+    },
+  },
+  required: ['title', 'content', 'threadId'],
 } as const;
 
 export const AnalyticsOverviewDtoSchema = {

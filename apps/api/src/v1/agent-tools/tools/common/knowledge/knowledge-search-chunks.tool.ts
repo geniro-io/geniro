@@ -136,16 +136,20 @@ export class KnowledgeSearchChunksTool extends BaseTool<
     const tagsFilter = normalizeFilterTags(config.tags);
     const docs = await this.docDao.getAll(
       { createdBy: graphCreatedBy, publicId: { $in: args.docIds } },
-      { fields: ['id', 'publicId'], orderBy: { updatedAt: 'DESC' } },
+      { fields: ['id', 'publicId', 'tags'], orderBy: { updatedAt: 'DESC' } },
     );
 
-    if (docs.length === 0) {
+    const allowedDocs = tagsFilter?.length
+      ? docs.filter((doc) => this.hasMatchingTag(doc.tags ?? [], tagsFilter))
+      : docs;
+
+    if (allowedDocs.length === 0) {
       return { output: [] };
     }
 
-    const resolvedDocIds = docs.map((doc) => doc.id);
+    const resolvedDocIds = allowedDocs.map((doc) => doc.id);
     const docPublicIdById = new Map(
-      docs.map((doc) => [doc.id, doc.publicId] as const),
+      allowedDocs.map((doc) => [doc.id, doc.publicId] as const),
     );
 
     const topK = args.topK ?? 5;
@@ -177,5 +181,10 @@ export class KnowledgeSearchChunksTool extends BaseTool<
     _config: KnowledgeToolGroupConfig,
   ): string {
     return `Knowledge chunk search: ${args.query}`;
+  }
+
+  private hasMatchingTag(tags: string[], filter: string[]): boolean {
+    const normalized = new Set(tags.map((tag) => tag.trim().toLowerCase()));
+    return filter.some((tag) => normalized.has(tag.trim().toLowerCase()));
   }
 }

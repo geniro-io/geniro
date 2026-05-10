@@ -23,6 +23,18 @@ export type RequestTokenUsage = {
   durationMs?: number;
 };
 
+/**
+ * Result type for `LitellmService.sumTokenUsages`.
+ * Identical to `RequestTokenUsage` except `totalPrice` is always `number` (never
+ * undefined) — the aggregation always emits a zero-coerced price even when no
+ * individual usage carried pricing. Do NOT use this type for per-message ingestion
+ * paths; `RequestTokenUsage.totalPrice` must remain `number | undefined` there to
+ * preserve "unpriced call" detection.
+ */
+export type AggregatedTokenUsage = Omit<RequestTokenUsage, 'totalPrice'> & {
+  totalPrice: number;
+};
+
 export type UsageMetadata = Partial<ResponseUsage> & {
   prompt_tokens?: number;
   completion_tokens?: number;
@@ -48,6 +60,11 @@ export type UsageMetadata = Partial<ResponseUsage> & {
     reasoning_tokens?: number;
     reasoning?: number;
   };
+  output_token_details?: {
+    reasoning?: number;
+    reasoning_tokens?: number;
+    audio?: number;
+  };
   /**
    * Provider-reported cost (e.g. OpenRouter `usage.cost`).
    * Used as a fallback when per-token model rates are unavailable.
@@ -62,7 +79,10 @@ export type UsageMetadata = Partial<ResponseUsage> & {
  */
 export type MessageTokenUsage = {
   totalTokens: number;
-  totalPrice?: number;
+  /**
+   * `null` = pricing unknown. See `RequestTokenUsage.totalPrice`.
+   */
+  totalPrice?: number | null;
 };
 
 export type LLMTokenCostRates = {

@@ -2,7 +2,7 @@ import { ToolRunnableConfig } from '@langchain/core/tools';
 import { INestApplication } from '@nestjs/common';
 import { BaseException } from '@packages/common';
 import { cloneDeep } from 'lodash';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { AppContextStorage } from '../../../auth/app-context-storage';
 import { environment } from '../../../environments';
@@ -26,10 +26,12 @@ import { GraphCompiler } from '../../../v1/graphs/services/graph-compiler';
 import { GraphRegistry } from '../../../v1/graphs/services/graph-registry';
 import { GraphRevisionService } from '../../../v1/graphs/services/graph-revision.service';
 import { GraphsService } from '../../../v1/graphs/services/graphs.service';
+import { LiteLlmClient } from '../../../v1/litellm/services/litellm.client';
 import { ProjectsDao } from '../../../v1/projects/dao/projects.dao';
 import { BaseRuntime } from '../../../v1/runtime/services/base-runtime';
 import { RuntimeThreadProvider } from '../../../v1/runtime/services/runtime-thread-provider';
 import { ThreadMessageDto } from '../../../v1/threads/dto/threads.dto';
+import { ThreadNameGeneratorService } from '../../../v1/threads/services/thread-name-generator.service';
 import { ThreadsService } from '../../../v1/threads/services/threads.service';
 import { ThreadStatus } from '../../../v1/threads/threads.types';
 import { wait } from '../../test-utils';
@@ -38,6 +40,11 @@ import {
   waitForCondition,
 } from '../helpers/graph-helpers';
 import { createTestProject } from '../helpers/test-context';
+import {
+  mockLiteLlmClient,
+  mockThreadNameGenerator,
+} from '../helpers/test-stubs';
+import { getMockLlm } from '../mocks/mock-llm';
 import { createTestModule } from '../setup';
 
 const TEST_AGENT_NODE_ID = 'agent-1';
@@ -342,7 +349,14 @@ describe('Graph Revisions Integration Tests', () => {
   };
 
   beforeAll(async () => {
-    app = await createTestModule();
+    app = await createTestModule(async (m) =>
+      m
+        .overrideProvider(LiteLlmClient)
+        .useValue(mockLiteLlmClient)
+        .overrideProvider(ThreadNameGeneratorService)
+        .useValue(mockThreadNameGenerator)
+        .compile(),
+    );
 
     graphsService = app.get<GraphsService>(GraphsService);
     revisionsService = app.get<GraphRevisionService>(GraphRevisionService);
@@ -411,6 +425,10 @@ describe('Graph Revisions Integration Tests', () => {
 
     await app.close();
   }, 180000);
+
+  beforeEach(() => {
+    getMockLlm(app).reset();
+  });
 
   const ensureCoreGraphRunning = async () => {
     const graph = await graphsService.findById(contextDataStorage, coreGraphId);
@@ -1236,6 +1254,18 @@ describe('Graph Revisions Integration Tests', () => {
         await graphsService.run(contextDataStorage, graphId);
         await waitForGraphToBeRunning(graphId);
 
+        // This graph has no shell tool — the agent calls finish directly.
+        // Register one reusable fixture that handles both executions (before and after the revision).
+        const mockLlm = getMockLlm(app);
+        mockLlm.onChat(
+          { hasTools: ['finish'] },
+          {
+            kind: 'toolCall',
+            toolName: 'finish',
+            args: { purpose: 'done', message: 'Hello!', needsMoreInfo: false },
+          },
+        );
+
         const firstExecutionResult = await graphsService.executeTrigger(
           contextDataStorage,
           graphId,
@@ -1664,6 +1694,42 @@ describe('Graph Revisions Integration Tests', () => {
         await graphsService.run(contextDataStorage, graphId);
         await waitForGraphToBeRunning(graphId);
 
+        // Turn 1 (callIndex 0): agent uses tool_search to load the shell tool.
+        // Turn 2: shell is available — agent calls shell with the given command.
+        // Turn 3: after shell result, agent calls finish to end the thread.
+        const mockLlm = getMockLlm(app);
+        mockLlm.onChat(
+          { callIndex: 0 },
+          {
+            kind: 'toolCall',
+            toolName: 'tool_search',
+            args: { query: 'shell' },
+          },
+        );
+        mockLlm.onChat(
+          { hasTools: ['shell'] },
+          {
+            kind: 'toolCall',
+            toolName: 'shell',
+            args: {
+              purpose: 'run command',
+              command: 'echo "test with runtime"',
+            },
+          },
+        );
+        mockLlm.onChat(
+          { hasToolResult: 'shell', hasTools: ['finish'] },
+          {
+            kind: 'toolCall',
+            toolName: 'finish',
+            args: {
+              purpose: 'done',
+              message: 'Command executed.',
+              needsMoreInfo: false,
+            },
+          },
+        );
+
         const firstResult = await graphsService.executeTrigger(
           contextDataStorage,
           graphId,
@@ -1851,6 +1917,42 @@ describe('Graph Revisions Integration Tests', () => {
 
         await wait(5000);
 
+        // Turn 1 (callIndex 0): agent uses tool_search to load the newly added shell tool.
+        // Turn 2: shell is available — agent calls shell with the given command.
+        // Turn 3: after shell result, agent calls finish to end the thread.
+        const mockLlmNewTool = getMockLlm(app);
+        mockLlmNewTool.onChat(
+          { callIndex: 0 },
+          {
+            kind: 'toolCall',
+            toolName: 'tool_search',
+            args: { query: 'shell' },
+          },
+        );
+        mockLlmNewTool.onChat(
+          { hasTools: ['shell'] },
+          {
+            kind: 'toolCall',
+            toolName: 'shell',
+            args: {
+              purpose: 'run command',
+              command: 'echo "hello from new tool"',
+            },
+          },
+        );
+        mockLlmNewTool.onChat(
+          { hasToolResult: 'shell', hasTools: ['finish'] },
+          {
+            kind: 'toolCall',
+            toolName: 'finish',
+            args: {
+              purpose: 'done',
+              message: 'Command executed.',
+              needsMoreInfo: false,
+            },
+          },
+        );
+
         const executeWithNewTool = async () => {
           const result = await graphsService.executeTrigger(
             contextDataStorage,
@@ -2002,6 +2104,42 @@ describe('Graph Revisions Integration Tests', () => {
           INITIAL_VAR: 'initial_value',
           UPDATED_VAR: 'updated_value',
         });
+
+        // Turn 1 (callIndex 0): agent uses tool_search to load the shell tool.
+        // Turn 2: shell is available — agent calls shell with the given command.
+        // Turn 3: after shell result, agent calls finish to end the thread.
+        const mockLlm = getMockLlm(app);
+        mockLlm.onChat(
+          { callIndex: 0 },
+          {
+            kind: 'toolCall',
+            toolName: 'tool_search',
+            args: { query: 'shell' },
+          },
+        );
+        mockLlm.onChat(
+          { hasTools: ['shell'] },
+          {
+            kind: 'toolCall',
+            toolName: 'shell',
+            args: {
+              purpose: 'run command',
+              command: 'echo "test after resource change"',
+            },
+          },
+        );
+        mockLlm.onChat(
+          { hasToolResult: 'shell', hasTools: ['finish'] },
+          {
+            kind: 'toolCall',
+            toolName: 'finish',
+            args: {
+              purpose: 'done',
+              message: 'Command executed.',
+              needsMoreInfo: false,
+            },
+          },
+        );
 
         const result = await graphsService.executeTrigger(
           contextDataStorage,
@@ -2242,13 +2380,12 @@ describe('Graph Revisions Integration Tests', () => {
         expect(beforeResult).toBeDefined();
         expect(beforeResult.output).toBeDefined();
 
-        const agentBefore = graphRegistry.getNodeInstance<SimpleAgent>(
-          graphId,
-          'agent-1',
-        );
-        const toolsBeforeAgent = agentBefore?.getTools() ?? [];
+        // MCP tools live in the agent's deferred-tools registry (loaded on
+        // demand via tool_search), not in the eager `activeTools` returned by
+        // getTools(). The MCP itself is the source of truth for which tools
+        // are exposed under the current readOnly config.
         expect(
-          toolsBeforeAgent.find((t) => t.name === 'write_file'),
+          toolsBefore.find((t: { name: string }) => t.name === 'write_file'),
         ).toBeDefined();
 
         // Update runtime config to force a revision
@@ -2345,19 +2482,26 @@ describe('Graph Revisions Integration Tests', () => {
         );
         expect(updatedMcpNode?.config.readOnly).toBe(true);
 
-        const agentAfter = graphRegistry.getNodeInstance<SimpleAgent>(
-          graphId,
-          'agent-1',
-        );
-        const toolsAfterAgent = agentAfter?.getTools() ?? [];
+        // After the readOnly=true revision, fetch the rebuilt MCP node and
+        // verify the toolset reflects the new config (write tools removed,
+        // read tools retained). Agent.getTools() would only show core +
+        // tool_search; deferred MCP tools are surfaced via the MCP itself.
+        const mcpAfterReadOnly = getMcpOutput(graphId, 'mcp-fs-1');
+        const toolsAfterReadOnly = await mcpAfterReadOnly.discoverTools();
         expect(
-          toolsAfterAgent.find((t) => t.name === 'write_file'),
+          toolsAfterReadOnly.find(
+            (t: { name: string }) => t.name === 'write_file',
+          ),
         ).toBeUndefined();
         expect(
-          toolsAfterAgent.find((t) => t.name === 'read_text_file'),
+          toolsAfterReadOnly.find(
+            (t: { name: string }) => t.name === 'read_text_file',
+          ),
         ).toBeDefined();
         expect(
-          toolsAfterAgent.find((t) => t.name === 'list_directory'),
+          toolsAfterReadOnly.find(
+            (t: { name: string }) => t.name === 'list_directory',
+          ),
         ).toBeDefined();
       },
     );

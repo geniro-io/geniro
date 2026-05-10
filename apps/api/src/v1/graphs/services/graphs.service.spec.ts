@@ -219,6 +219,7 @@ describe('GraphsService', () => {
             getOne: vi.fn(),
             getAll: vi.fn(),
             create: vi.fn(),
+            upsertByExternalThreadId: vi.fn(),
             updateById: vi.fn(),
             updateStatusWithAccumulator: vi.fn(),
             deleteById: vi.fn(),
@@ -236,7 +237,11 @@ describe('GraphsService', () => {
           provide: EntityManager,
           useValue: {
             transactional: vi.fn(),
-            fork: vi.fn().mockReturnValue({}),
+            fork: vi.fn().mockReturnValue({
+              transactional: vi.fn(async (cb) =>
+                cb({} as unknown as EntityManager),
+              ),
+            }),
           },
         },
         {
@@ -2400,16 +2405,11 @@ describe('GraphsService', () => {
         return mockTrigger;
       };
 
-      it('should eagerly create thread when it does not exist', async () => {
+      it('should eagerly upsert thread by externalThreadId', async () => {
         setupTriggerMocks();
-        vi.mocked(threadsDao.getOne).mockResolvedValue(null);
-        vi.mocked(threadsDao.create).mockResolvedValue({
-          id: 'thread-uuid',
-          graphId: mockGraphId,
-          externalThreadId: expectedThreadId,
-          createdBy: mockUserId,
-          status: ThreadStatus.Running,
-        } as any);
+        vi.mocked(threadsDao.upsertByExternalThreadId).mockResolvedValue(
+          {} as any,
+        );
 
         const result = await service.executeTrigger(
           mockCtx,
@@ -2423,38 +2423,23 @@ describe('GraphsService', () => {
         );
 
         expect(result.externalThreadId).toBe(expectedThreadId);
-        expect(threadsDao.getOne).toHaveBeenCalledWith(
-          {
-            externalThreadId: expectedThreadId,
-            graphId: mockGraphId,
-          },
-          undefined,
-          expect.anything(),
-        );
-        expect(threadsDao.create).toHaveBeenCalledWith(
-          {
-            graphId: mockGraphId,
-            createdBy: mockUserId,
-            projectId: 'project-123',
-            externalThreadId: expectedThreadId,
-            status: ThreadStatus.Running,
-            runningStartedAt: expect.any(Date),
-            totalRunningMs: 0,
-            metadata: { key: 'value', effectiveCostLimitUsd: null },
-          },
-          expect.anything(),
-        );
+        expect(threadsDao.upsertByExternalThreadId).toHaveBeenCalledWith({
+          graphId: mockGraphId,
+          createdBy: mockUserId,
+          projectId: 'project-123',
+          externalThreadId: expectedThreadId,
+          status: ThreadStatus.Running,
+          runningStartedAt: expect.any(Date),
+          totalRunningMs: 0,
+          metadata: { key: 'value', effectiveCostLimitUsd: null },
+        });
       });
 
-      it('should skip creation when thread already exists', async () => {
+      it('should upsert (no-op merge) when thread already exists', async () => {
         setupTriggerMocks();
-        vi.mocked(threadsDao.getOne).mockResolvedValue({
-          id: 'existing-thread',
-          graphId: mockGraphId,
-          externalThreadId: expectedThreadId,
-          createdBy: mockUserId,
-          status: ThreadStatus.Running,
-        } as any);
+        vi.mocked(threadsDao.upsertByExternalThreadId).mockResolvedValue(
+          {} as any,
+        );
 
         const result = await service.executeTrigger(
           mockCtx,
@@ -2467,15 +2452,7 @@ describe('GraphsService', () => {
         );
 
         expect(result.externalThreadId).toBe(expectedThreadId);
-        expect(threadsDao.getOne).toHaveBeenCalledWith(
-          {
-            externalThreadId: expectedThreadId,
-            graphId: mockGraphId,
-          },
-          undefined,
-          expect.anything(),
-        );
-        expect(threadsDao.create).not.toHaveBeenCalled();
+        expect(threadsDao.upsertByExternalThreadId).toHaveBeenCalledOnce();
       });
 
       it('should cancel resume job and clear wait metadata when thread is waiting', async () => {
@@ -2582,8 +2559,7 @@ describe('GraphsService', () => {
         vi.mocked(graphRegistry.getNode).mockReturnValue(
           mockTriggerNode as unknown as CompiledGraphNode,
         );
-        vi.mocked(threadsDao.getOne).mockResolvedValue(null);
-        vi.mocked(threadsDao.create).mockResolvedValue({
+        vi.mocked(threadsDao.upsertByExternalThreadId).mockResolvedValue({
           id: 'thread-uuid',
           graphId: mockGraphId,
           externalThreadId: expectedThreadId,
@@ -2596,42 +2572,17 @@ describe('GraphsService', () => {
           threadSubId: 'my-thread',
         });
 
-        const createCall = vi.mocked(threadsDao.create).mock.calls[0];
-        expect(createCall).toBeDefined();
-        const [createPayload] = createCall!;
+        const upsertCall = vi.mocked(threadsDao.upsertByExternalThreadId).mock
+          .calls[0];
+        expect(upsertCall).toBeDefined();
+        const [upsertPayload] = upsertCall!;
         // runningStartedAt must equal the timestamp captured BEFORE invokeAgent,
         // not new Date() after the 2s simulated startup.
         expect(
-          (createPayload as { runningStartedAt: Date }).runningStartedAt,
+          (upsertPayload as { runningStartedAt: Date }).runningStartedAt,
         ).toEqual(new Date('2026-04-25T20:00:00Z'));
 
         vi.useRealTimers();
-      });
-
-      it('should swallow unique constraint error when handler wins the race', async () => {
-        setupTriggerMocks();
-        vi.mocked(threadsDao.getOne).mockResolvedValue(null);
-        const uniqueViolation = Object.assign(
-          new Error('duplicate key value violates unique constraint'),
-          { code: '23505' },
-        );
-        vi.mocked(threadsDao.create).mockRejectedValue(uniqueViolation);
-
-        const result = await service.executeTrigger(
-          mockCtx,
-          mockGraphId,
-          triggerId,
-          {
-            messages: ['Hello'],
-            threadSubId: 'my-thread',
-          },
-        );
-
-        expect(result.externalThreadId).toBe(expectedThreadId);
-        expect(threadsDao.create).toHaveBeenCalled();
-        expect(logger.debug).toHaveBeenCalledWith(
-          expect.stringContaining('Eager thread creation skipped'),
-        );
       });
     });
 

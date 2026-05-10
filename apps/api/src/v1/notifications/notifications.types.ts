@@ -106,6 +106,7 @@ export const AgentInvokeNotificationSchema = z.object({
   parentThreadId: z.string(),
   source: z.string().optional(),
   threadMetadata: z.record(z.string(), z.unknown()).optional(),
+  effectiveCostLimitUsd: z.number().nullable().optional(),
 });
 export type IAgentInvokeData = z.infer<typeof AgentInvokeDataSchema>;
 export type IAgentInvokeNotification = z.infer<
@@ -126,6 +127,7 @@ export const AgentStateUpdateDataSchema = z.object({
   totalPrice: z.number().optional(),
   currentContext: z.number().optional(),
   effectiveCostLimitUsd: z.number().nullable().optional(),
+  inFlightSubagentPrice: z.record(z.string(), z.number()).optional(),
 });
 export const AgentStateUpdateNotificationSchema = z.object({
   type: z.literal(NotificationEvent.AgentStateUpdate),
@@ -159,6 +161,7 @@ export const ThreadUpdateDataSchema = z.object({
   waitReason: z.string().optional(),
   stopReason: z.string().nullable().optional(),
   stopCostUsd: z.number().nullable().optional(),
+  costLimitHit: z.boolean().nullable().optional(),
 });
 export const ThreadUpdateNotificationDataSchema = z.union([
   ThreadSchema, // tried first — full thread DTO

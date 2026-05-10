@@ -1,7 +1,7 @@
 import { UnauthorizedException } from '@packages/common';
-import { createRemoteJWKSet, jwtVerify, JWTVerifyOptions } from 'jose';
+import { createRemoteJWKSet, jwtVerify, type JWTVerifyOptions } from 'jose';
 
-import { IContextData } from '../auth.types';
+import type { IContextData } from '../auth.types';
 import { AuthProvider } from './auth.provider';
 
 export class Auth0Provider extends AuthProvider {

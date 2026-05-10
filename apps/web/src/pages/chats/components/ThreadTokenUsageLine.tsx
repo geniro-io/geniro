@@ -35,6 +35,10 @@ export const ThreadTokenUsageLine: React.FC<{
   runningStartedAt?: string | null;
   totalRunningMs?: number;
   threadStatus?: ThreadDtoStatusEnum | string;
+  /** Sum of all in-flight subagent prices for the current run. When > 0 the
+   *  cost is rendered as "$X.XX + $Y.YY in-flight". Pass 0 (or omit) when the
+   *  thread is not running or there are no active subagent calls. */
+  inFlightSum?: number;
 }> = ({
   usage,
   withPopover = false,
@@ -43,9 +47,18 @@ export const ThreadTokenUsageLine: React.FC<{
   runningStartedAt,
   totalRunningMs,
   threadStatus,
+  inFlightSum = 0,
 }) => {
   const totalTokens = usage?.totalTokens;
+  // When inFlightSum is provided the caller has already folded it into
+  // totalPrice (via selectedThreadAggregateUsage). baseTotalPrice is the
+  // scalar portion excluding the in-flight contribution, used to split the
+  // display into "$X.XX + $Y.YY in-flight".
   const totalPrice = usage?.totalPrice;
+  const baseTotalPrice =
+    inFlightSum > 0 && typeof totalPrice === 'number'
+      ? totalPrice - inFlightSum
+      : totalPrice;
   const currentContext = usage?.currentContext;
   const effectiveCostLimitUsd = usage?.effectiveCostLimitUsd;
   const stopReason = usage?.stopReason;
@@ -81,10 +94,13 @@ export const ThreadTokenUsageLine: React.FC<{
     typeof effectiveCostLimitUsd === 'number' &&
     Number.isFinite(effectiveCostLimitUsd);
   const costLimitReached = stopReason === 'cost_limit';
+  const hasInFlight = inFlightSum > 0;
 
   const costText = hasLimit
-    ? `${formatUsd(totalPrice)} / ${formatUsd(effectiveCostLimitUsd)}`
-    : formatUsd(totalPrice);
+    ? `${formatUsd(baseTotalPrice)} / ${formatUsd(effectiveCostLimitUsd)}`
+    : hasInFlight
+      ? `${formatUsd(baseTotalPrice)} + ${formatUsd(inFlightSum)} in-flight`
+      : formatUsd(totalPrice);
 
   const durationSuffix = showDuration
     ? ` · ${formatDurationMs(liveDurationMs)}`

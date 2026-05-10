@@ -8,6 +8,7 @@ export type ThreadTokenUsageSnapshot = {
   totalPrice?: number;
   currentContext?: number;
   effectiveCostLimitUsd?: number | null;
+  inFlightSubagentPrice?: Record<string, number>;
 };
 
 export type ThreadSocketEventEntry = {

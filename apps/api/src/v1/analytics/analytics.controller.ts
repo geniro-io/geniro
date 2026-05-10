@@ -1,5 +1,5 @@
 import { Controller, Get, Query } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import { CtxStorage, OnlyForAuthorized } from '@packages/http-server';
 
 import { AppContextStorage } from '../../auth/app-context-storage';
@@ -19,6 +19,7 @@ export class AnalyticsController {
   constructor(private readonly analyticsService: AnalyticsService) {}
 
   @Get('overview')
+  @ApiOkResponse({ type: AnalyticsOverviewDto })
   async getOverview(
     @Query() query: AnalyticsQueryDto,
     @CtxStorage() ctx: AppContextStorage,
@@ -27,6 +28,7 @@ export class AnalyticsController {
   }
 
   @Get('by-graph')
+  @ApiOkResponse({ type: AnalyticsByGraphResponseDto })
   async getByGraph(
     @Query() query: AnalyticsByGraphQueryDto,
     @CtxStorage() ctx: AppContextStorage,

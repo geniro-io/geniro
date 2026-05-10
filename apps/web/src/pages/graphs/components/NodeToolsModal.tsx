@@ -3,6 +3,7 @@ import type { FC } from 'react';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from '../../../components/ui/dialog';
@@ -29,6 +30,10 @@ export const NodeToolsModal: FC<NodeToolsModalProps> = ({
     <DialogContent className="sm:max-w-[720px]">
       <DialogHeader>
         <DialogTitle>Connected Tools ({tools.length})</DialogTitle>
+        <DialogDescription className="sr-only">
+          List of tools connected to this agent node, including their
+          descriptions and schemas.
+        </DialogDescription>
       </DialogHeader>
       <div style={{ maxHeight: 560, overflowY: 'auto' }}>
         {tools.length > 0 ? (

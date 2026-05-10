@@ -42,6 +42,7 @@ export class ToolExecutorNode extends BaseNode<
   BaseAgentStateChange
 > {
   private maxOutputChars: number;
+  private readonly enforceCostLimit: boolean;
 
   /** Tracks consecutive identical tool-error batches for circuit breaking. */
   private consecutiveErrorMessage: string | null = null;
@@ -52,6 +53,13 @@ export class ToolExecutorNode extends BaseNode<
     private readonly litellmService: LitellmService,
     opts?: {
       maxOutputChars?: number;
+      /**
+       * When true, the node enforces the effective cost limit read from
+       * `config.configurable.effective_cost_limit_usd` BEFORE invoking any
+       * tools in a batch. Subagents pass false (parent ToolExecutorNode
+       * enforces after the subagent-tool returns).
+       */
+      enforceCostLimit?: boolean;
     },
     private readonly logger?: DefaultLogger,
     private readonly deferredToolResolver?: (name: string) => {
@@ -61,6 +69,7 @@ export class ToolExecutorNode extends BaseNode<
   ) {
     super();
     this.maxOutputChars = opts?.maxOutputChars ?? 500_000;
+    this.enforceCostLimit = opts?.enforceCostLimit ?? false;
   }
 
   async invoke(
@@ -88,6 +97,26 @@ export class ToolExecutorNode extends BaseNode<
     for (const tc of calls) {
       if (!tc.id) {
         tc.id = `generated_id_${Math.random().toString(36).slice(2)}`;
+      }
+    }
+
+    // Pre-invocation cost-limit check. If the agent's cumulative spend has
+    // already met or exceeded the configured budget, refuse to spawn more
+    // tool invocations (which may in turn spawn more LLM calls). Mirrors
+    // InvokeLlmNode's pre-LLM check — same state field, same comparison.
+    // Parents enforce; subagents pass enforceCostLimit=false because the
+    // parent's ToolExecutorNode enforces after the subagent-tool returns.
+    if (this.enforceCostLimit) {
+      const effectiveLimit =
+        typeof cfg.configurable?.effective_cost_limit_usd === 'number'
+          ? cfg.configurable.effective_cost_limit_usd
+          : null;
+      if (effectiveLimit !== null && state.totalPrice >= effectiveLimit) {
+        // Pre-invocation: no in-flight messages exist yet (no LLM call has been made
+        // in this node). The 2-arg ctor is intentional. Asymmetric with the
+        // post-tool-aggregate throw further below which DOES carry interleavedMessages
+        // — see Step 5 sister-site fix.
+        throw new CostLimitExceededError(effectiveLimit, state.totalPrice);
       }
     }
 
@@ -211,7 +240,6 @@ export class ToolExecutorNode extends BaseNode<
             }
             toolInvokeResult = iterResult.value;
           } else {
-            // Standard path (unchanged)
             const rawResult = (await tool.invoke<
               unknown,
               ToolRunnableConfig<BaseAgentConfigurable>
@@ -329,6 +357,33 @@ export class ToolExecutorNode extends BaseNode<
 
       interleavedMessages.push(toolMsg);
 
+      // Clear the inFlight slot for this subagent tool call on the frontend.
+      // Sentinel 0 clears the inFlightSubagentPrice entry for this toolCallId on
+      // the frontend reducer — value 0 signals DELETE, not "$0 spent". Using a
+      // sentinel rather than omitting the key keeps the reducer commutative: the
+      // clear arrives atomically alongside (or just after) the final in-flight
+      // value emitted by the subagent, and the frontend merges them safely in
+      // FIFO order without needing a tombstone protocol. Cannot signal "absent"
+      // vs "zero" over plain JSON, so sentinel 0 is the cleanest contract.
+      const isSubagentTool =
+        result.toolName === 'subagents_run_task' ||
+        result.toolMessage.additional_kwargs?.__subagentCommunication === true;
+
+      if (isSubagentTool) {
+        const callIdForClear = toolMsg.tool_call_id;
+        const parentThreadId = String(cfg.configurable?.thread_id ?? '');
+        cfg.configurable?.caller_agent?.emit({
+          type: 'stateUpdate',
+          data: {
+            threadId: parentThreadId,
+            stateChange: {
+              inFlightSubagentPrice: { [callIdForClear]: 0 },
+            },
+            config: cfg,
+          },
+        });
+      }
+
       // Append any additional messages immediately after the tool result
       if (result.additionalMessages && result.additionalMessages.length > 0) {
         interleavedMessages.push(...result.additionalMessages);
@@ -358,11 +413,31 @@ export class ToolExecutorNode extends BaseNode<
     // fires exactly as it would for a direct invoke_llm cost-limit throw.
     // The effective limit comes from the runnable config (resolved once upstream
     // by GraphsService.executeTrigger and stored in configurable).
+    // Aggregate all tool request usages before cost-limit check so we can fold
+    // them into the parent-scope totalSpend on re-throw.
+    const aggregatedToolUsage = this.litellmService.sumTokenUsages(
+      results.map((r) => r.toolRequestUsage).filter(Boolean),
+    );
+
     const costLimitResult = results.find((r) => r.stopReason === 'cost_limit');
     if (costLimitResult) {
       const effectiveLimit = cfg.configurable?.effective_cost_limit_usd ?? 0;
-      const totalSpend = costLimitResult.stopCostUsd ?? 0;
-      throw new CostLimitExceededError(effectiveLimit, totalSpend);
+      const totalSpend = Math.max(
+        costLimitResult.stopCostUsd ?? 0,
+        // Cost-limit budget guard: unknown pricing on the tool-aggregate
+        // (totalPrice?: number) is coerced to 0 so unpriced calls do not
+        // consume the user's budget cap — a conservative default. The
+        // user-facing cost report (via threads.service aggregation) still
+        // surfaces null as $— so the unknown-pricing case is visible, not
+        // masked. state.totalPrice is always a number (the state reducer
+        // seeds it to 0 and accumulates in-place).
+        state.totalPrice + (aggregatedToolUsage?.totalPrice ?? 0),
+      );
+      throw new CostLimitExceededError(
+        effectiveLimit,
+        totalSpend,
+        updateMessagesListWithMetadata(interleavedMessages, cfg),
+      );
     }
 
     const toolsMetadataUpdate = results.reduce(
@@ -381,10 +456,17 @@ export class ToolExecutorNode extends BaseNode<
       cfg,
     );
 
-    // Aggregate all tool request usages
-    const aggregatedToolUsage = this.litellmService.sumTokenUsages(
-      results.map((r) => r.toolRequestUsage).filter(Boolean),
-    );
+    // Cumulative state.totalPrice is number; unknown pricing (null) is coerced
+    // to 0 when accumulating. See matching handling in invoke-llm-node.
+    const aggregatedUsageForState = aggregatedToolUsage
+      ? {
+          ...aggregatedToolUsage,
+          totalPrice:
+            typeof aggregatedToolUsage.totalPrice === 'number'
+              ? aggregatedToolUsage.totalPrice
+              : 0,
+        }
+      : {};
 
     return {
       messages: {
@@ -393,7 +475,7 @@ export class ToolExecutorNode extends BaseNode<
       },
       toolsMetadata: toolsMetadataUpdate,
       // Spread aggregated tool usage into state (will be added by reducers)
-      ...(aggregatedToolUsage ?? {}),
+      ...aggregatedUsageForState,
     };
   }
 

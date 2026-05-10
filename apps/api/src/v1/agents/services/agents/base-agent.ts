@@ -1,4 +1,4 @@
-import { BaseMessage } from '@langchain/core/messages';
+import { AIMessageChunk, BaseMessage } from '@langchain/core/messages';
 import { RunnableConfig } from '@langchain/core/runnables';
 import { DynamicStructuredTool } from '@langchain/core/tools';
 import { Annotation, BaseChannel } from '@langchain/langgraph';
@@ -279,15 +279,56 @@ export abstract class BaseAgent<
       return null;
     }
 
+    const totalPrice = state.totalPrice;
+
     return {
       inputTokens: state.inputTokens,
       cachedInputTokens: state.cachedInputTokens,
       outputTokens: state.outputTokens,
       reasoningTokens: state.reasoningTokens,
       totalTokens: state.totalTokens,
-      totalPrice: state.totalPrice,
+      totalPrice,
       currentContext: state.currentContext,
     };
+  }
+
+  /**
+   * Extracts per-block reasoning entries from a streaming AIMessageChunk.
+   * Returns one entry per reasoning content block found in the chunk, using
+   * the block's own stable id (b.id) as the key for accumulation. Falls back
+   * to chunk.id when the block carries no id of its own (older providers).
+   */
+  protected extractReasoningFromChunk(
+    chunk: AIMessageChunk,
+  ): { text: string; blockId: string }[] | null {
+    const blocks =
+      chunk?.contentBlocks ?? chunk?.response_metadata?.output ?? [];
+
+    if (!Array.isArray(blocks)) {
+      return null;
+    }
+
+    const entries: { text: string; blockId: string }[] = [];
+    for (const b of blocks as {
+      type?: unknown;
+      reasoning?: unknown;
+      id?: unknown;
+    }[]) {
+      if (!b || b.type !== 'reasoning') {
+        continue;
+      }
+      if (typeof b.reasoning !== 'string' || b.reasoning.length === 0) {
+        continue;
+      }
+      const blockId =
+        typeof b.id === 'string' && b.id.length > 0 ? b.id : (chunk.id ?? '');
+      if (!blockId) {
+        continue;
+      }
+      entries.push({ text: b.reasoning, blockId });
+    }
+
+    return entries.length > 0 ? entries : null;
   }
 
   public abstract stop(): Promise<void>;

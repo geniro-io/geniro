@@ -62,6 +62,7 @@ export const useThreadRuntimes = (
 
   useEffect(() => {
     if (!threadId || !enabled) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- reset hook state when disabled or thread cleared
       setRuntimes([]);
       setLoading(false);
       setError(null);

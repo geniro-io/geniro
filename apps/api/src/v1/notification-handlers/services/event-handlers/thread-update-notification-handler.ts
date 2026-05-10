@@ -126,6 +126,23 @@ export class ThreadUpdateNotificationHandler extends BaseNotificationHandler<ITh
       nonStatusUpdates.metadata = nextMeta;
     }
 
+    // Three-way semantics for costLimitHit mirror stopReason/stopCostUsd:
+    //   undefined -> key is absent on data: leave metadata.costLimitHit untouched
+    //   null      -> explicit clear: drop metadata.costLimitHit
+    //   boolean   -> persist metadata.costLimitHit
+    // The stopReason='cost_limit' block above already sets costLimitHit = true.
+    // This block handles the explicit-null clear path (used by the second emit in
+    // AgentInvokeNotificationHandler when an existing thread re-enters Running).
+    if ('costLimitHit' in data && data.costLimitHit !== undefined) {
+      const nextMeta = { ...(nonStatusUpdates.metadata ?? baseMeta) };
+      if (data.costLimitHit === null) {
+        delete nextMeta.costLimitHit;
+      } else if (typeof data.costLimitHit === 'boolean') {
+        nextMeta.costLimitHit = data.costLimitHit;
+      }
+      nonStatusUpdates.metadata = nextMeta;
+    }
+
     const hasStatusChange =
       nextStatus !== undefined && nextStatus !== thread.status;
     const hasNonStatusUpdates = Object.keys(nonStatusUpdates).length > 0;

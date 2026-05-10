@@ -21,15 +21,18 @@ function createMockRepo(): SqlEntityRepository<TestEntity> {
     findOne: vi.fn(),
     count: vi.fn(),
     create: vi.fn(),
-    nativeUpdate: vi.fn(),
-    nativeDelete: vi.fn(),
   } as unknown as SqlEntityRepository<TestEntity>;
 }
 
 function createMockEm(repo: SqlEntityRepository<TestEntity>): EntityManager {
+  const identityMap = { delete: vi.fn() };
+  const uow = { getIdentityMap: vi.fn().mockReturnValue(identityMap) };
   return {
     flush: vi.fn(),
+    remove: vi.fn(),
+    getReference: vi.fn(),
     getRepository: vi.fn().mockReturnValue(repo),
+    getUnitOfWork: vi.fn().mockReturnValue(uow),
   } as unknown as EntityManager;
 }
 
@@ -132,92 +135,167 @@ describe('BaseDao', () => {
     expect(result).toEqual([entityA, entityB]);
   });
 
-  it('updateById calls repo.nativeUpdate with id filter', async () => {
-    vi.mocked(repo.nativeUpdate).mockResolvedValue(1);
+  it('updateById loads entity, assigns data, flushes, returns 1', async () => {
+    const entity: TestEntity = { id: 'abc', name: 'old', deletedAt: null };
+    vi.mocked(repo.findOne).mockResolvedValue(entity);
 
     const result = await dao.updateById('abc', { name: 'updated' });
 
-    expect(repo.nativeUpdate).toHaveBeenCalledWith(
-      { id: 'abc' },
-      { name: 'updated' },
-    );
+    expect(repo.findOne).toHaveBeenCalledWith({ id: 'abc' });
+    expect(entity.name).toBe('updated');
+    expect(em.flush).toHaveBeenCalledOnce();
     expect(result).toBe(1);
   });
 
-  it('updateById with txEm uses transactional EM repo', async () => {
+  it('updateById returns 0 and skips flush when entity not found', async () => {
+    vi.mocked(repo.findOne).mockResolvedValue(null);
+
+    const result = await dao.updateById('missing', { name: 'updated' });
+
+    expect(em.flush).not.toHaveBeenCalled();
+    expect(result).toBe(0);
+  });
+
+  it('updateById with txEm uses transactional EM repo and flush', async () => {
     const txRepo = createMockRepo();
     const txEm = createMockEm(txRepo);
-    vi.mocked(txRepo.nativeUpdate).mockResolvedValue(1);
+    const entity: TestEntity = { id: 'abc', name: 'old', deletedAt: null };
+    vi.mocked(txRepo.findOne).mockResolvedValue(entity);
 
     const result = await dao.updateById('abc', { name: 'updated' }, txEm);
 
-    expect(txRepo.nativeUpdate).toHaveBeenCalledWith(
-      { id: 'abc' },
-      { name: 'updated' },
-    );
-    expect(repo.nativeUpdate).not.toHaveBeenCalled();
+    expect(txEm.getRepository).toHaveBeenCalledWith(TestEntity);
+    expect(entity.name).toBe('updated');
+    expect(txEm.flush).toHaveBeenCalledOnce();
+    expect(em.flush).not.toHaveBeenCalled();
     expect(result).toBe(1);
   });
 
-  it('deleteById sets deletedAt via repo.nativeUpdate', async () => {
+  it('deleteById sets deletedAt, flushes, and evicts from identity map', async () => {
+    const entity: TestEntity = { id: 'abc', name: 'x', deletedAt: null };
+    vi.mocked(repo.findOne).mockResolvedValue(entity);
     const beforeCall = new Date();
+
     await dao.deleteById('abc');
 
-    expect(repo.nativeUpdate).toHaveBeenCalledOnce();
-    const [filter, update] = vi.mocked(repo.nativeUpdate).mock.calls[0]!;
-    expect(filter).toEqual({ id: 'abc' });
-    expect(
-      (update as { deletedAt: Date }).deletedAt.getTime(),
-    ).toBeGreaterThanOrEqual(beforeCall.getTime());
+    expect(repo.findOne).toHaveBeenCalledWith({ id: 'abc' });
+    expect(entity.deletedAt).not.toBeNull();
+    expect(entity.deletedAt!.getTime()).toBeGreaterThanOrEqual(
+      beforeCall.getTime(),
+    );
+    expect(em.flush).toHaveBeenCalledOnce();
+    const identityMap = vi.mocked(em.getUnitOfWork)().getIdentityMap();
+    expect(identityMap.delete).toHaveBeenCalledWith(entity);
   });
 
-  it('deleteById with txEm uses transactional EM repo', async () => {
+  it('deleteById is a no-op when entity not found', async () => {
+    vi.mocked(repo.findOne).mockResolvedValue(null);
+
+    await dao.deleteById('missing');
+
+    expect(em.flush).not.toHaveBeenCalled();
+  });
+
+  it('deleteById with txEm uses transactional EM repo and flush', async () => {
     const txRepo = createMockRepo();
     const txEm = createMockEm(txRepo);
+    const entity: TestEntity = { id: 'abc', name: 'x', deletedAt: null };
+    vi.mocked(txRepo.findOne).mockResolvedValue(entity);
 
     await dao.deleteById('abc', txEm);
 
     expect(txEm.getRepository).toHaveBeenCalledWith(TestEntity);
-    expect(txRepo.nativeUpdate).toHaveBeenCalledWith(
-      { id: 'abc' },
-      expect.objectContaining({ deletedAt: expect.any(Date) }),
-    );
-    expect(repo.nativeUpdate).not.toHaveBeenCalled();
+    expect(entity.deletedAt).not.toBeNull();
+    expect(txEm.flush).toHaveBeenCalledOnce();
+    expect(em.flush).not.toHaveBeenCalled();
   });
 
-  it('hardDeleteById calls repo.nativeDelete', async () => {
+  it('delete sets deletedAt on every match, flushes once, and evicts each', async () => {
+    const entities: TestEntity[] = [
+      { id: '1', name: 'a', deletedAt: null },
+      { id: '2', name: 'b', deletedAt: null },
+    ];
+    vi.mocked(repo.find).mockResolvedValue(entities);
+
+    await dao.delete({ name: 'x' } as never);
+
+    expect(entities[0]!.deletedAt).not.toBeNull();
+    expect(entities[1]!.deletedAt).not.toBeNull();
+    expect(em.flush).toHaveBeenCalledOnce();
+    const identityMap = vi.mocked(em.getUnitOfWork)().getIdentityMap();
+    expect(identityMap.delete).toHaveBeenCalledTimes(2);
+    expect(identityMap.delete).toHaveBeenCalledWith(entities[0]);
+    expect(identityMap.delete).toHaveBeenCalledWith(entities[1]);
+  });
+
+  it('delete is a no-op when no matches found', async () => {
+    vi.mocked(repo.find).mockResolvedValue([]);
+
+    await dao.delete({ name: 'x' } as never);
+
+    expect(em.flush).not.toHaveBeenCalled();
+  });
+
+  it('hardDeleteById schedules removal via em.remove and flushes', async () => {
+    const ref = { id: 'abc' } as TestEntity;
+    vi.mocked(em.getReference).mockReturnValue(ref);
+
     await dao.hardDeleteById('abc');
 
-    expect(repo.nativeDelete).toHaveBeenCalledWith({ id: 'abc' });
+    expect(em.getReference).toHaveBeenCalledWith(TestEntity, 'abc');
+    expect(em.remove).toHaveBeenCalledWith(ref);
+    expect(em.flush).toHaveBeenCalledOnce();
   });
 
-  it('hardDeleteById with txEm uses transactional EM repo', async () => {
+  it('hardDeleteById with txEm uses transactional EM', async () => {
     const txRepo = createMockRepo();
     const txEm = createMockEm(txRepo);
+    const ref = { id: 'abc' } as TestEntity;
+    vi.mocked(txEm.getReference).mockReturnValue(ref);
 
     await dao.hardDeleteById('abc', txEm);
 
-    expect(txEm.getRepository).toHaveBeenCalledWith(TestEntity);
-    expect(txRepo.nativeDelete).toHaveBeenCalledWith({ id: 'abc' });
-    expect(repo.nativeDelete).not.toHaveBeenCalled();
+    expect(txEm.getReference).toHaveBeenCalledWith(TestEntity, 'abc');
+    expect(txEm.remove).toHaveBeenCalledWith(ref);
+    expect(txEm.flush).toHaveBeenCalledOnce();
+    expect(em.remove).not.toHaveBeenCalled();
   });
 
-  it('hardDelete calls repo.nativeDelete with filter', async () => {
-    const where = { name: 'test' };
-    await dao.hardDelete(where as never);
+  it('hardDelete removes every match and flushes once', async () => {
+    const entities: TestEntity[] = [
+      { id: '1', name: 'a', deletedAt: null },
+      { id: '2', name: 'b', deletedAt: null },
+    ];
+    vi.mocked(repo.find).mockResolvedValue(entities);
 
-    expect(repo.nativeDelete).toHaveBeenCalledWith(where);
+    await dao.hardDelete({ name: 'x' } as never);
+
+    expect(em.remove).toHaveBeenCalledTimes(2);
+    expect(em.remove).toHaveBeenCalledWith(entities[0]);
+    expect(em.remove).toHaveBeenCalledWith(entities[1]);
+    expect(em.flush).toHaveBeenCalledOnce();
   });
 
-  it('hardDelete with txEm uses transactional EM repo', async () => {
+  it('hardDelete is a no-op when no matches found', async () => {
+    vi.mocked(repo.find).mockResolvedValue([]);
+
+    await dao.hardDelete({ name: 'x' } as never);
+
+    expect(em.remove).not.toHaveBeenCalled();
+    expect(em.flush).not.toHaveBeenCalled();
+  });
+
+  it('hardDelete with txEm uses transactional EM', async () => {
     const txRepo = createMockRepo();
     const txEm = createMockEm(txRepo);
-    const where = { name: 'test' };
+    const entities: TestEntity[] = [{ id: '1', name: 'a', deletedAt: null }];
+    vi.mocked(txRepo.find).mockResolvedValue(entities);
 
-    await dao.hardDelete(where as never, txEm);
+    await dao.hardDelete({ name: 'x' } as never, txEm);
 
     expect(txEm.getRepository).toHaveBeenCalledWith(TestEntity);
-    expect(txRepo.nativeDelete).toHaveBeenCalledWith(where);
-    expect(repo.nativeDelete).not.toHaveBeenCalled();
+    expect(txEm.remove).toHaveBeenCalledWith(entities[0]);
+    expect(txEm.flush).toHaveBeenCalledOnce();
+    expect(em.remove).not.toHaveBeenCalled();
   });
 });

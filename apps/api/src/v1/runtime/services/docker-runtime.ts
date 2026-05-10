@@ -6,10 +6,10 @@ import Docker from 'dockerode';
 
 import { environment } from '../../../environments';
 import {
-  RuntimeExecParams,
-  RuntimeExecResult,
+  type RuntimeExecParams,
+  type RuntimeExecResult,
   RuntimeStartingPhase,
-  RuntimeStartParams,
+  type RuntimeStartParams,
 } from '../runtime.types';
 import { buildEnvPrefix } from '../runtime.utils';
 import { BaseRuntime } from './base-runtime';
@@ -58,6 +58,8 @@ export class DockerRuntime extends BaseRuntime {
   private image?: string;
   private container: Docker.Container | null = null;
   private containerWorkdir: string | null = null;
+  // Stored during start() so stop() can remove the per-runtime bridge network.
+  private networkName: string | null = null;
   private sessions = new Map<string, ShellSession>();
   private logger?: DockerRuntimeLogger;
 
@@ -556,6 +558,16 @@ export class DockerRuntime extends BaseRuntime {
         },
       });
     } catch (error) {
+      // Race: parallel runtimes/test workers can list-empty then both call
+      // createNetwork. The loser gets HTTP 409 "already exists" — the network
+      // now exists, which is the post-condition we wanted, so accept it.
+      const errorMessage = extractErrorMessage(error);
+      if (
+        errorMessage.includes('already exists') ||
+        errorMessage.includes('409')
+      ) {
+        return;
+      }
       throw new Error(`Failed to create network ${networkName}: ${error}`, {
         cause: error,
       });
@@ -656,6 +668,7 @@ export class DockerRuntime extends BaseRuntime {
 
     const networkName = params?.network || 'geniro-runtime';
     await this.ensureNetwork(networkName);
+    this.networkName = networkName;
 
     let containerEnv = params?.env || {};
 
@@ -701,7 +714,7 @@ export class DockerRuntime extends BaseRuntime {
             Env: env,
             WorkingDir: this.getWorkdir(params?.workdir),
             Cmd: cmd,
-            Labels: params?.labels,
+            Labels: { 'geniro.io/type': 'runtime', ...(params?.labels ?? {}) },
             Tty: false,
             AttachStdin: false,
             AttachStdout: false,
@@ -761,10 +774,19 @@ export class DockerRuntime extends BaseRuntime {
         session.queue.length = 0;
       }
 
+      const stoppedNetworkName = this.networkName;
       await DockerRuntime.stopByInstance(this.container);
       this.container = null;
       this.containerWorkdir = null;
+      this.networkName = null;
       this.sessions.clear();
+
+      if (stoppedNetworkName) {
+        await DockerRuntime.removeNetworkIfManaged(
+          this.docker,
+          stoppedNetworkName,
+        );
+      }
 
       this.emit({ type: 'stop', data: {} });
     } catch (error) {
@@ -776,6 +798,54 @@ export class DockerRuntime extends BaseRuntime {
   static async stopByInstance(container: Docker.Container): Promise<void> {
     await container.stop({ t: 10 }).catch(() => undefined);
     await container.remove({ force: true }).catch(() => undefined);
+  }
+
+  /**
+   * Remove a bridge network if it was created by DockerRuntime and has no
+   * remaining containers attached. Skips the shared default network
+   * ('geniro-runtime') to avoid breaking concurrently running runtimes.
+   */
+  private static async removeNetworkIfManaged(
+    docker: Docker,
+    networkName: string,
+  ): Promise<void> {
+    if (networkName === 'geniro-runtime') {
+      return;
+    }
+
+    let networks: Docker.NetworkInspectInfo[];
+    try {
+      networks = await docker.listNetworks({
+        filters: { name: [networkName] },
+      });
+    } catch {
+      return;
+    }
+
+    const network = networks.find((n) => n.Name === networkName);
+    if (!network) {
+      return;
+    }
+
+    const isManaged =
+      network.Labels?.['geniro/managed'] === 'true' &&
+      network.Labels?.['geniro/created-by'] === 'docker-runtime';
+    if (!isManaged) {
+      return;
+    }
+
+    const hasContainers =
+      network.Containers !== undefined &&
+      Object.keys(network.Containers).length > 0;
+    if (hasContainers) {
+      return;
+    }
+
+    try {
+      await docker.getNetwork(network.Id).remove();
+    } catch {
+      // best-effort: another runtime may have already removed it
+    }
   }
 
   async exec(params: RuntimeExecParams): Promise<RuntimeExecResult> {

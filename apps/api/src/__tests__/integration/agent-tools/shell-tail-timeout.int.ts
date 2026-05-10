@@ -1,103 +1,348 @@
-import { ToolRunnableConfig } from '@langchain/core/tools';
-import { Test, TestingModule } from '@nestjs/testing';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { INestApplication } from '@nestjs/common';
+import { BaseException } from '@packages/common';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
-import { environment } from '../../../environments';
-import { ShellTool } from '../../../v1/agent-tools/tools/common/shell.tool';
-import { BaseAgentConfigurable } from '../../../v1/agents/agents.types';
-import { LitellmService } from '../../../v1/litellm/services/litellm.service';
-import { LlmModelsService } from '../../../v1/litellm/services/llm-models.service';
-import { OpenaiService } from '../../../v1/openai/openai.service';
-import { RuntimeType } from '../../../v1/runtime/runtime.types';
-import { BaseRuntime } from '../../../v1/runtime/services/base-runtime';
-import { DockerRuntime } from '../../../v1/runtime/services/docker-runtime';
-import { RuntimeProvider } from '../../../v1/runtime/services/runtime-provider';
-import { RuntimeThreadProvider } from '../../../v1/runtime/services/runtime-thread-provider';
+import { AppContextStorage } from '../../../auth/app-context-storage';
+import { ReasoningEffort } from '../../../v1/agents/agents.types';
+import { SimpleAgentSchemaType } from '../../../v1/agents/services/agents/simple-agent';
+import { CreateGraphDto } from '../../../v1/graphs/dto/graphs.dto';
+import { GraphStatus } from '../../../v1/graphs/graphs.types';
+import { GraphsService } from '../../../v1/graphs/services/graphs.service';
+import { LiteLlmClient } from '../../../v1/litellm/services/litellm.client';
+import { ProjectsDao } from '../../../v1/projects/dao/projects.dao';
+import { ThreadNameGeneratorService } from '../../../v1/threads/services/thread-name-generator.service';
+import { ThreadsService } from '../../../v1/threads/services/threads.service';
+import { ThreadStatus } from '../../../v1/threads/threads.types';
+import { waitForCondition } from '../helpers/graph-helpers';
+import { createTestProject } from '../helpers/test-context';
+import {
+  mockLiteLlmClient,
+  mockThreadNameGenerator,
+} from '../helpers/test-stubs';
+import { getMockLlm } from '../mocks/mock-llm';
+import { createTestModule } from '../setup';
 
-const THREAD_ID = `shell-tail-timeout-${Date.now()}`;
-const RUNNABLE_CONFIG: ToolRunnableConfig<BaseAgentConfigurable> = {
-  configurable: {
-    thread_id: THREAD_ID,
-    run_id: `${THREAD_ID}-run`,
-  },
-};
+const TRIGGER_NODE_ID = 'trigger-1';
+const AGENT_NODE_ID = 'agent-1';
+const SHELL_NODE_ID = 'shell-1';
+const RUNTIME_NODE_ID = 'runtime-1';
+
+const COMMAND_AGENT_INSTRUCTIONS =
+  'You are a command runner. When the user message contains `Run this command: <cmd>` or `Execute shell command: <cmd>` (including `Execute shell command with timeoutMs=<ms>: <cmd>`), extract `<cmd>` and execute it exactly using the shell tool. If the message includes `timeoutMs=<number>`, pass that value to the shell tool as timeoutMs. Do not run any other commands, inspections, or tests unless the user explicitly requests them. After running the shell tool, call the finish tool with the stdout (and stderr if present). If the runtime is not yet started, wait briefly and retry once before reporting the failure.';
+
+const THREAD_COMPLETION_STATUSES: ThreadStatus[] = [
+  ThreadStatus.Done,
+  ThreadStatus.NeedMoreInfo,
+  ThreadStatus.Stopped,
+];
+
+// Assigned in beforeAll once the test project is created.
+let contextDataStorage: AppContextStorage;
 
 describe('ShellTool tail timeout behavior (integration)', () => {
-  let moduleRef: TestingModule;
-  let runtime: BaseRuntime;
-  let shellTool: ShellTool;
-  let runtimeThreadProvider: RuntimeThreadProvider;
+  let app: INestApplication;
+  let graphsService: GraphsService;
+  let threadsService: ThreadsService;
+  let graphId: string;
+  let testProjectId: string;
 
   beforeAll(async () => {
-    moduleRef = await Test.createTestingModule({
-      providers: [
-        ShellTool,
-        { provide: OpenaiService, useValue: {} },
-        { provide: LitellmService, useValue: {} },
-        { provide: LlmModelsService, useValue: {} },
-      ],
-    }).compile();
-    shellTool = moduleRef.get(ShellTool);
-
-    runtime = new DockerRuntime({ socketPath: environment.dockerSocket });
-
-    await runtime.start({
-      image: 'python:3.11-slim',
-      recreate: true,
-      containerName: `tail-timeout-test-${Date.now()}`,
-    });
-
-    runtimeThreadProvider = new RuntimeThreadProvider(
-      {
-        provide: async () => ({ runtime, created: false }),
-      } as unknown as RuntimeProvider,
-      {
-        graphId: `graph-${Date.now()}`,
-        runtimeNodeId: `runtime-${Date.now()}`,
-        type: RuntimeType.Docker,
-        runtimeStartParams: {
-          image: 'python:3.11-slim',
-        },
-        temporary: true,
-      },
+    app = await createTestModule(
+      async (m) =>
+        m
+          .overrideProvider(LiteLlmClient)
+          .useValue(mockLiteLlmClient)
+          .overrideProvider(ThreadNameGeneratorService)
+          .useValue(mockThreadNameGenerator)
+          .compile(),
+      // Tail-timeout assertions need real subprocess timing.
+      { mockRuntime: false },
     );
-  }, 120_000);
+    graphsService = app.get<GraphsService>(GraphsService);
+    threadsService = app.get<ThreadsService>(ThreadsService);
+
+    const projectResult = await createTestProject(app);
+    testProjectId = projectResult.projectId;
+    contextDataStorage = projectResult.ctx;
+
+    const graph = await graphsService.create(
+      contextDataStorage,
+      createTailTimeoutGraphData(),
+    );
+    graphId = graph.id;
+    await graphsService.run(contextDataStorage, graphId);
+    await waitForGraphStatus(graphId, GraphStatus.Running);
+  }, 300_000);
 
   afterAll(async () => {
-    if (runtime) {
-      await runtime.stop().catch(() => undefined);
+    if (graphId) {
+      await cleanupGraph(graphId);
     }
 
-    if (moduleRef) {
-      await moduleRef.close();
+    if (testProjectId) {
+      try {
+        await app.get(ProjectsDao).deleteById(testProjectId);
+      } catch {
+        // best effort cleanup
+      }
     }
-  }, 60_000);
+
+    await app.close();
+  }, 300_000);
+
+  beforeEach(() => {
+    getMockLlm(app).reset();
+  });
+
+  const cleanupGraph = async (gId: string) => {
+    try {
+      await graphsService.destroy(contextDataStorage, gId);
+    } catch (error: unknown) {
+      if (
+        !(error instanceof BaseException) ||
+        (error.errorCode !== 'GRAPH_NOT_FOUND' &&
+          error.errorCode !== 'GRAPH_NOT_RUNNING')
+      ) {
+        throw error;
+      }
+    }
+
+    try {
+      await graphsService.delete(contextDataStorage, gId);
+    } catch (error: unknown) {
+      if (
+        !(error instanceof BaseException) ||
+        error.errorCode !== 'GRAPH_NOT_FOUND'
+      ) {
+        throw error;
+      }
+    }
+  };
+
+  const waitForGraphStatus = async (
+    gId: string,
+    status: GraphStatus,
+    timeoutMs = 240_000,
+  ) => {
+    return waitForCondition(
+      () => graphsService.findById(contextDataStorage, gId),
+      (graph) => graph.status === status,
+      { timeout: timeoutMs, interval: 1_000 },
+    );
+  };
+
+  const waitForThreadCompletion = async (
+    externalThreadId: string,
+    timeoutMs = 180_000,
+  ) => {
+    const thread = await threadsService.getThreadByExternalId(
+      contextDataStorage,
+      externalThreadId,
+    );
+
+    return waitForCondition(
+      () => threadsService.getThreadById(contextDataStorage, thread.id),
+      (currentThread) =>
+        THREAD_COMPLETION_STATUSES.includes(currentThread.status),
+      {
+        timeout: timeoutMs,
+        interval: 1_000,
+      },
+    );
+  };
+
+  const createTailTimeoutGraphData = (): CreateGraphDto => ({
+    name: `Shell Tail Timeout Test ${Date.now()}`,
+    description: 'Integration test graph for shell tail timeout behavior',
+    temporary: true,
+    schema: {
+      nodes: [
+        {
+          id: TRIGGER_NODE_ID,
+          template: 'manual-trigger',
+          config: {},
+        },
+        {
+          id: AGENT_NODE_ID,
+          template: 'simple-agent',
+          config: {
+            instructions: COMMAND_AGENT_INSTRUCTIONS,
+            name: 'Test Agent',
+            description: 'Test agent description',
+            summarizeMaxTokens: 272000,
+            summarizeKeepTokens: 30000,
+            invokeModelName: 'gpt-5-mini',
+            invokeModelReasoningEffort: ReasoningEffort.None,
+            maxIterations: 50,
+          } satisfies SimpleAgentSchemaType,
+        },
+        {
+          id: SHELL_NODE_ID,
+          template: 'shell-tool',
+          config: {},
+        },
+        {
+          id: RUNTIME_NODE_ID,
+          template: 'runtime',
+          config: {
+            runtimeType: 'Docker',
+            image: 'python:3.11-slim',
+            env: {},
+          },
+        },
+      ],
+      edges: [
+        { from: TRIGGER_NODE_ID, to: AGENT_NODE_ID },
+        { from: AGENT_NODE_ID, to: SHELL_NODE_ID },
+        { from: SHELL_NODE_ID, to: RUNTIME_NODE_ID },
+      ],
+    },
+  });
+
+  const ensureGraphRunning = async (gId: string) => {
+    const graph = await graphsService.findById(contextDataStorage, gId);
+    if (graph.status === GraphStatus.Running) {
+      return;
+    }
+    await graphsService.run(contextDataStorage, gId);
+    await waitForGraphStatus(gId, GraphStatus.Running);
+  };
+
+  const uniqueThreadSubId = (prefix: string) =>
+    `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+  interface ExecuteTailTimeoutScenarioOptions {
+    /** Shell args to merge into the shell tool call (e.g. timeoutMs, tailTimeoutMs). */
+    shellArgs?: Record<string, unknown>;
+    /** Timeout for waiting on shell result (ms). */
+    shellResultTimeoutMs?: number;
+  }
+
+  /**
+   * Registers mock LLM fixtures for a single shell tool call turn (turn 1 via
+   * tool_search + turn 2 via shell) + finish (turn 3), then drives the agent
+   * through the full thread lifecycle and returns { exitCode, stdout, stderr }.
+   *
+   * Must be called AFTER getMockLlm(app).reset() (which beforeEach does).
+   */
+  const executeTailTimeoutScenario = async (
+    command: string,
+    options: ExecuteTailTimeoutScenarioOptions = {},
+  ) => {
+    const mockLlm = getMockLlm(app);
+
+    // Turn 1 (callIndex 0): shell is not yet loaded — agent uses tool_search to find it.
+    mockLlm.onChat(
+      { callIndex: 0 },
+      { kind: 'toolCall', toolName: 'tool_search', args: { query: 'shell' } },
+    );
+
+    // Turn 2: shell is now loaded — agent calls shell with the given command.
+    // Shell tool schema requires 'purpose' in addition to 'command'.
+    mockLlm.onChat(
+      { hasTools: ['shell'] },
+      {
+        kind: 'toolCall',
+        toolName: 'shell',
+        args: { purpose: 'run command', command, ...options.shellArgs },
+      },
+    );
+
+    // Turn 3: after the shell result arrives, the agent calls finish to end the thread.
+    // Using both hasToolResult + hasTools for specificity 2 so this fixture beats the
+    // hasTools-only shell fixture (specificity 1) when the shell result is in context.
+    mockLlm.onChat(
+      { hasToolResult: 'shell', hasTools: ['finish'] },
+      {
+        kind: 'toolCall',
+        toolName: 'finish',
+        args: {
+          purpose: 'done',
+          message: 'Command executed.',
+          needsMoreInfo: false,
+        },
+      },
+    );
+
+    await ensureGraphRunning(graphId);
+    const execution = await graphsService.executeTrigger(
+      contextDataStorage,
+      graphId,
+      TRIGGER_NODE_ID,
+      {
+        messages: [`Execute shell command: ${command}`],
+        async: false,
+        threadSubId: uniqueThreadSubId('tail-timeout'),
+      },
+    );
+
+    expect(execution.externalThreadId).toBeDefined();
+
+    const thread = await waitForThreadCompletion(
+      execution.externalThreadId,
+      options.shellResultTimeoutMs ?? 180_000,
+    );
+    expect(THREAD_COMPLETION_STATUSES).toContain(thread.status);
+    expect(thread.status).toBe(ThreadStatus.Done);
+
+    const shellMessage = await waitForCondition(
+      async () => {
+        const innerThread = await threadsService.getThreadByExternalId(
+          contextDataStorage,
+          execution.externalThreadId,
+        );
+        return threadsService.getThreadMessages(
+          contextDataStorage,
+          innerThread.id,
+        );
+      },
+      (msgs) =>
+        msgs.some(
+          (m) => m.message.role === 'tool' && m.message.name === 'shell',
+        ),
+      { timeout: options.shellResultTimeoutMs ?? 180_000, interval: 1_000 },
+    );
+
+    const toolMsg = shellMessage
+      .map((m) => m.message)
+      .find((m) => m.role === 'tool' && m.name === 'shell');
+
+    expect(toolMsg).toBeDefined();
+    expect(toolMsg?.role).toBe('tool');
+
+    const rawContent = toolMsg?.role === 'tool' ? toolMsg.content : undefined;
+    const content = rawContent as {
+      exitCode?: number;
+      stdout?: string;
+      stderr?: string;
+    };
+
+    expect(typeof content?.exitCode).toBe('number');
+    expect(typeof content?.stdout).toBe('string');
+    expect(typeof content?.stderr).toBe('string');
+
+    return {
+      exitCode: content.exitCode as number,
+      stdout: content.stdout as string,
+      stderr: content.stderr as string,
+    };
+  };
 
   it(
     'does not timeout for Python heredoc commands with no immediate output',
-    { timeout: 20_000 },
+    { timeout: 60_000 },
     async () => {
-      const builtTool = shellTool.build({
-        runtimeProvider: runtimeThreadProvider,
-      });
-
-      // Test actual Python heredoc - the exact scenario from user's issue
-      // Python reads entire heredoc from stdin before producing any output
-      // With tail timeout fix, this should NOT timeout during stdin reading
-      const { output: result } = await builtTool.invoke(
-        {
-          purpose: 'Test Python heredoc',
-          command: `python - <<'EOF'
+      const command = `python - <<'EOF'
 import csv,sys,io
 data = [["col1", "col2"], ["value1", "value2"]]
 for row in data:
     print(",".join(row))
-EOF`,
-          timeoutMs: 10_000,
-          tailTimeoutMs: 3_000, // Short tail timeout to verify fix works
-        },
-        RUNNABLE_CONFIG,
-      );
+EOF`;
+
+      const result = await executeTailTimeoutScenario(command, {
+        shellArgs: { timeoutMs: 10_000, tailTimeoutMs: 3_000 },
+        shellResultTimeoutMs: 60_000,
+      });
 
       // Exit code 0 = success, 124 = timeout
       expect(result.exitCode).toBe(0);
@@ -109,18 +354,9 @@ EOF`,
 
   it(
     'handles complex heredoc with file processing (user original scenario)',
-    { timeout: 30_000 },
+    { timeout: 120_000 },
     async () => {
-      const builtTool = shellTool.build({
-        runtimeProvider: runtimeThreadProvider,
-      });
-
-      // Simulate the user's original scenario: unzip and process CSV files
-      // This tests a more complex heredoc that reads and processes data
-      const { output: result } = await builtTool.invoke(
-        {
-          purpose: 'Test complex heredoc processing',
-          command: `python - <<'PY'
+      const command = `python - <<'PY'
 import csv, sys, io
 # Simulate CSV processing like the user's original issue
 lines = """Area,Item,Element
@@ -133,12 +369,12 @@ print(f"Header: {','.join(header)}")
 
 for row in reader:
     print(f"Row: {','.join(row)}")
-PY`,
-          timeoutMs: 15_000,
-          tailTimeoutMs: 5_000, // Generous tail timeout
-        },
-        RUNNABLE_CONFIG,
-      );
+PY`;
+
+      const result = await executeTailTimeoutScenario(command, {
+        shellArgs: { timeoutMs: 15_000, tailTimeoutMs: 5_000 },
+        shellResultTimeoutMs: 120_000,
+      });
 
       expect(result.exitCode).toBe(0);
       expect(result.exitCode).not.toBe(124);
@@ -150,22 +386,14 @@ PY`,
 
   it(
     'still times out if command hangs after producing output',
-    { timeout: 30_000 },
+    { timeout: 120_000 },
     async () => {
-      const builtTool = shellTool.build({
-        runtimeProvider: runtimeThreadProvider,
-      });
+      const command = 'echo "start" && sleep 10';
 
-      // Command produces output then hangs - should timeout
-      const { output: result } = await builtTool.invoke(
-        {
-          purpose: 'Test tail timeout still works',
-          command: 'echo "start" && sleep 10',
-          timeoutMs: 20_000,
-          tailTimeoutMs: 3_000, // Should timeout after 3s of no output after "start"
-        },
-        RUNNABLE_CONFIG,
-      );
+      const result = await executeTailTimeoutScenario(command, {
+        shellArgs: { timeoutMs: 20_000, tailTimeoutMs: 3_000 },
+        shellResultTimeoutMs: 120_000,
+      });
 
       // Should timeout (exit 124)
       expect(result.exitCode).toBe(124);

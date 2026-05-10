@@ -3,11 +3,7 @@ import { LockMode } from '@mikro-orm/core';
 import { EntityManager } from '@mikro-orm/postgresql';
 import { Injectable } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import {
-  BadRequestException,
-  DefaultLogger,
-  NotFoundException,
-} from '@packages/common';
+import { BadRequestException, NotFoundException } from '@packages/common';
 import { isEqual } from 'lodash';
 
 import { AppContextStorage } from '../../../auth/app-context-storage';
@@ -62,7 +58,6 @@ export class GraphsService {
     private readonly notificationsService: NotificationsService,
     private readonly threadsDao: ThreadsDao,
     private readonly eventEmitter: EventEmitter2,
-    private readonly logger: DefaultLogger,
     private readonly projectsDao: ProjectsDao,
     private readonly templateRegistry: TemplateRegistry,
     private readonly threadResumeQueueService: ThreadResumeQueueService,
@@ -106,7 +101,13 @@ export class GraphsService {
       throw new NotFoundException('PROJECT_NOT_FOUND');
     }
 
-    return await this.em.transactional(async (em: EntityManager) => {
+    // `em.fork().transactional()` matches the pattern used in executeTrigger
+    // (line 776) — root the transaction on a private fork so the upper em's
+    // #transactionContext can never leak across concurrent calls. Graph
+    // creation is invoked concurrently from multiple test files and from the
+    // graph-templates seeder, both of which previously triggered the
+    // "savepoint trx1 does not exist" heisenbug under high parallelism.
+    return await this.em.fork().transactional(async (em: EntityManager) => {
       const initialVersion = '1.0.0';
       const agents = extractAgentsFromSchema(
         data.schema,
@@ -273,8 +274,11 @@ export class GraphsService {
     // Use transaction with row-level locking to prevent simultaneous updates.
     // Post-transaction data (revision to enqueue, notification to emit) is returned
     // from the transaction callback so TypeScript can track it through control flow.
-    const { response, postCommit } = await this.em.transactional(
-      async (em: EntityManager) => {
+    // Fork the EM first so concurrent callers don't share a transactionContext
+    // pointer (avoids spurious "SAVEPOINT can only be used in transaction blocks").
+    const { response, postCommit } = await this.em
+      .fork()
+      .transactional(async (em: EntityManager) => {
         // Lock the graph row for update (prevents race conditions)
         const graph = await this.graphDao.getOne(
           {
@@ -392,8 +396,7 @@ export class GraphsService {
           } as UpdateGraphResponseDto,
           postCommit: null,
         };
-      },
-    );
+      });
 
     // Post-transaction: emit notification and enqueue processing.
     // These run after the transaction commits so the enrichment handler
@@ -749,10 +752,25 @@ export class GraphsService {
     );
 
     if (dto.threadSubId) {
-      // wrap the entire "existing thread" branch in a pessimistic-write
+      // Wrap the entire "existing thread" branch in a pessimistic-write
       // transaction to prevent TOCTOU races where two concurrent requests
       // read Stopped status simultaneously and both bypass the resume guard.
-      await this.em.transactional(async (em: EntityManager) => {
+      //
+      // Use `em.fork().transactional(...)` instead of `em.transactional(...)`
+      // so the transaction is rooted on a private fork, never on the global em.
+      // executeTrigger can be invoked concurrently (HTTP request + the BullMQ
+      // resume worker, or two follow-up triggers landing during an in-flight
+      // run); MikroORM's maintainer recommends the explicit-fork pattern for
+      // concurrent transactions because `em.transactional()` on the global em
+      // (a) merges entities back into the upper context on commit, and
+      // (b) goes through TransactionManager's NESTED-by-default propagation
+      //     which checks `em.getTransactionContext()` on the upper em — if a
+      //     prior fork's `#transactionContext` ever leaks onto the upper em,
+      //     the next call opens a SAVEPOINT on a connection that's already
+      //     been returned to the pool, and rollback explodes with
+      //     "ROLLBACK TO SAVEPOINT can only be used in transaction blocks".
+      // See: https://github.com/mikro-orm/mikro-orm/discussions/5309
+      await this.em.fork().transactional(async (em: EntityManager) => {
         const existingThread = await this.threadsDao.getOne(
           {
             externalThreadId: `${graphId}:${dto.threadSubId}`,
@@ -870,61 +888,37 @@ export class GraphsService {
 
     const externalThreadId = res.threadId;
 
-    // Eagerly create thread to avoid race condition with async notification handler.
-    // The handler's check-then-create pattern will find this thread and enter the update path.
-    // Use a forked EM so a unique-constraint failure doesn't pollute the global Unit of Work.
-    const forkedEm = this.em.fork();
-    const existingThread = await this.threadsDao.getOne(
-      { externalThreadId, graphId },
-      undefined,
-      forkedEm,
-    );
-    if (!existingThread) {
-      // strip reserved server-managed keys from client-supplied metadata so
-      // clients cannot poison cost-limit state by sending these in dto.metadata.
-      const {
-        effectiveCostLimitUsd: _e,
-        stopReason: _s,
-        stopCostUsd: _c,
-        costLimitHit: _h,
-        ...clientMetadata
-      } = dto.metadata ?? {};
-      const initialMetadata: Record<string, unknown> = {
-        ...clientMetadata,
-        effectiveCostLimitUsd,
-      };
-      try {
-        await this.threadsDao.create(
-          {
-            graphId,
-            createdBy: userId,
-            projectId: graph.projectId,
-            externalThreadId,
-            status: ThreadStatus.Running,
-            runningStartedAt: eagerStartedAt,
-            totalRunningMs: 0,
-            metadata: initialMetadata,
-          },
-          forkedEm,
-        );
-      } catch (error: unknown) {
-        const isUniqueViolation =
-          error instanceof Error &&
-          'code' in error &&
-          (error as { code: string }).code === '23505';
-        if (isUniqueViolation) {
-          this.logger.debug(
-            `Eager thread creation skipped (race with notification handler): ${(error as Error).message}`,
-          );
-        } else {
-          this.logger.warn(
-            `Eager thread creation failed unexpectedly: ${error instanceof Error ? error.message : String(error)}`,
-          );
-          // Don't rethrow — the notification handler will create the thread as a fallback.
-          // But log at warn level so it's visible in production.
-        }
-      }
-    }
+    // Strip reserved server-managed keys from client-supplied metadata so
+    // clients cannot poison cost-limit state by sending these in dto.metadata.
+    const {
+      effectiveCostLimitUsd: _e,
+      stopReason: _s,
+      stopCostUsd: _c,
+      costLimitHit: _h,
+      ...clientMetadata
+    } = dto.metadata ?? {};
+    const initialMetadata: Record<string, unknown> = {
+      ...clientMetadata,
+      effectiveCostLimitUsd,
+    };
+
+    // Eagerly upsert the thread row so the frontend can immediately load it.
+    // upsertByExternalThreadId merges only status/lastRunId/updatedAt/
+    // runningStartedAt/totalRunningMs on conflict, so a concurrent
+    // AgentInvokeNotificationHandler upsert and the upper transactional
+    // metadata update both remain authoritative for their respective fields —
+    // no PK race, no metadata stomp. eagerStartedAt seeds the runtime timer
+    // so the running clock includes agent-startup time.
+    await this.threadsDao.upsertByExternalThreadId({
+      graphId,
+      createdBy: userId,
+      projectId: graph.projectId,
+      externalThreadId,
+      status: ThreadStatus.Running,
+      runningStartedAt: eagerStartedAt,
+      totalRunningMs: 0,
+      metadata: initialMetadata,
+    });
 
     return {
       externalThreadId,

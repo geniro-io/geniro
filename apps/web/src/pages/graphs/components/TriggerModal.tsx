@@ -10,6 +10,7 @@ import { Button } from '../../../components/ui/button';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -85,6 +86,9 @@ export const TriggerModal = ({
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Trigger Node</DialogTitle>
+          <DialogDescription className="sr-only">
+            Send a message to manually trigger the selected graph node.
+          </DialogDescription>
         </DialogHeader>
 
         <div className="flex flex-col gap-4">

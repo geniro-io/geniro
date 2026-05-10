@@ -23,7 +23,6 @@ import { formatDurationMs } from '../../pages/graphs/components/threadMessages/t
 import { getStatusBadgeClass } from '../../utils/statusColors';
 import { MarkdownContent } from '../markdown/MarkdownContent';
 import { AgentAvatar, getAgentInitials } from './agent-avatar';
-import { Avatar, AvatarFallback } from './avatar';
 import { Badge } from './badge';
 import { JsonViewer } from './json-view';
 import { Popover, PopoverContent, PopoverTrigger } from './popover';
@@ -41,9 +40,11 @@ import {
 export type { TokenInfo } from './token-display';
 export { fmtK, StatRow, TokenBadge } from './token-display';
 
-/** Builds a TokenInfo for the StatFooter from raw consumer props. */
+/** Builds a TokenInfo for the StatFooter from a block's accumulated statistics.
+ *  Returns undefined when no statistics are available so the footer is hidden;
+ *  no fallback to a static parent-level usage figure is permitted (an unrelated
+ *  static value silently displayed in place of missing live data hides bugs). */
 const buildFooterTokens = (
-  usageIn: RawTokenUsage | null | undefined,
   statistics:
     | {
         usage?: {
@@ -53,16 +54,14 @@ const buildFooterTokens = (
       }
     | undefined,
 ): TokenInfo | undefined => {
-  if (usageIn) {
-    return toTokenInfo(usageIn);
+  const usage = statistics?.usage;
+  if (!usage) {
+    return undefined;
   }
-  if (statistics?.usage?.totalTokens) {
-    return {
-      total: statistics.usage.totalTokens,
-      cost: formatUsd(statistics.usage.totalPrice),
-    };
-  }
-  return undefined;
+  return {
+    total: usage.totalTokens ?? 0,
+    cost: formatUsd(usage.totalPrice),
+  };
 };
 
 function resolveConsumerDisplayStatus(
@@ -505,7 +504,7 @@ function UsageRows({ usage, label }: { usage: RawTokenUsage; label?: string }) {
 /**
  * Shared popover content panel for tool call inspection.
  * Renders tool label, input args, output, and token usage using shared
- * sub-components (SectionLabel, JsonDisplay, StatusBadge, TokenUsageDetail).
+ * sub-components (SectionLabel, JsonDisplay, StatusBadge).
  *
  * Used inside ToolBlock popover and as pre-rendered popoverContent for
  * SubagentBlock / CommunicationBlock.
@@ -1357,8 +1356,6 @@ export interface SubagentBlockProps {
   };
   /** Pre-rendered popover content for header click. */
   popoverContent?: React.ReactNode;
-  usageIn?: RawTokenUsage | null;
-  usageOut?: RawTokenUsage | null;
   /** Show "Agent is thinking..." indicator. */
   showThinkingIndicator?: boolean;
   /** Number of hidden messages (collapsed). -1 = auto-collapse. */
@@ -1380,8 +1377,6 @@ export function SubagentBlock(props: SubagentBlockProps) {
     resultText,
     statistics,
     popoverContent,
-    usageIn,
-    usageOut: _usageOut, // not displayed in consumer mode
     showThinkingIndicator,
   } = props;
 
@@ -1391,7 +1386,7 @@ export function SubagentBlock(props: SubagentBlockProps) {
     const displayStatus = resolveConsumerDisplayStatus(status, errorText);
     const isClickable = resolveIsClickable(status, popoverContent);
 
-    const footerTokens = buildFooterTokens(usageIn, statistics);
+    const footerTokens = buildFooterTokens(statistics);
 
     const header = (
       <BlockHeader left={null} label={headerLabel} status={displayStatus} />
@@ -1651,8 +1646,6 @@ export interface CommunicationBlockProps {
     totalPrice?: number;
   };
   popoverContent?: React.ReactNode;
-  usageIn?: RawTokenUsage | null;
-  usageOut?: RawTokenUsage | null;
   showThinkingIndicator?: boolean;
   thinkingText?: string;
 }
@@ -1675,8 +1668,6 @@ export function CommunicationBlock(props: CommunicationBlockProps) {
     statistics,
     model,
     popoverContent,
-    usageIn,
-    usageOut: _usageOut, // not displayed in consumer mode
     showThinkingIndicator,
     thinkingText,
     // storybook mode
@@ -1713,7 +1704,7 @@ export function CommunicationBlock(props: CommunicationBlockProps) {
         ? `Providing Instructions for ${cleanTarget}`
         : 'Providing Instructions');
 
-    const footerTokens = buildFooterTokens(usageIn, statistics);
+    const footerTokens = buildFooterTokens(statistics);
 
     const hasAgentPair = !!(cleanSource && cleanTarget);
 

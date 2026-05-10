@@ -24,6 +24,16 @@ export default [
     },
   },
   {
+    // shadcn UI primitives co-locate their `cva` variant maps and helper
+    // exports alongside the component itself by convention. The fast-refresh
+    // ergonomics rule isn't applicable here — the cost of splitting every
+    // primitive into two files outweighs the HMR benefit.
+    files: ['src/components/ui/**/*.{ts,tsx}'],
+    rules: {
+      'react-refresh/only-export-components': 'off',
+    },
+  },
+  {
     files: [
       '**/*.spec.ts',
       '**/*.spec.tsx',

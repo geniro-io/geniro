@@ -278,16 +278,15 @@ export function TokenUsageDetail({
   /** Extra CSS class for the trigger icon. */
   iconClassName?: string;
 }) {
-  const effectiveIn = usageIn;
   const effectiveOut =
     usageOut && !isSameUsage(usageIn, usageOut) ? usageOut : null;
 
-  if (!effectiveIn && !effectiveOut) {
+  if (!usageIn && !effectiveOut) {
     return null;
   }
 
   const base = label || 'Request Token Usage';
-  const showBoth = !!effectiveIn && !!effectiveOut;
+  const showBoth = !!usageIn && !!effectiveOut;
   const inLabel = showBoth ? `${base} (Input):` : `${base}:`;
 
   return (
@@ -302,7 +301,7 @@ export function TokenUsageDetail({
       </PopoverTrigger>
       <PopoverContent align="start" className="w-auto max-w-[340px]">
         <div className="flex flex-col gap-1">
-          {effectiveIn && <UsageSection usage={effectiveIn} label={inLabel} />}
+          {usageIn && <UsageSection usage={usageIn} label={inLabel} />}
           {effectiveOut && (
             <UsageSection usage={effectiveOut} label={`${base} (Output):`} />
           )}

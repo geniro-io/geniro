@@ -3,15 +3,12 @@
   "compilerOptions": {
     "outDir": "./dist",
     "rootDir": "./",
-    "plugins": [
-      { "transform": "@packages/http-server/swagger-plugin.js" },
-    ]
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "verbatimModuleSyntax": false
   },
   "include": [
     "src/**/*",
-    "cypress/**/*",
-  ],
-  "ts-node": {
-    "compiler": "ts-patch/compiler"
-  }
+    "cypress/**/*"
+  ]
 }
