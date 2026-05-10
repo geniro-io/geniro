@@ -57,6 +57,8 @@ pnpm lint                             # Lint without fixing (to see remaining is
 
 **⚠️ CRITICAL**: Always use the `pnpm run` / `pnpm` package.json scripts to run tests. Never call test runners directly (e.g. `vitest`, `npx vitest`).
 
+**⚠️ Docker must be running for integration tests.** The integration setup boots ephemeral Postgres/Redis/Qdrant testcontainers, which require a working Docker daemon. If Docker is not running, `pnpm test:integration` fails immediately at container boot. Start Docker (`systemctl start docker` / Docker Desktop) before running integration or E2E tests. Unit tests (`pnpm test:unit`) do not need Docker.
+
 ```bash
 # ✅ CORRECT — always use package.json scripts
 pnpm test:unit                        # Vitest unit tests (*.spec.ts) — mandatory
