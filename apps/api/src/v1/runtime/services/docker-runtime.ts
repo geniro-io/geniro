@@ -558,6 +558,16 @@ export class DockerRuntime extends BaseRuntime {
         },
       });
     } catch (error) {
+      // Race: parallel runtimes/test workers can list-empty then both call
+      // createNetwork. The loser gets HTTP 409 "already exists" — the network
+      // now exists, which is the post-condition we wanted, so accept it.
+      const errorMessage = extractErrorMessage(error);
+      if (
+        errorMessage.includes('already exists') ||
+        errorMessage.includes('409')
+      ) {
+        return;
+      }
       throw new Error(`Failed to create network ${networkName}: ${error}`, {
         cause: error,
       });
