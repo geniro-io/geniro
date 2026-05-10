@@ -136,3 +136,76 @@ describe('DockerRuntime (sessions)', () => {
     expect(result).toEqual(mockResult);
   });
 });
+
+describe('DockerRuntime (ensureNetwork)', () => {
+  type EnsureNetwork = (networkName: string) => Promise<void>;
+
+  const buildRuntime = (
+    listNetworks: ReturnType<typeof vi.fn>,
+    createNetwork: ReturnType<typeof vi.fn>,
+  ) => {
+    const runtime = new DockerRuntime({} as never);
+    (
+      runtime as unknown as {
+        docker: { listNetworks: unknown; createNetwork: unknown };
+      }
+    ).docker = {
+      listNetworks,
+      createNetwork,
+    };
+    return runtime as unknown as { ensureNetwork: EnsureNetwork };
+  };
+
+  it('returns early when the network already exists in the list result', async () => {
+    const listNetworks = vi.fn().mockResolvedValue([{ Id: 'n1' }]);
+    const createNetwork = vi.fn();
+    const runtime = buildRuntime(listNetworks, createNetwork);
+
+    await expect(
+      runtime.ensureNetwork('geniro-runtime'),
+    ).resolves.toBeUndefined();
+    expect(createNetwork).not.toHaveBeenCalled();
+  });
+
+  it('creates the network when listNetworks returns empty', async () => {
+    const listNetworks = vi.fn().mockResolvedValue([]);
+    const createNetwork = vi.fn().mockResolvedValue(undefined);
+    const runtime = buildRuntime(listNetworks, createNetwork);
+
+    await runtime.ensureNetwork('geniro-runtime');
+
+    expect(createNetwork).toHaveBeenCalledWith(
+      expect.objectContaining({ Name: 'geniro-runtime', Driver: 'bridge' }),
+    );
+  });
+
+  it('treats the 409 "already exists" race as success', async () => {
+    const listNetworks = vi.fn().mockResolvedValue([]);
+    const createNetwork = vi
+      .fn()
+      .mockRejectedValue(
+        new Error(
+          '(HTTP code 409) unexpected - network with name geniro-runtime already exists',
+        ),
+      );
+    const runtime = buildRuntime(listNetworks, createNetwork);
+
+    await expect(
+      runtime.ensureNetwork('geniro-runtime'),
+    ).resolves.toBeUndefined();
+  });
+
+  it('rethrows non-conflict createNetwork errors with the wrapped message', async () => {
+    const listNetworks = vi.fn().mockResolvedValue([]);
+    const createNetwork = vi
+      .fn()
+      .mockRejectedValue(
+        new Error('connect ECONNREFUSED /var/run/docker.sock'),
+      );
+    const runtime = buildRuntime(listNetworks, createNetwork);
+
+    await expect(runtime.ensureNetwork('geniro-runtime')).rejects.toThrow(
+      /Failed to create network geniro-runtime/,
+    );
+  });
+});
