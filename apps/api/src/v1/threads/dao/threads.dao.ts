@@ -76,47 +76,48 @@ export class ThreadsDao extends BaseDao<ThreadEntity> {
         >
       >,
   ): Promise<ThreadEntity> {
-    const sql = `INSERT INTO threads (
-      created_by, project_id, graph_id, external_thread_id,
-      status, last_run_id, source, metadata,
-      running_started_at, total_running_ms
-    )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?)
-    ON CONFLICT (external_thread_id) DO UPDATE SET
-      status = EXCLUDED.status,
-      last_run_id = COALESCE(EXCLUDED.last_run_id, threads.last_run_id),
-      updated_at = now(),
-      running_started_at = CASE WHEN threads.status = ?
-        THEN threads.running_started_at
-        ELSE EXCLUDED.running_started_at
-      END,
-      total_running_ms = threads.total_running_ms
-    RETURNING *`;
+    // Entity-shaped insert payload. MikroORM handles JSONB serialization,
+    // camelCase→snake_case column mapping, and entity hydration via RETURNING.
+    // createdAt/updatedAt have DB-level `defaultRaw: 'now()'`, but
+    // RequiredEntityData lists them as required (entity-init type doesn't carry
+    // the default through) — pass `new Date()` explicitly to satisfy the type.
+    const now = new Date();
+    const result = await this.em
+      .createQueryBuilder(ThreadEntity)
+      .insert({
+        createdBy: data.createdBy,
+        projectId: data.projectId,
+        graphId: data.graphId,
+        externalThreadId: data.externalThreadId,
+        status: data.status,
+        lastRunId: data.lastRunId ?? undefined,
+        source: data.source ?? undefined,
+        metadata: data.metadata ?? undefined,
+        runningStartedAt: data.runningStartedAt ?? null,
+        totalRunningMs: data.totalRunningMs ?? 0,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .onConflict('externalThreadId')
+      .merge({
+        status: raw('EXCLUDED.status'),
+        lastRunId: raw('COALESCE(EXCLUDED.last_run_id, threads.last_run_id)'),
+        updatedAt: raw('now()'),
+        runningStartedAt: raw(
+          `CASE WHEN threads.status = ? THEN threads.running_started_at ELSE EXCLUDED.running_started_at END`,
+          [ThreadStatus.Running],
+        ),
+        totalRunningMs: raw('threads.total_running_ms'),
+      })
+      .returning('*')
+      .execute<Record<string, unknown> | undefined>('get');
 
-    const params = [
-      data.createdBy,
-      data.projectId,
-      data.graphId,
-      data.externalThreadId,
-      data.status,
-      data.lastRunId ?? null,
-      data.source ?? null,
-      data.metadata != null ? JSON.stringify(data.metadata) : null,
-      data.runningStartedAt ?? null,
-      data.totalRunningMs ?? 0,
-      ThreadStatus.Running,
-    ];
-
-    const rows = await this.em
-      .getConnection()
-      .execute<Record<string, unknown>[]>(sql, params);
-    const row = rows[0];
-    if (!row) {
+    if (!result) {
       throw new Error(
         `upsertByExternalThreadId returned no row for externalThreadId=${data.externalThreadId}`,
       );
     }
-    return this.em.map(ThreadEntity, row);
+    return this.em.map(ThreadEntity, result);
   }
 
   /**
