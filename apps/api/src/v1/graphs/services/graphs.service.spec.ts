@@ -221,7 +221,6 @@ describe('GraphsService', () => {
             create: vi.fn(),
             upsertByExternalThreadId: vi.fn(),
             updateById: vi.fn(),
-            updateStatusWithAccumulator: vi.fn(),
             deleteById: vi.fn(),
             hardDelete: vi.fn(),
             countByGraphIds: vi.fn(),
@@ -329,11 +328,16 @@ describe('GraphsService', () => {
         {
           provide: ThreadStatusTransitionService,
           useValue: {
-            computeTransition: vi.fn().mockReturnValue({
-              status: ThreadStatus.Stopped,
-              runningStartedAt: null,
-              totalRunningMs: 0,
-            }),
+            computeTransition: vi
+              .fn()
+              .mockImplementation(
+                (_thread: unknown, nextStatus: ThreadStatus) => ({
+                  status: nextStatus,
+                  runningStartedAt:
+                    nextStatus === ThreadStatus.Running ? new Date() : null,
+                  totalRunningMs: 0,
+                }),
+              ),
           },
         },
       ],
@@ -370,9 +374,6 @@ describe('GraphsService', () => {
     vi.mocked(threadsDao.create).mockResolvedValue({} as any);
     vi.mocked(threadsDao.getAll).mockResolvedValue([]);
     vi.mocked(threadsDao.updateById).mockResolvedValue(0 as never);
-    vi.mocked(threadsDao.updateStatusWithAccumulator).mockResolvedValue(
-      {} as any,
-    );
     vi.mocked(threadsDao.deleteById).mockResolvedValue(undefined);
     vi.mocked(threadsDao.hardDelete).mockResolvedValue(undefined);
     vi.mocked(threadsDao.countByGraphIds).mockResolvedValue(new Map());
@@ -1672,11 +1673,12 @@ describe('GraphsService', () => {
       const runningThread = {
         id: 'thread-1',
         externalThreadId: 'external-1',
+        status: ThreadStatus.Running,
+        runningStartedAt: new Date('2026-05-01T00:00:00Z'),
+        totalRunningMs: 0,
       } as any;
       vi.mocked(threadsDao.getAll).mockResolvedValue([runningThread]);
-      vi.mocked(threadsDao.updateStatusWithAccumulator).mockResolvedValue(
-        {} as any,
-      );
+      vi.mocked(threadsDao.updateById).mockResolvedValue(1 as never);
 
       await expect(service.run(mockCtx, mockGraphId)).rejects.toThrow(
         'Compilation failed',
@@ -1686,23 +1688,21 @@ describe('GraphsService', () => {
         graphId: mockGraphId,
         status: { $in: [ThreadStatus.Running, ThreadStatus.Waiting] },
       });
-      expect(threadsDao.updateStatusWithAccumulator).toHaveBeenCalledWith(
-        runningThread,
-        ThreadStatus.Stopped,
-        expect.any(Object),
+      expect(threadsDao.updateById).toHaveBeenCalledWith(
+        runningThread.id,
+        expect.objectContaining({ status: ThreadStatus.Stopped }),
       );
-      // ThreadUpdate(Stooped) is emitted by GraphStateManager, not GraphsService.
+      // ThreadUpdate(Stopped) is emitted by GraphStateManager, not GraphsService.
     });
 
     it('logs an error for each thread that fails to stop when graph fails to start', async () => {
       // When compile() rejects, run() invokes stopRunningThreads() to clean up
       // any Running/Waiting threads for the graph. That helper uses
-      // Promise.allSettled over per-thread updateStatusWithAccumulator calls.
+      // Promise.allSettled over per-thread computeTransition + updateById calls.
       // Per-thread DB failures must be logged so an operator can find them in
       // logs; otherwise the failed threads stay Running/Waiting forever with
       // no trace and only the overall graph "Compilation failed" error is
-      // surfaced. Today the implementation calls Promise.allSettled but never
-      // inspects rejected results, so this assertion fails on current code.
+      // surfaced.
       const graph = createMockGraphEntity({ status: GraphStatus.Created });
       const compilationError = new Error('Compilation failed');
 
@@ -1716,14 +1716,23 @@ describe('GraphsService', () => {
       const threadA = {
         id: 'thread-a',
         externalThreadId: 'external-a',
+        status: ThreadStatus.Running,
+        runningStartedAt: new Date('2026-05-01T00:00:00Z'),
+        totalRunningMs: 0,
       } as any;
       const threadB = {
         id: 'thread-b',
         externalThreadId: 'external-b',
+        status: ThreadStatus.Running,
+        runningStartedAt: new Date('2026-05-01T00:00:00Z'),
+        totalRunningMs: 0,
       } as any;
       const threadC = {
         id: 'thread-c',
         externalThreadId: 'external-c',
+        status: ThreadStatus.Running,
+        runningStartedAt: new Date('2026-05-01T00:00:00Z'),
+        totalRunningMs: 0,
       } as any;
       vi.mocked(threadsDao.getAll).mockResolvedValue([
         threadA,
@@ -1732,9 +1741,9 @@ describe('GraphsService', () => {
       ]);
 
       const dbFailure = new Error('DB write failed for thread-b');
-      vi.mocked(threadsDao.updateStatusWithAccumulator).mockImplementation(
-        async (thread: any) => {
-          if (thread.id === 'thread-b') {
+      vi.mocked(threadsDao.updateById).mockImplementation(
+        async (threadId: string) => {
+          if (threadId === 'thread-b') {
             throw dbFailure;
           }
           return 1 as any;
@@ -1747,21 +1756,18 @@ describe('GraphsService', () => {
 
       // All three threads must be ATTEMPTED — partial failures must not short-
       // circuit. Without Promise.allSettled this would skip thread-c.
-      expect(threadsDao.updateStatusWithAccumulator).toHaveBeenCalledTimes(3);
-      expect(threadsDao.updateStatusWithAccumulator).toHaveBeenCalledWith(
-        threadA,
-        ThreadStatus.Stopped,
-        expect.any(Object),
+      expect(threadsDao.updateById).toHaveBeenCalledTimes(3);
+      expect(threadsDao.updateById).toHaveBeenCalledWith(
+        threadA.id,
+        expect.objectContaining({ status: ThreadStatus.Stopped }),
       );
-      expect(threadsDao.updateStatusWithAccumulator).toHaveBeenCalledWith(
-        threadB,
-        ThreadStatus.Stopped,
-        expect.any(Object),
+      expect(threadsDao.updateById).toHaveBeenCalledWith(
+        threadB.id,
+        expect.objectContaining({ status: ThreadStatus.Stopped }),
       );
-      expect(threadsDao.updateStatusWithAccumulator).toHaveBeenCalledWith(
-        threadC,
-        ThreadStatus.Stopped,
-        expect.any(Object),
+      expect(threadsDao.updateById).toHaveBeenCalledWith(
+        threadC.id,
+        expect.objectContaining({ status: ThreadStatus.Stopped }),
       );
 
       // The rejection reason for thread-b must be surfaced via logger.error so
@@ -1769,7 +1775,11 @@ describe('GraphsService', () => {
       // line never executes, so the test fails on current code.
       const errorMock = vi.mocked(logger.error);
       const sawRejectionInLogger = errorMock.mock.calls.some((call) =>
-        call.some((arg) => arg === dbFailure || (arg instanceof Error && arg.message === dbFailure.message)),
+        call.some(
+          (arg) =>
+            arg === dbFailure ||
+            (arg instanceof Error && arg.message === dbFailure.message),
+        ),
       );
       expect(sawRejectionInLogger).toBe(true);
     });
@@ -1936,6 +1946,8 @@ describe('GraphsService', () => {
         graphId: mockGraphId,
         status: ThreadStatus.Running,
         externalThreadId: 'ext-thread-1',
+        runningStartedAt: new Date('2026-05-01T00:00:00Z'),
+        totalRunningMs: 0,
       };
 
       vi.mocked(graphDao.getOne)
@@ -1944,9 +1956,7 @@ describe('GraphsService', () => {
       vi.mocked(graphRegistry.get).mockReturnValue(compiledGraph);
       vi.mocked(graphRegistry.destroy).mockResolvedValue(undefined);
       vi.mocked(threadsDao.getAll).mockResolvedValue([runningThread as never]);
-      vi.mocked(threadsDao.updateStatusWithAccumulator).mockResolvedValue(
-        undefined as never,
-      );
+      vi.mocked(threadsDao.updateById).mockResolvedValue(1 as never);
       vi.mocked(graphDao.updateById).mockResolvedValue(undefined as never);
 
       await service.destroy(mockCtx, mockGraphId);
@@ -1955,10 +1965,9 @@ describe('GraphsService', () => {
         graphId: mockGraphId,
         status: { $in: [ThreadStatus.Running, ThreadStatus.Waiting] },
       });
-      expect(threadsDao.updateStatusWithAccumulator).toHaveBeenCalledWith(
-        runningThread,
-        ThreadStatus.Stopped,
-        expect.any(Object),
+      expect(threadsDao.updateById).toHaveBeenCalledWith(
+        runningThread.id,
+        expect.objectContaining({ status: ThreadStatus.Stopped }),
       );
     });
 
@@ -2579,27 +2588,20 @@ describe('GraphsService', () => {
           'waiting-thread-id',
         );
 
-        // Waiting→Running must go through updateStatusWithAccumulator so that
-        // runningStartedAt is set atomically — no stale-drift window.
-        // metadata is passed as the 5th additionalFields arg (one DB call, not two).
-        expect(threadsDao.updateStatusWithAccumulator).toHaveBeenCalledWith(
-          waitingThread,
-          ThreadStatus.Running,
-          transitionService,
-          expect.anything(), // transactional em
+        // Waiting→Running must go through computeTransition + updateById so that
+        // runningStartedAt is set atomically alongside status — no stale-drift
+        // window. metadata is merged in the same updateById call (one DB round trip).
+        expect(threadsDao.updateById).toHaveBeenCalledWith(
+          waitingThread.id,
           expect.objectContaining({
+            status: ThreadStatus.Running,
             metadata: expect.objectContaining({
               customField: 'preserved',
               effectiveCostLimitUsd: null,
             }),
           }),
+          expect.anything(), // transactional em
         );
-
-        // No separate updateById call for metadata on the Waiting→Running path.
-        const updateCallForWaiting = vi
-          .mocked(threadsDao.updateById)
-          .mock.calls.find(([id]) => id === 'waiting-thread-id');
-        expect(updateCallForWaiting).toBeUndefined();
       });
 
       it('eager-create runningStartedAt is captured before invokeAgent (regression for clock-undercount)', async () => {

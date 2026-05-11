@@ -91,15 +91,33 @@ export class GraphRestorationService {
       }
 
       // token usage is in checkpoint state only — no need to read it here
-      await Promise.allSettled(
-        runningThreads.map((thread) =>
-          this.threadsDao.updateStatusWithAccumulator(
+      const results = await Promise.allSettled(
+        runningThreads.map((thread) => {
+          const patch = this.transitionService.computeTransition(
             thread,
             ThreadStatus.Stopped,
-            this.transitionService,
-          ),
-        ),
+          );
+          return this.threadsDao.updateById(thread.id, patch);
+        }),
       );
+      for (const [idx, result] of results.entries()) {
+        if (result.status === 'rejected') {
+          const thread = runningThreads[idx]!;
+          const reason =
+            result.reason instanceof Error
+              ? result.reason
+              : new Error(String(result.reason));
+          this.logger.error(
+            reason,
+            'Failed to stop interrupted thread during boot recovery',
+            {
+              threadId: thread.id,
+              externalThreadId: thread.externalThreadId,
+              graphId,
+            },
+          );
+        }
+      }
     } catch (error) {
       this.logger.error(
         error instanceof Error ? error : new Error(String(error)),

@@ -31,6 +31,7 @@ describe('GraphRestorationService', () => {
   let threadsDao: any;
   let graphCheckpointsDao: any;
   let graphsService: any;
+  let transitionService: ThreadStatusTransitionService;
 
   const mockGraphDaoLists = (statusGraphs: GraphEntity[] = []) => {
     vi.mocked(graphDao.getAll).mockResolvedValueOnce(statusGraphs);
@@ -109,7 +110,6 @@ describe('GraphRestorationService', () => {
     const mockThreadsDao = {
       getAll: vi.fn(),
       updateById: vi.fn(),
-      updateStatusWithAccumulator: vi.fn(),
     };
 
     const mockGraphCheckpointsDao = {
@@ -195,6 +195,7 @@ describe('GraphRestorationService', () => {
     threadsDao = module.get(ThreadsDao);
     graphCheckpointsDao = module.get(GraphCheckpointsDao);
     graphsService = mockGraphsService;
+    transitionService = module.get(ThreadStatusTransitionService);
 
     vi.mocked(graphCheckpointsDao.getAll).mockResolvedValue([]);
     vi.mocked(graphsService.run).mockReset();
@@ -416,9 +417,7 @@ describe('GraphRestorationService', () => {
         status: GraphStatus.Running,
       } as any);
       vi.mocked(threadsDao.getAll).mockResolvedValue([mockThread]);
-      vi.mocked(threadsDao.updateStatusWithAccumulator).mockResolvedValue(
-        mockThread as any,
-      );
+      vi.mocked(threadsDao.updateById).mockResolvedValue(1 as any);
 
       // Act
       await service.restoreRunningGraphs();
@@ -432,10 +431,9 @@ describe('GraphRestorationService', () => {
         graphId: 'test-graph-id',
         status: { $in: [ThreadStatus.Running, ThreadStatus.Waiting] },
       });
-      expect(threadsDao.updateStatusWithAccumulator).toHaveBeenCalledWith(
-        mockThread,
-        ThreadStatus.Stopped,
-        expect.any(Object),
+      expect(threadsDao.updateById).toHaveBeenCalledWith(
+        mockThread.id,
+        expect.objectContaining({ status: ThreadStatus.Stopped }),
       );
     });
 
@@ -463,7 +461,7 @@ describe('GraphRestorationService', () => {
         graphId: 'test-graph-id',
         status: { $in: [ThreadStatus.Running, ThreadStatus.Waiting] },
       });
-      expect(threadsDao.updateStatusWithAccumulator).not.toHaveBeenCalled();
+      expect(threadsDao.updateById).not.toHaveBeenCalled();
     });
 
     it('recovers Waiting threads stuck after restart', async () => {
@@ -490,9 +488,14 @@ describe('GraphRestorationService', () => {
         status: GraphStatus.Running,
       } as any);
       vi.mocked(threadsDao.getAll).mockResolvedValue([waitingThread]);
-      vi.mocked(threadsDao.updateStatusWithAccumulator).mockResolvedValue(
-        waitingThread as any,
-      );
+      vi.mocked(threadsDao.updateById).mockResolvedValue(1 as any);
+      // Override computeTransition for this test to return a non-zero totalRunningMs
+      // so we can assert that the value is forwarded into the DB patch (not silently dropped).
+      vi.mocked(transitionService.computeTransition).mockReturnValueOnce({
+        status: ThreadStatus.Stopped,
+        runningStartedAt: null,
+        totalRunningMs: 12345,
+      });
 
       // Act — must not throw even though runningStartedAt is null
       await expect(service.restoreRunningGraphs()).resolves.not.toThrow();
@@ -502,10 +505,12 @@ describe('GraphRestorationService', () => {
         graphId: 'test-graph-id',
         status: { $in: [ThreadStatus.Running, ThreadStatus.Waiting] },
       });
-      expect(threadsDao.updateStatusWithAccumulator).toHaveBeenCalledWith(
-        waitingThread,
-        ThreadStatus.Stopped,
-        expect.any(Object),
+      expect(threadsDao.updateById).toHaveBeenCalledWith(
+        waitingThread.id,
+        expect.objectContaining({
+          status: ThreadStatus.Stopped,
+          totalRunningMs: 12345,
+        }),
       );
     });
 
@@ -543,24 +548,20 @@ describe('GraphRestorationService', () => {
         mockThread1,
         mockThread2,
       ]);
-      vi.mocked(threadsDao.updateStatusWithAccumulator).mockResolvedValue(
-        mockThread1 as any,
-      );
+      vi.mocked(threadsDao.updateById).mockResolvedValue(1 as any);
 
       // Act
       await service.restoreRunningGraphs();
 
       // Assert
-      expect(threadsDao.updateStatusWithAccumulator).toHaveBeenCalledTimes(2);
-      expect(threadsDao.updateStatusWithAccumulator).toHaveBeenCalledWith(
-        mockThread1,
-        ThreadStatus.Stopped,
-        expect.any(Object),
+      expect(threadsDao.updateById).toHaveBeenCalledTimes(2);
+      expect(threadsDao.updateById).toHaveBeenCalledWith(
+        mockThread1.id,
+        expect.objectContaining({ status: ThreadStatus.Stopped }),
       );
-      expect(threadsDao.updateStatusWithAccumulator).toHaveBeenCalledWith(
-        mockThread2,
-        ThreadStatus.Stopped,
-        expect.any(Object),
+      expect(threadsDao.updateById).toHaveBeenCalledWith(
+        mockThread2.id,
+        expect.objectContaining({ status: ThreadStatus.Stopped }),
       );
     });
 
@@ -585,29 +586,28 @@ describe('GraphRestorationService', () => {
         status: GraphStatus.Running,
       } as any);
       vi.mocked(threadsDao.getAll).mockResolvedValue([mockThread]);
-      vi.mocked(threadsDao.updateStatusWithAccumulator).mockRejectedValue(
+      vi.mocked(threadsDao.updateById).mockRejectedValue(
         new Error('Database error'),
       );
 
       // Act & Assert - should not throw, but handle error gracefully
       await expect(service.restoreRunningGraphs()).resolves.not.toThrow();
-      expect(threadsDao.updateStatusWithAccumulator).toHaveBeenCalledWith(
-        mockThread,
-        ThreadStatus.Stopped,
-        expect.any(Object),
+      expect(threadsDao.updateById).toHaveBeenCalledWith(
+        mockThread.id,
+        expect.objectContaining({ status: ThreadStatus.Stopped }),
       );
     });
 
     it('logs an error for each interrupted thread that fails to stop during boot recovery', async () => {
       // G7 boot-recovery path: stopInterruptedThreads uses Promise.allSettled
-      // over per-thread updateStatusWithAccumulator calls. Per-thread DB
-      // failures must be surfaced via logger.error so the operator can find
-      // the stuck threads — otherwise interrupted threads stay Running/Waiting
-      // forever after a server restart with no trace in the logs.
+      // over per-thread updateById calls. Per-thread DB failures must be
+      // surfaced via logger.error so the operator can find the stuck threads —
+      // otherwise interrupted threads stay Running/Waiting forever after a
+      // server restart with no trace in the logs.
       // The outer try/catch in stopInterruptedThreads CANNOT catch these
       // because Promise.allSettled never rejects; it always resolves with a
-      // results array. This test fails today because no per-rejection logging
-      // exists inside the loop.
+      // results array. The loop after Promise.allSettled checks each result
+      // and logs rejected entries.
       const mockLogger = (service as any).logger as {
         error: ReturnType<typeof vi.fn>;
       };
@@ -641,9 +641,9 @@ describe('GraphRestorationService', () => {
       vi.mocked(threadsDao.getAll).mockResolvedValue([threadA, threadB]);
 
       const failureForB = new Error('DB write failed for thread-uuid-b');
-      vi.mocked(threadsDao.updateStatusWithAccumulator).mockImplementation(
-        async (thread: any) => {
-          if (thread.id === 'thread-uuid-b') {
+      vi.mocked(threadsDao.updateById).mockImplementation(
+        async (threadId: string) => {
+          if (threadId === 'thread-uuid-b') {
             throw failureForB;
           }
           return 1 as any;
@@ -654,11 +654,9 @@ describe('GraphRestorationService', () => {
       await expect(service.restoreRunningGraphs()).resolves.not.toThrow();
 
       // Both threads attempted (partial failure must not short-circuit)
-      expect(threadsDao.updateStatusWithAccumulator).toHaveBeenCalledTimes(2);
+      expect(threadsDao.updateById).toHaveBeenCalledTimes(2);
 
       // The DB error for thread-uuid-b must be surfaced via logger.error.
-      // Today the code never reads results from Promise.allSettled, so this
-      // assertion fails on current code.
       const errorMock = vi.mocked(mockLogger.error);
       const sawRejectionInLogger = errorMock.mock.calls.some((call) =>
         call.some(

@@ -40,7 +40,7 @@ export function useLiveThreadDuration(args: {
   }, [isRunning, validStartedAt]);
 
   if (isRunning && validStartedAt) {
-    return (totalRunningMs ?? 0) + (nowMs - startedAtMs);
+    return (totalRunningMs ?? 0) + Math.max(0, nowMs - startedAtMs);
   }
 
   return totalRunningMs ?? 0;

@@ -31,7 +31,6 @@ const mockThreadsDao = {
   getById: vi.fn(),
   getAll: vi.fn().mockResolvedValue([]),
   updateById: vi.fn().mockResolvedValue(1),
-  updateStatusWithAccumulator: vi.fn().mockResolvedValue(1),
 };
 
 const mockTransitionService = {
@@ -112,6 +111,13 @@ describe('ThreadResumeService', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockTransitionService.computeTransition.mockImplementation(
+      (_thread: unknown, nextStatus: ThreadStatus) => ({
+        status: nextStatus,
+        runningStartedAt: null,
+        totalRunningMs: 0,
+      }),
+    );
     service = new ThreadResumeService(
       mockQueueService as unknown as ThreadResumeQueueService,
       mockThreadsDao as unknown as ThreadsDao,
@@ -219,12 +225,16 @@ describe('ThreadResumeService', () => {
       });
 
       // Thread status updated to Running and wait metadata cleared in a single write
-      expect(mockThreadsDao.updateStatusWithAccumulator).toHaveBeenCalledWith(
+      expect(mockTransitionService.computeTransition).toHaveBeenCalledWith(
         thread,
         ThreadStatus.Running,
-        mockTransitionService,
-        undefined,
-        { metadata: expect.objectContaining({}) },
+      );
+      expect(mockThreadsDao.updateById).toHaveBeenCalledWith(
+        thread.id,
+        expect.objectContaining({
+          status: ThreadStatus.Running,
+          metadata: expect.objectContaining({}),
+        }),
       );
 
       // Agent was invoked
@@ -327,18 +337,19 @@ describe('ThreadResumeService', () => {
         error,
       );
 
-      expect(mockThreadsDao.updateStatusWithAccumulator).toHaveBeenCalledWith(
+      expect(mockTransitionService.computeTransition).toHaveBeenCalledWith(
         thread,
         ThreadStatus.Stopped,
-        mockTransitionService,
-        undefined,
-        {
+      );
+      expect(mockThreadsDao.updateById).toHaveBeenCalledWith(
+        thread.id,
+        expect.objectContaining({
+          status: ThreadStatus.Stopped,
           metadata: expect.objectContaining({
             resumeError: 'resume failed',
           }),
-        },
+        }),
       );
-      expect(mockThreadsDao.updateById).not.toHaveBeenCalled();
 
       expect(mockNotificationsService.emit).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -366,7 +377,7 @@ describe('ThreadResumeService', () => {
         error,
       );
 
-      expect(mockThreadsDao.updateStatusWithAccumulator).not.toHaveBeenCalled();
+      expect(mockTransitionService.computeTransition).not.toHaveBeenCalled();
       expect(mockThreadsDao.updateById).toHaveBeenCalledWith(
         'thread-1',
         expect.objectContaining({
@@ -522,14 +533,17 @@ describe('ThreadResumeService', () => {
       await service.cancelWait('thread-1');
 
       expect(mockQueueService.cancelResumeJob).toHaveBeenCalledWith('thread-1');
-      expect(mockThreadsDao.updateStatusWithAccumulator).toHaveBeenCalledWith(
+      expect(mockTransitionService.computeTransition).toHaveBeenCalledWith(
         thread,
         ThreadStatus.Stopped,
-        mockTransitionService,
-        undefined,
-        { metadata: expect.objectContaining({}) },
       );
-      expect(mockThreadsDao.updateById).not.toHaveBeenCalled();
+      expect(mockThreadsDao.updateById).toHaveBeenCalledWith(
+        thread.id,
+        expect.objectContaining({
+          status: ThreadStatus.Stopped,
+          metadata: expect.objectContaining({}),
+        }),
+      );
       expect(mockNotificationsService.emit).toHaveBeenCalledWith(
         expect.objectContaining({
           type: NotificationEvent.ThreadUpdate,

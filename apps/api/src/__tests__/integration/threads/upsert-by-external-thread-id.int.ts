@@ -102,7 +102,7 @@ describe('ThreadsDao.upsertByExternalThreadId — ON CONFLICT semantics', () => 
     createdBy: TEST_USER_ID,
     projectId: testProjectId,
     externalThreadId: overrides.externalThreadId,
-    status: ThreadStatus.Running,
+    status: ThreadStatus.Running as typeof ThreadStatus.Running,
     runningStartedAt: overrides.runningStartedAt,
     totalRunningMs: overrides.totalRunningMs ?? 0,
     ...(overrides.source !== undefined ? { source: overrides.source } : {}),
@@ -155,6 +155,10 @@ describe('ThreadsDao.upsertByExternalThreadId — ON CONFLICT semantics', () => 
         }),
       );
       createdThreadIds.push(inserted.id);
+
+      // Clear the identity map so the second upsert goes to the DB (not cache),
+      // mirroring production where each request uses an independent EM context.
+      orm.em.clear();
 
       // Re-upsert while already Running with a fresh "now"
       const newNow = new Date('2026-04-01T10:05:00.000Z');
@@ -270,7 +274,7 @@ describe('ThreadsDao.upsertByExternalThreadId — ON CONFLICT semantics', () => 
       // verbatim). That row violates the invariant that out-of-Running
       // statuses MUST have runningStartedAt=null AND the elapsed delta folded
       // into totalRunningMs (the contract that ThreadStatusTransitionService
-      // upholds for the proper code path via updateStatusWithAccumulator).
+      // upholds for the proper code path via computeTransition + updateById).
       //
       // Either the DAO must REJECT non-Running upserts at the type / runtime
       // boundary, OR the SQL CASE must be widened so a Running→Done upsert
@@ -315,7 +319,9 @@ describe('ThreadsDao.upsertByExternalThreadId — ON CONFLICT semantics', () => 
           createdBy: TEST_USER_ID,
           projectId: testProjectId,
           externalThreadId,
-          status: ThreadStatus.Done,
+          // Intentionally passing a non-Running status to verify the runtime guard.
+          // The DAO type requires status=Running; cast to bypass compile-time check.
+          status: ThreadStatus.Done as typeof ThreadStatus.Running,
           runningStartedAt: new Date('2026-04-01T10:05:00.000Z'),
           totalRunningMs: 0,
         });
@@ -341,8 +347,12 @@ describe('ThreadsDao.upsertByExternalThreadId — ON CONFLICT semantics', () => 
       // assertions below fail on current code.
       expect(upserted).not.toBeNull();
       expect(upserted!.runningStartedAt).toBeNull();
+      // The elapsed delta (≥5_000ms seeded) must be folded into totalRunningMs
+      // so the accumulator is not lost when the row transitions out of Running.
+      expect(Number(upserted!.totalRunningMs)).toBeGreaterThanOrEqual(5_000);
       const reloaded = await reload(inserted.id);
       expect(reloaded.runningStartedAt).toBeNull();
+      expect(Number(reloaded.totalRunningMs)).toBeGreaterThanOrEqual(5_000);
     },
   );
 

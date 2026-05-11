@@ -102,7 +102,6 @@ describe('ThreadsService', () => {
             getById: vi.fn(),
             create: vi.fn(),
             updateById: vi.fn(),
-            updateStatusWithAccumulator: vi.fn(),
             deleteById: vi.fn(),
           },
         },
@@ -574,21 +573,10 @@ describe('ThreadsService', () => {
 
       await service.getThreadById(mockCtx, mockThreadId);
 
-      const warnCalls = mockLogger.warn.mock.calls;
-      const sawInverseWarning = warnCalls.some((call) => {
-        const firstArg = call[0];
-        if (typeof firstArg !== 'string') {
-          return false;
-        }
-        const text = firstArg.toLowerCase();
-        return (
-          text.includes('running') &&
-          (text.includes('null runningstartedat') ||
-            text.includes('running thread has null') ||
-            (text.includes('runningstartedat') && text.includes('null')))
-        );
-      });
-      expect(sawInverseWarning).toBe(true);
+      expect(mockLogger.warn).toHaveBeenCalledWith(
+        expect.stringMatching(/running.*runningstartedat/i),
+        expect.objectContaining({ threadId: mockThreadId }),
+      );
     });
   });
 
@@ -2829,7 +2817,7 @@ describe('ThreadsService', () => {
         'Graph execution was stopped',
       );
       // When stopped via event chain, no direct DB update or notification emit
-      expect(threadsDao.updateStatusWithAccumulator).not.toHaveBeenCalled();
+      expect(transitionService.computeTransition).not.toHaveBeenCalled();
       expect(notificationsService.emit).not.toHaveBeenCalled();
       expect(result).toMatchObject({
         id: mockThreadId,
@@ -2845,22 +2833,25 @@ describe('ThreadsService', () => {
 
       vi.mocked(threadsDao.getOne).mockResolvedValue(thread);
       vi.mocked(graphsService.stopThreadExecution).mockResolvedValue(false);
-      vi.mocked(threadsDao.updateStatusWithAccumulator).mockResolvedValue(
-        1 as never,
-      );
+      vi.mocked(transitionService.computeTransition).mockReturnValue({
+        status: ThreadStatus.Stopped,
+        runningStartedAt: null,
+        totalRunningMs: 0,
+      });
+      vi.mocked(threadsDao.updateById).mockResolvedValue(1);
       vi.mocked(threadsDao.getById).mockResolvedValue(updatedThread);
 
       const result = await service.stopThread(mockCtx, mockThreadId);
 
-      // The direct-DB fallback uses the accumulator helper and also clears
-      // stale cost-limit metadata so a manual stop after an auto-stop doesn't
-      // leave a stale stopReason.
-      expect(threadsDao.updateStatusWithAccumulator).toHaveBeenCalledWith(
-        thread,
-        ThreadStatus.Stopped,
-        transitionService,
-        undefined,
-        { metadata: expect.any(Object) },
+      // The direct-DB fallback uses computeTransition + updateById and also
+      // clears stale cost-limit metadata so a manual stop after an auto-stop
+      // doesn't leave a stale stopReason.
+      expect(threadsDao.updateById).toHaveBeenCalledWith(
+        thread.id,
+        expect.objectContaining({
+          status: ThreadStatus.Stopped,
+          metadata: expect.any(Object),
+        }),
       );
       expect(notificationsService.emit).toHaveBeenCalledWith({
         type: NotificationEvent.ThreadUpdate,
@@ -2889,19 +2880,22 @@ describe('ThreadsService', () => {
       vi.mocked(graphsService.stopThreadExecution).mockRejectedValue(
         new Error('Graph runtime error'),
       );
-      vi.mocked(threadsDao.updateStatusWithAccumulator).mockResolvedValue(
-        1 as never,
-      );
+      vi.mocked(transitionService.computeTransition).mockReturnValue({
+        status: ThreadStatus.Stopped,
+        runningStartedAt: null,
+        totalRunningMs: 0,
+      });
+      vi.mocked(threadsDao.updateById).mockResolvedValue(1);
       vi.mocked(threadsDao.getById).mockResolvedValue(updatedThread);
 
       const result = await service.stopThread(mockCtx, mockThreadId);
 
-      expect(threadsDao.updateStatusWithAccumulator).toHaveBeenCalledWith(
-        thread,
-        ThreadStatus.Stopped,
-        transitionService,
-        undefined,
-        { metadata: expect.any(Object) },
+      expect(threadsDao.updateById).toHaveBeenCalledWith(
+        thread.id,
+        expect.objectContaining({
+          status: ThreadStatus.Stopped,
+          metadata: expect.any(Object),
+        }),
       );
       expect(notificationsService.emit).toHaveBeenCalledWith({
         type: NotificationEvent.ThreadUpdate,
@@ -2928,7 +2922,7 @@ describe('ThreadsService', () => {
       const result = await service.stopThread(mockCtx, mockThreadId);
 
       expect(graphsService.stopThreadExecution).not.toHaveBeenCalled();
-      expect(threadsDao.updateStatusWithAccumulator).not.toHaveBeenCalled();
+      expect(transitionService.computeTransition).not.toHaveBeenCalled();
       expect(notificationsService.emit).not.toHaveBeenCalled();
       expect(result).toMatchObject({
         id: mockThreadId,

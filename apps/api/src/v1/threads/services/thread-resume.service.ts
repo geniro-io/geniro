@@ -157,13 +157,14 @@ export class ThreadResumeService implements OnModuleInit, OnModuleDestroy {
     }
     const agent = agentNode.instance;
 
-    await this.threadsDao.updateStatusWithAccumulator(
+    const patch = this.transitionService.computeTransition(
       thread,
       ThreadStatus.Running,
-      this.transitionService,
-      undefined,
-      { metadata: clearWaitMetadata(thread.metadata) },
     );
+    await this.threadsDao.updateById(thread.id, {
+      ...patch,
+      metadata: clearWaitMetadata(thread.metadata),
+    });
 
     await this.notificationsService.emit({
       type: NotificationEvent.ThreadUpdate,
@@ -267,13 +268,11 @@ export class ThreadResumeService implements OnModuleInit, OnModuleDestroy {
     };
 
     if (thread) {
-      await this.threadsDao.updateStatusWithAccumulator(
+      const patch = this.transitionService.computeTransition(
         thread,
         ThreadStatus.Stopped,
-        this.transitionService,
-        undefined,
-        { metadata },
       );
+      await this.threadsDao.updateById(thread.id, { ...patch, metadata });
     } else {
       await this.threadsDao.updateById(data.threadId, { metadata });
     }
@@ -332,13 +331,14 @@ export class ThreadResumeService implements OnModuleInit, OnModuleDestroy {
 
     await this.queueService.cancelResumeJob(threadId);
 
-    await this.threadsDao.updateStatusWithAccumulator(
+    const patch = this.transitionService.computeTransition(
       thread,
       ThreadStatus.Stopped,
-      this.transitionService,
-      undefined,
-      { metadata: clearWaitMetadata(thread.metadata) },
     );
+    await this.threadsDao.updateById(thread.id, {
+      ...patch,
+      metadata: clearWaitMetadata(thread.metadata),
+    });
 
     await this.notificationsService.emit({
       type: NotificationEvent.ThreadUpdate,

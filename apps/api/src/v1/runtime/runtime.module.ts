@@ -4,6 +4,7 @@ import { registerEntities } from '@packages/mikroorm';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { ThreadsDao } from '../threads/dao/threads.dao';
 import { ThreadEntity } from '../threads/entity/thread.entity';
+import { ThreadStatusTransitionService } from '../threads/services/thread-status-transition.service';
 import { RuntimeController } from './controllers/runtime.controller';
 import { RuntimeInstanceDao } from './dao/runtime-instance.dao';
 import { RuntimeInstanceEntity } from './entity/runtime-instance.entity';
@@ -25,6 +26,7 @@ import { RuntimeProvider } from './services/runtime-provider';
     RuntimeInstanceDao,
     RuntimeService,
     ThreadsDao,
+    ThreadStatusTransitionService,
   ],
   exports: [RuntimeProvider, RuntimeInstanceDao],
 })

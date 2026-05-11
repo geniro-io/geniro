@@ -199,13 +199,14 @@ export class ThreadsService {
       delete nextMeta.stopCostUsd;
       delete nextMeta.costLimitHit;
 
-      await this.threadDao.updateStatusWithAccumulator(
+      const patch = this.transitionService.computeTransition(
         thread,
         ThreadStatus.Stopped,
-        this.transitionService,
-        undefined,
-        { metadata: nextMeta as ThreadEntity['metadata'] },
       );
+      await this.threadDao.updateById(thread.id, {
+        ...patch,
+        metadata: nextMeta as ThreadEntity['metadata'],
+      });
       const responseThread =
         (await this.threadDao.getById(thread.id)) ?? thread;
 
@@ -374,6 +375,18 @@ export class ThreadsService {
           { threadId: entity.id, status: entity.status },
         );
         runningStartedAt = null;
+      } else if (
+        entity.status === ThreadStatus.Running &&
+        runningStartedAt === null
+      ) {
+        this.logger.warn(
+          'Running thread has null runningStartedAt — DB invariant violated',
+          {
+            threadId: entity.id,
+            status: entity.status,
+          },
+        );
+        // No fix-up — the caller must restart the transition.
       }
 
       return {

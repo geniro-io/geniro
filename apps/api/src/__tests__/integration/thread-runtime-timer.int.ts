@@ -338,13 +338,13 @@ describe('Thread Runtime Timer — accumulator integration', () => {
       const beforeStop = new Date();
 
       // Replicate what GraphRestorationService.stopInterruptedThreads() does:
-      // fetch running threads and call updateStatusWithAccumulator for each.
+      // fetch running threads, compute the transition patch, and write it for each.
       // We call it directly here because stopInterruptedThreads() is private.
-      await threadsDao.updateStatusWithAccumulator(
+      const patch = transitionService.computeTransition(
         thread,
         ThreadStatus.Stopped,
-        transitionService,
       );
+      await threadsDao.updateById(thread.id, patch);
 
       const entity = await reload(thread.id);
 
@@ -354,7 +354,7 @@ describe('Thread Runtime Timer — accumulator integration', () => {
       // The recovery must have accumulated at least 30 000 ms
       const totalMs = Number(entity.totalRunningMs);
       const maxExpected = beforeStop.getTime() - crashTime.getTime() + 2_000;
-      // Allow ±2 s tolerance for the real wall-clock call inside updateStatusWithAccumulator
+      // Allow ±2 s tolerance for the real wall-clock delta inside computeTransition
       expect(totalMs).toBeGreaterThanOrEqual(30_000);
       expect(totalMs).toBeLessThanOrEqual(maxExpected);
     },

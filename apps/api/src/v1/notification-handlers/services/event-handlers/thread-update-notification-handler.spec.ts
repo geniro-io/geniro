@@ -124,7 +124,6 @@ describe('ThreadUpdateNotificationHandler', () => {
           useValue: {
             getOne: vi.fn(),
             updateById: vi.fn(),
-            updateStatusWithAccumulator: vi.fn().mockResolvedValue(1),
           },
         },
         {
@@ -187,14 +186,19 @@ describe('ThreadUpdateNotificationHandler', () => {
         data: { status: ThreadStatus.Stopped },
       });
 
+      transitionServiceMock.computeTransition.mockReturnValue({
+        status: ThreadStatus.Stopped,
+        runningStartedAt: null,
+        totalRunningMs: 0,
+      });
+
       const getOneSpy = vi
         .spyOn(threadsDao, 'getOne')
         .mockResolvedValueOnce(thread)
         .mockResolvedValueOnce(updatedThread);
-      const accumulatorSpy = vi
-        .spyOn(threadsDao, 'updateStatusWithAccumulator')
+      const updateByIdSpy = vi
+        .spyOn(threadsDao, 'updateById')
         .mockResolvedValue(1);
-      const updateByIdSpy = vi.spyOn(threadsDao, 'updateById');
 
       const result = await handler.handle(notification);
 
@@ -203,15 +207,15 @@ describe('ThreadUpdateNotificationHandler', () => {
         externalThreadId: mockThreadId,
         graphId: mockGraphId,
       });
-      expect(accumulatorSpy).toHaveBeenCalledWith(
+      expect(transitionServiceMock.computeTransition).toHaveBeenCalledWith(
         thread,
         ThreadStatus.Stopped,
-        transitionServiceMock,
       );
-      // No direct status write via updateById — accumulator owns that
-      expect(updateByIdSpy).not.toHaveBeenCalledWith(thread.id, {
-        status: ThreadStatus.Stopped,
-      });
+      // Status patch written via updateById (computeTransition result)
+      expect(updateByIdSpy).toHaveBeenCalledWith(
+        thread.id,
+        expect.objectContaining({ status: ThreadStatus.Stopped }),
+      );
       expect(getOneSpy).toHaveBeenNthCalledWith(2, {
         id: thread.id,
         graphId: mockGraphId,
@@ -219,7 +223,7 @@ describe('ThreadUpdateNotificationHandler', () => {
       expectFullThreadPayload(result, updatedThread);
     });
 
-    it('routes status changes through accumulator (regression for runtime-timer bypass)', async () => {
+    it('routes status changes through computeTransition and writes patch via updateById', async () => {
       const runningStartedAt = new Date('2024-01-01T00:00:00Z');
       const thread = createMockThreadEntity({
         status: ThreadStatus.Running,
@@ -243,10 +247,9 @@ describe('ThreadUpdateNotificationHandler', () => {
       vi.spyOn(threadsDao, 'getOne')
         .mockResolvedValueOnce(thread)
         .mockResolvedValueOnce(updatedThread);
-      const accumulatorSpy = vi
-        .spyOn(threadsDao, 'updateStatusWithAccumulator')
+      const updateByIdSpy = vi
+        .spyOn(threadsDao, 'updateById')
         .mockResolvedValue(1);
-      const updateByIdSpy = vi.spyOn(threadsDao, 'updateById');
 
       const notification = createMockNotification({
         data: { status: ThreadStatus.Done },
@@ -254,20 +257,20 @@ describe('ThreadUpdateNotificationHandler', () => {
 
       await handler.handle(notification);
 
-      expect(accumulatorSpy).toHaveBeenCalledOnce();
-      expect(accumulatorSpy).toHaveBeenCalledWith(
+      expect(transitionServiceMock.computeTransition).toHaveBeenCalledOnce();
+      expect(transitionServiceMock.computeTransition).toHaveBeenCalledWith(
         thread,
         ThreadStatus.Done,
-        transitionServiceMock,
       );
-      // Must not write status directly — that would bypass the accumulator
-      expect(updateByIdSpy).not.toHaveBeenCalledWith(
-        thread.id,
-        expect.objectContaining({ status: expect.anything() }),
-      );
+      // Patch from computeTransition is written via updateById (includes totalRunningMs)
+      expect(updateByIdSpy).toHaveBeenCalledWith(thread.id, {
+        status: ThreadStatus.Done,
+        runningStartedAt: null,
+        totalRunningMs: 30000,
+      });
     });
 
-    it('does not invoke accumulator when status is unchanged (same-status no-op)', async () => {
+    it('does not invoke computeTransition or updateById when status is unchanged (same-status no-op)', async () => {
       const thread = createMockThreadEntity({ status: ThreadStatus.Running });
       const notification = createMockNotification({
         data: { status: ThreadStatus.Running },
@@ -276,15 +279,11 @@ describe('ThreadUpdateNotificationHandler', () => {
       vi.spyOn(threadsDao, 'getOne')
         .mockResolvedValueOnce(thread)
         .mockResolvedValueOnce(thread);
-      const accumulatorSpy = vi.spyOn(
-        threadsDao,
-        'updateStatusWithAccumulator',
-      );
       const updateByIdSpy = vi.spyOn(threadsDao, 'updateById');
 
       await handler.handle(notification);
 
-      expect(accumulatorSpy).not.toHaveBeenCalled();
+      expect(transitionServiceMock.computeTransition).not.toHaveBeenCalled();
       expect(updateByIdSpy).not.toHaveBeenCalled();
     });
 
@@ -383,7 +382,7 @@ describe('ThreadUpdateNotificationHandler', () => {
         .mockResolvedValueOnce(thread)
         .mockResolvedValueOnce(updatedThread);
 
-      vi.spyOn(threadsDao, 'updateStatusWithAccumulator').mockResolvedValue(1);
+      vi.spyOn(threadsDao, 'updateById').mockResolvedValue(1);
 
       const result = await handler.handle(notification);
 
@@ -414,22 +413,20 @@ describe('ThreadUpdateNotificationHandler', () => {
         .mockResolvedValueOnce(thread)
         .mockResolvedValueOnce(updatedThread);
 
-      const accumulatorSpy = vi
-        .spyOn(threadsDao, 'updateStatusWithAccumulator')
+      const updateByIdSpy = vi
+        .spyOn(threadsDao, 'updateById')
         .mockResolvedValue(1);
-      const updateByIdSpy = vi.spyOn(threadsDao, 'updateById');
 
       await handler.handle(notification);
 
-      // Status transition goes through the accumulator, not updateById directly
-      expect(accumulatorSpy).toHaveBeenCalledWith(
+      // Status transition calls computeTransition and writes patch via updateById
+      expect(transitionServiceMock.computeTransition).toHaveBeenCalledWith(
         thread,
         ThreadStatus.Done,
-        transitionServiceMock,
       );
-      expect(updateByIdSpy).not.toHaveBeenCalledWith(
+      expect(updateByIdSpy).toHaveBeenCalledWith(
         thread.id,
-        expect.objectContaining({ status: expect.anything() }),
+        expect.objectContaining({ status: ThreadStatus.Done }),
       );
     });
 
@@ -460,20 +457,20 @@ describe('ThreadUpdateNotificationHandler', () => {
         .mockResolvedValueOnce(thread)
         .mockResolvedValueOnce(updatedThread);
 
-      const accumulatorSpy = vi
-        .spyOn(threadsDao, 'updateStatusWithAccumulator')
-        .mockResolvedValue(1);
       const updateByIdSpy = vi
         .spyOn(threadsDao, 'updateById')
         .mockResolvedValue(1);
 
       await handler.handle(notification);
 
-      // Status goes through accumulator first
-      expect(accumulatorSpy).toHaveBeenCalledWith(
+      // Status transition patch written first
+      expect(transitionServiceMock.computeTransition).toHaveBeenCalledWith(
         thread,
         ThreadStatus.Done,
-        transitionServiceMock,
+      );
+      expect(updateByIdSpy).toHaveBeenCalledWith(
+        thread.id,
+        expect.objectContaining({ status: ThreadStatus.Done }),
       );
       // Cleared metadata written via updateById (non-status update)
       expect(updateByIdSpy).toHaveBeenCalledWith(thread.id, {
@@ -481,7 +478,7 @@ describe('ThreadUpdateNotificationHandler', () => {
       });
     });
 
-    it('does not clear metadata when thread is not in Waiting status', async () => {
+    it('does not write non-status metadata when thread is not in Waiting status', async () => {
       const thread = createMockThreadEntity({
         status: ThreadStatus.Running,
         metadata: { someField: 'value' },
@@ -500,20 +497,22 @@ describe('ThreadUpdateNotificationHandler', () => {
         .mockResolvedValueOnce(thread)
         .mockResolvedValueOnce(updatedThread);
 
-      const accumulatorSpy = vi
-        .spyOn(threadsDao, 'updateStatusWithAccumulator')
+      const updateByIdSpy = vi
+        .spyOn(threadsDao, 'updateById')
         .mockResolvedValue(1);
-      const updateByIdSpy = vi.spyOn(threadsDao, 'updateById');
 
       await handler.handle(notification);
 
-      expect(accumulatorSpy).toHaveBeenCalledWith(
+      expect(transitionServiceMock.computeTransition).toHaveBeenCalledWith(
         thread,
         ThreadStatus.Done,
-        transitionServiceMock,
       );
-      // No metadata update — nothing to clear, no non-status updates
-      expect(updateByIdSpy).not.toHaveBeenCalled();
+      // Only the status transition patch is written — no separate metadata update
+      expect(updateByIdSpy).toHaveBeenCalledOnce();
+      expect(updateByIdSpy).toHaveBeenCalledWith(
+        thread.id,
+        expect.objectContaining({ status: ThreadStatus.Done }),
+      );
     });
 
     describe('stopReason three-way semantics', () => {
@@ -536,22 +535,28 @@ describe('ThreadUpdateNotificationHandler', () => {
           },
         });
 
+        transitionServiceMock.computeTransition.mockReturnValue({
+          status: ThreadStatus.Stopped,
+          runningStartedAt: null,
+          totalRunningMs: 0,
+        });
+
         vi.spyOn(threadsDao, 'getOne')
           .mockResolvedValueOnce(thread)
           .mockResolvedValueOnce(updatedThread);
-        const accumulatorSpy = vi
-          .spyOn(threadsDao, 'updateStatusWithAccumulator')
-          .mockResolvedValue(1);
         const updateByIdSpy = vi
           .spyOn(threadsDao, 'updateById')
           .mockResolvedValue(1);
 
         await handler.handle(notification);
 
-        expect(accumulatorSpy).toHaveBeenCalledWith(
+        expect(transitionServiceMock.computeTransition).toHaveBeenCalledWith(
           thread,
           ThreadStatus.Stopped,
-          transitionServiceMock,
+        );
+        expect(updateByIdSpy).toHaveBeenCalledWith(
+          thread.id,
+          expect.objectContaining({ status: ThreadStatus.Stopped }),
         );
         expect(updateByIdSpy).toHaveBeenCalledWith(thread.id, {
           // M4: costLimitHit must be set to true whenever stopReason='cost_limit'
@@ -581,20 +586,22 @@ describe('ThreadUpdateNotificationHandler', () => {
         vi.spyOn(threadsDao, 'getOne')
           .mockResolvedValueOnce(thread)
           .mockResolvedValueOnce(updatedThread);
-        const accumulatorSpy = vi
-          .spyOn(threadsDao, 'updateStatusWithAccumulator')
+        const updateByIdSpy = vi
+          .spyOn(threadsDao, 'updateById')
           .mockResolvedValue(1);
-        const updateByIdSpy = vi.spyOn(threadsDao, 'updateById');
 
         await handler.handle(notification);
 
-        // Since stopReason key is absent, metadata should not appear in updates
-        expect(accumulatorSpy).toHaveBeenCalledWith(
+        // Since stopReason key is absent, only the status patch is written (no separate metadata update)
+        expect(transitionServiceMock.computeTransition).toHaveBeenCalledWith(
           thread,
           ThreadStatus.Done,
-          transitionServiceMock,
         );
-        expect(updateByIdSpy).not.toHaveBeenCalled();
+        expect(updateByIdSpy).toHaveBeenCalledOnce();
+        expect(updateByIdSpy).toHaveBeenCalledWith(
+          thread.id,
+          expect.objectContaining({ status: ThreadStatus.Done }),
+        );
       });
 
       it('deletes metadata.stopReason when stopReason is explicitly null', async () => {
@@ -619,22 +626,28 @@ describe('ThreadUpdateNotificationHandler', () => {
           },
         });
 
+        transitionServiceMock.computeTransition.mockReturnValue({
+          status: ThreadStatus.Stopped,
+          runningStartedAt: null,
+          totalRunningMs: 0,
+        });
+
         vi.spyOn(threadsDao, 'getOne')
           .mockResolvedValueOnce(thread)
           .mockResolvedValueOnce(updatedThread);
-        const accumulatorSpy = vi
-          .spyOn(threadsDao, 'updateStatusWithAccumulator')
-          .mockResolvedValue(1);
         const updateByIdSpy = vi
           .spyOn(threadsDao, 'updateById')
           .mockResolvedValue(1);
 
         await handler.handle(notification);
 
-        expect(accumulatorSpy).toHaveBeenCalledWith(
+        expect(transitionServiceMock.computeTransition).toHaveBeenCalledWith(
           thread,
           ThreadStatus.Stopped,
-          transitionServiceMock,
+        );
+        expect(updateByIdSpy).toHaveBeenCalledWith(
+          thread.id,
+          expect.objectContaining({ status: ThreadStatus.Stopped }),
         );
         expect(updateByIdSpy).toHaveBeenCalledWith(thread.id, {
           metadata: { preservedField: 'keep-me' },
@@ -667,22 +680,28 @@ describe('ThreadUpdateNotificationHandler', () => {
           },
         });
 
+        transitionServiceMock.computeTransition.mockReturnValue({
+          status: ThreadStatus.Stopped,
+          runningStartedAt: null,
+          totalRunningMs: 0,
+        });
+
         vi.spyOn(threadsDao, 'getOne')
           .mockResolvedValueOnce(thread)
           .mockResolvedValueOnce(updatedThread);
-        const accumulatorSpy = vi
-          .spyOn(threadsDao, 'updateStatusWithAccumulator')
-          .mockResolvedValue(1);
         const updateByIdSpy = vi
           .spyOn(threadsDao, 'updateById')
           .mockResolvedValue(1);
 
         await handler.handle(notification);
 
-        expect(accumulatorSpy).toHaveBeenCalledWith(
+        expect(transitionServiceMock.computeTransition).toHaveBeenCalledWith(
           thread,
           ThreadStatus.Stopped,
-          transitionServiceMock,
+        );
+        expect(updateByIdSpy).toHaveBeenCalledWith(
+          thread.id,
+          expect.objectContaining({ status: ThreadStatus.Stopped }),
         );
         expect(updateByIdSpy).toHaveBeenCalledWith(thread.id, {
           metadata: {
@@ -785,22 +804,28 @@ describe('ThreadUpdateNotificationHandler', () => {
           },
         });
 
+        transitionServiceMock.computeTransition.mockReturnValue({
+          status: ThreadStatus.Stopped,
+          runningStartedAt: null,
+          totalRunningMs: 0,
+        });
+
         vi.spyOn(threadsDao, 'getOne')
           .mockResolvedValueOnce(thread)
           .mockResolvedValueOnce(updatedThread);
-        const accumulatorSpy = vi
-          .spyOn(threadsDao, 'updateStatusWithAccumulator')
-          .mockResolvedValue(1);
         const updateByIdSpy = vi
           .spyOn(threadsDao, 'updateById')
           .mockResolvedValue(1);
 
         await handler.handle(notification);
 
-        expect(accumulatorSpy).toHaveBeenCalledWith(
+        expect(transitionServiceMock.computeTransition).toHaveBeenCalledWith(
           thread,
           ThreadStatus.Stopped,
-          transitionServiceMock,
+        );
+        expect(updateByIdSpy).toHaveBeenCalledWith(
+          thread.id,
+          expect.objectContaining({ status: ThreadStatus.Stopped }),
         );
         expect(updateByIdSpy).toHaveBeenCalledWith(thread.id, {
           metadata: { existingField: 'keep', stopCostUsd: 1.03 },
@@ -825,20 +850,22 @@ describe('ThreadUpdateNotificationHandler', () => {
         vi.spyOn(threadsDao, 'getOne')
           .mockResolvedValueOnce(thread)
           .mockResolvedValueOnce(updatedThread);
-        const accumulatorSpy = vi
-          .spyOn(threadsDao, 'updateStatusWithAccumulator')
+        const updateByIdSpy = vi
+          .spyOn(threadsDao, 'updateById')
           .mockResolvedValue(1);
-        const updateByIdSpy = vi.spyOn(threadsDao, 'updateById');
 
         await handler.handle(notification);
 
-        // Since stopCostUsd key is absent, metadata should not appear in updates
-        expect(accumulatorSpy).toHaveBeenCalledWith(
+        // Since stopCostUsd key is absent, only the status patch is written (no separate metadata update)
+        expect(transitionServiceMock.computeTransition).toHaveBeenCalledWith(
           thread,
           ThreadStatus.Done,
-          transitionServiceMock,
         );
-        expect(updateByIdSpy).not.toHaveBeenCalled();
+        expect(updateByIdSpy).toHaveBeenCalledOnce();
+        expect(updateByIdSpy).toHaveBeenCalledWith(
+          thread.id,
+          expect.objectContaining({ status: ThreadStatus.Done }),
+        );
       });
 
       it('deletes metadata.stopCostUsd when stopCostUsd is explicitly null', async () => {
@@ -863,22 +890,28 @@ describe('ThreadUpdateNotificationHandler', () => {
           },
         });
 
+        transitionServiceMock.computeTransition.mockReturnValue({
+          status: ThreadStatus.Stopped,
+          runningStartedAt: null,
+          totalRunningMs: 0,
+        });
+
         vi.spyOn(threadsDao, 'getOne')
           .mockResolvedValueOnce(thread)
           .mockResolvedValueOnce(updatedThread);
-        const accumulatorSpy = vi
-          .spyOn(threadsDao, 'updateStatusWithAccumulator')
-          .mockResolvedValue(1);
         const updateByIdSpy = vi
           .spyOn(threadsDao, 'updateById')
           .mockResolvedValue(1);
 
         await handler.handle(notification);
 
-        expect(accumulatorSpy).toHaveBeenCalledWith(
+        expect(transitionServiceMock.computeTransition).toHaveBeenCalledWith(
           thread,
           ThreadStatus.Stopped,
-          transitionServiceMock,
+        );
+        expect(updateByIdSpy).toHaveBeenCalledWith(
+          thread.id,
+          expect.objectContaining({ status: ThreadStatus.Stopped }),
         );
         expect(updateByIdSpy).toHaveBeenCalledWith(thread.id, {
           metadata: { preservedField: 'keep-me' },

@@ -3,7 +3,11 @@ import { LockMode } from '@mikro-orm/core';
 import { EntityManager } from '@mikro-orm/postgresql';
 import { Injectable } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { BadRequestException, NotFoundException } from '@packages/common';
+import {
+  BadRequestException,
+  DefaultLogger,
+  NotFoundException,
+} from '@packages/common';
 import { isEqual } from 'lodash';
 
 import { AppContextStorage } from '../../../auth/app-context-storage';
@@ -64,6 +68,7 @@ export class GraphsService {
     private readonly costLimitResolver: CostLimitResolverService,
     private readonly checkpointStateService: CheckpointStateService,
     private readonly transitionService: ThreadStatusTransitionService,
+    private readonly logger: DefaultLogger,
   ) {}
 
   private extractGraphCostLimitUsd(entity: GraphEntity): number | null {
@@ -554,15 +559,33 @@ export class GraphsService {
       return;
     }
 
-    await Promise.allSettled(
-      runningThreads.map((thread) =>
-        this.threadsDao.updateStatusWithAccumulator(
+    const results = await Promise.allSettled(
+      runningThreads.map((thread) => {
+        const patch = this.transitionService.computeTransition(
           thread,
           ThreadStatus.Stopped,
-          this.transitionService,
-        ),
-      ),
+        );
+        return this.threadsDao.updateById(thread.id, patch);
+      }),
     );
+    for (const [idx, result] of results.entries()) {
+      if (result.status === 'rejected') {
+        const thread = runningThreads[idx]!;
+        const reason =
+          result.reason instanceof Error
+            ? result.reason
+            : new Error(String(result.reason));
+        this.logger.error(
+          reason,
+          'Failed to stop running thread during graph stop',
+          {
+            threadId: thread.id,
+            externalThreadId: thread.externalThreadId,
+            graphId,
+          },
+        );
+      }
+    }
   }
 
   private async emitGraphPreview(
@@ -850,16 +873,17 @@ export class GraphsService {
         ).effectiveCostLimitUsd = effectiveCostLimitUsd;
 
         if (nextStatus === ThreadStatus.Running) {
-          // Go through the accumulator helper so runningStartedAt is set
-          // atomically alongside status — avoids the stale-drift window where
-          // status=Running but runningStartedAt=null. Pass metadata as
-          // additionalFields to collapse status+metadata into one DB round trip.
-          await this.threadsDao.updateStatusWithAccumulator(
+          // Compute the transition patch (sets runningStartedAt atomically alongside
+          // status) and merge with metadata for a single DB round trip — avoids the
+          // stale-drift window where status=Running but runningStartedAt=null.
+          const patch = this.transitionService.computeTransition(
             existingThread,
             ThreadStatus.Running,
-            this.transitionService,
+          );
+          await this.threadsDao.updateById(
+            existingThread.id,
+            { ...patch, metadata: nextMetadata },
             em,
-            { metadata: nextMetadata },
           );
         } else {
           // No status transition — only refresh metadata (e.g. cost-limit fields).

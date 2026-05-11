@@ -147,19 +147,20 @@ export class ThreadUpdateNotificationHandler extends BaseNotificationHandler<ITh
       nextStatus !== undefined && nextStatus !== thread.status;
     const hasNonStatusUpdates = Object.keys(nonStatusUpdates).length > 0;
 
-    // Route the status flip through the accumulator so totalRunningMs is
-    // updated atomically with the status change. Status is written first so
-    // the accumulator-write sees the prior thread state (runningStartedAt)
-    // correctly, and the follow-up updateById writes against the new status.
-    // Why: no em.transactional() — these are two single-row updates on the
-    // same thread.id and the BullMQ bus already serialises invocations;
-    // strict atomicity is not required and a transaction would over-engineer.
+    // Route the status flip through computeTransition so totalRunningMs is
+    // updated together with the status change. The patch is computed from the
+    // current thread snapshot and written via updateById.
+    // Why: no em.transactional() — both writes (status + non-status) are within
+    // a single handler invocation, which completes both before returning. Strict
+    // atomicity across separate handler invocations is not required because
+    // invariants are defended at read-time (see prepareThreadsResponse
+    // stale-drift guards in threads.service.ts).
     if (hasStatusChange) {
-      await this.threadsDao.updateStatusWithAccumulator(
+      const patch = this.transitionService.computeTransition(
         thread,
         nextStatus,
-        this.transitionService,
       );
+      await this.threadsDao.updateById(thread.id, patch);
     }
     if (hasNonStatusUpdates) {
       await this.threadsDao.updateById(thread.id, nonStatusUpdates);
