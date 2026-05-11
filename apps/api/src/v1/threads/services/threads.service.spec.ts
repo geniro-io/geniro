@@ -552,6 +552,44 @@ describe('ThreadsService', () => {
         { threadId: mockThreadId, status: ThreadStatus.Stopped },
       );
     });
+
+    it('logs a warning when a Running thread has null runningStartedAt (inverse stale-drift)', async () => {
+      // The inverse of the existing stale-drift defense: a thread in status
+      // Running MUST have a non-null runningStartedAt. If the DB row says
+      // Running + runningStartedAt=null, the writer that flipped status to
+      // Running failed to set the clock — an invariant violation symmetric to
+      // the existing "non-Running + non-null runningStartedAt" case. The
+      // frontend's live duration hook silently treats a null runningStartedAt
+      // on a Running thread as "not live" and freezes at totalRunningMs, so
+      // operators must see this in logs to debug missing timer writes.
+      // Today no warning fires for the inverse case — this test fails.
+      mockLogger.warn.mockClear();
+      const mockThread = createMockThreadEntity({
+        status: ThreadStatus.Running,
+        runningStartedAt: null,
+        totalRunningMs: 0,
+      });
+
+      vi.spyOn(threadsDao, 'getOne').mockResolvedValue(mockThread);
+
+      await service.getThreadById(mockCtx, mockThreadId);
+
+      const warnCalls = mockLogger.warn.mock.calls;
+      const sawInverseWarning = warnCalls.some((call) => {
+        const firstArg = call[0];
+        if (typeof firstArg !== 'string') {
+          return false;
+        }
+        const text = firstArg.toLowerCase();
+        return (
+          text.includes('running') &&
+          (text.includes('null runningstartedat') ||
+            text.includes('running thread has null') ||
+            (text.includes('runningstartedat') && text.includes('null')))
+        );
+      });
+      expect(sawInverseWarning).toBe(true);
+    });
   });
 
   describe('token usage aggregation', () => {

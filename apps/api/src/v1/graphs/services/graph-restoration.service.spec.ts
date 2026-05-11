@@ -597,5 +597,77 @@ describe('GraphRestorationService', () => {
         expect.any(Object),
       );
     });
+
+    it('logs an error for each interrupted thread that fails to stop during boot recovery', async () => {
+      // G7 boot-recovery path: stopInterruptedThreads uses Promise.allSettled
+      // over per-thread updateStatusWithAccumulator calls. Per-thread DB
+      // failures must be surfaced via logger.error so the operator can find
+      // the stuck threads — otherwise interrupted threads stay Running/Waiting
+      // forever after a server restart with no trace in the logs.
+      // The outer try/catch in stopInterruptedThreads CANNOT catch these
+      // because Promise.allSettled never rejects; it always resolves with a
+      // results array. This test fails today because no per-rejection logging
+      // exists inside the loop.
+      const mockLogger = (service as any).logger as {
+        error: ReturnType<typeof vi.fn>;
+      };
+      const threadA = {
+        id: 'thread-uuid-a',
+        graphId: 'test-graph-id',
+        externalThreadId: 'test-graph-id:thread-a',
+        createdBy: 'test-user',
+        status: ThreadStatus.Running,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+      const threadB = {
+        id: 'thread-uuid-b',
+        graphId: 'test-graph-id',
+        externalThreadId: 'test-graph-id:thread-b',
+        createdBy: 'test-user',
+        status: ThreadStatus.Waiting,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      mockGraphDaoLists([mockGraph]);
+      vi.mocked(graphRegistry.get)
+        .mockReturnValueOnce(undefined)
+        .mockReturnValueOnce(mockCompiledGraph);
+      vi.mocked(graphsService.run).mockResolvedValueOnce({
+        id: mockGraph.id,
+        status: GraphStatus.Running,
+      } as any);
+      vi.mocked(threadsDao.getAll).mockResolvedValue([threadA, threadB]);
+
+      const failureForB = new Error('DB write failed for thread-uuid-b');
+      vi.mocked(threadsDao.updateStatusWithAccumulator).mockImplementation(
+        async (thread: any) => {
+          if (thread.id === 'thread-uuid-b') {
+            throw failureForB;
+          }
+          return 1 as any;
+        },
+      );
+
+      // Must not throw — Promise.allSettled absorbs rejections
+      await expect(service.restoreRunningGraphs()).resolves.not.toThrow();
+
+      // Both threads attempted (partial failure must not short-circuit)
+      expect(threadsDao.updateStatusWithAccumulator).toHaveBeenCalledTimes(2);
+
+      // The DB error for thread-uuid-b must be surfaced via logger.error.
+      // Today the code never reads results from Promise.allSettled, so this
+      // assertion fails on current code.
+      const errorMock = vi.mocked(mockLogger.error);
+      const sawRejectionInLogger = errorMock.mock.calls.some((call) =>
+        call.some(
+          (arg) =>
+            arg === failureForB ||
+            (arg instanceof Error && arg.message === failureForB.message),
+        ),
+      );
+      expect(sawRejectionInLogger).toBe(true);
+    });
   });
 });

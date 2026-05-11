@@ -257,6 +257,96 @@ describe('ThreadsDao.upsertByExternalThreadId — ON CONFLICT semantics', () => 
   );
 
   it(
+    'CONFLICT (existing Running, incoming status=Done): preserves Running invariants — DAO should reject non-Running upserts',
+    { timeout: 15_000 },
+    async () => {
+      // The DAO contract is implicitly "upsert into Running": all production
+      // callers pass status=Running (agent-invoke handler + executeTrigger
+      // eager upsert). The ON CONFLICT CASE only handles the
+      // "existing=Running → incoming arbitrary" branch correctly for
+      // status=Running; if a caller passes status=Done, the merged row ends
+      // up with status=Done + non-null runningStartedAt (preserved from the
+      // existing Running row) + UNACCUMULATED totalRunningMs (preserved
+      // verbatim). That row violates the invariant that out-of-Running
+      // statuses MUST have runningStartedAt=null AND the elapsed delta folded
+      // into totalRunningMs (the contract that ThreadStatusTransitionService
+      // upholds for the proper code path via updateStatusWithAccumulator).
+      //
+      // Either the DAO must REJECT non-Running upserts at the type / runtime
+      // boundary, OR the SQL CASE must be widened so a Running→Done upsert
+      // accumulates and nulls correctly. Today neither defense exists; this
+      // test asserts the type-level/runtime guard.
+      const externalThreadId = randomUUID();
+      const originalStartedAt = new Date('2026-04-01T10:00:00.000Z');
+
+      const inserted = await threadsDao.upsertByExternalThreadId(
+        baseUpsertPayload({
+          externalThreadId,
+          runningStartedAt: originalStartedAt,
+          totalRunningMs: 5_000,
+        }),
+      );
+      createdThreadIds.push(inserted.id);
+
+      // Re-upsert with status=Done. Today this silently produces a row with
+      // status=Done + non-null runningStartedAt (the existing Running value)
+      // — i.e. a row that the front-end's live-duration hook reads as
+      // "running" (status flag says Done, but the timer field is populated)
+      // OR that the prepareThreadsResponse stale-drift defense has to clean
+      // up after the fact. The DAO should refuse to commit such a row.
+      //
+      // Acceptable resolutions:
+      //   (a) DAO/runtime guard: throw on non-Running upsert.
+      //   (b) Widen SQL CASE: when incoming status != Running, force
+      //       running_started_at=null and accumulate the delta into
+      //       total_running_ms.
+      //
+      // This test passes if EITHER (a) the call throws OR (b) the resulting
+      // row has running_started_at=null AND totalRunningMs > 5_000 (the
+      // accumulator was advanced). It fails today because the current
+      // implementation does neither.
+      let threwOnNonRunningUpsert = false;
+      let upserted: Awaited<
+        ReturnType<typeof threadsDao.upsertByExternalThreadId>
+      > | null = null;
+      try {
+        upserted = await threadsDao.upsertByExternalThreadId({
+          graphId: sharedGraphId,
+          createdBy: TEST_USER_ID,
+          projectId: testProjectId,
+          externalThreadId,
+          status: ThreadStatus.Done,
+          runningStartedAt: new Date('2026-04-01T10:05:00.000Z'),
+          totalRunningMs: 0,
+        });
+      } catch {
+        threwOnNonRunningUpsert = true;
+      }
+
+      if (threwOnNonRunningUpsert) {
+        // Resolution (a) — DAO refused the bad upsert. Confirm the row was
+        // not mutated.
+        const reloaded = await reload(inserted.id);
+        expect(reloaded.status).toBe(ThreadStatus.Running);
+        expect(reloaded.runningStartedAt!.getTime()).toBe(
+          originalStartedAt.getTime(),
+        );
+        expect(Number(reloaded.totalRunningMs)).toBe(5_000);
+        return;
+      }
+
+      // Resolution (b) — DAO accepted but produced a semantically correct
+      // out-of-Running row. Today the row is semantically WRONG (status=Done
+      // but runningStartedAt=non-null and totalRunningMs unchanged), so the
+      // assertions below fail on current code.
+      expect(upserted).not.toBeNull();
+      expect(upserted!.runningStartedAt).toBeNull();
+      const reloaded = await reload(inserted.id);
+      expect(reloaded.runningStartedAt).toBeNull();
+    },
+  );
+
+  it(
     'CONFLICT: lastRunId is overwritten when provided, preserved when omitted',
     { timeout: 15_000 },
     async () => {

@@ -1694,6 +1694,86 @@ describe('GraphsService', () => {
       // ThreadUpdate(Stooped) is emitted by GraphStateManager, not GraphsService.
     });
 
+    it('logs an error for each thread that fails to stop when graph fails to start', async () => {
+      // When compile() rejects, run() invokes stopRunningThreads() to clean up
+      // any Running/Waiting threads for the graph. That helper uses
+      // Promise.allSettled over per-thread updateStatusWithAccumulator calls.
+      // Per-thread DB failures must be logged so an operator can find them in
+      // logs; otherwise the failed threads stay Running/Waiting forever with
+      // no trace and only the overall graph "Compilation failed" error is
+      // surfaced. Today the implementation calls Promise.allSettled but never
+      // inspects rejected results, so this assertion fails on current code.
+      const graph = createMockGraphEntity({ status: GraphStatus.Created });
+      const compilationError = new Error('Compilation failed');
+
+      vi.mocked(graphDao.getOne).mockResolvedValue(graph);
+      vi.mocked(graphRegistry.get).mockReturnValue(undefined);
+      vi.mocked(graphCompiler.compile).mockRejectedValue(compilationError);
+      vi.mocked(graphDao.updateById)
+        .mockResolvedValueOnce(1)
+        .mockResolvedValueOnce(1);
+
+      const threadA = {
+        id: 'thread-a',
+        externalThreadId: 'external-a',
+      } as any;
+      const threadB = {
+        id: 'thread-b',
+        externalThreadId: 'external-b',
+      } as any;
+      const threadC = {
+        id: 'thread-c',
+        externalThreadId: 'external-c',
+      } as any;
+      vi.mocked(threadsDao.getAll).mockResolvedValue([
+        threadA,
+        threadB,
+        threadC,
+      ]);
+
+      const dbFailure = new Error('DB write failed for thread-b');
+      vi.mocked(threadsDao.updateStatusWithAccumulator).mockImplementation(
+        async (thread: any) => {
+          if (thread.id === 'thread-b') {
+            throw dbFailure;
+          }
+          return 1 as any;
+        },
+      );
+
+      await expect(service.run(mockCtx, mockGraphId)).rejects.toThrow(
+        'Compilation failed',
+      );
+
+      // All three threads must be ATTEMPTED — partial failures must not short-
+      // circuit. Without Promise.allSettled this would skip thread-c.
+      expect(threadsDao.updateStatusWithAccumulator).toHaveBeenCalledTimes(3);
+      expect(threadsDao.updateStatusWithAccumulator).toHaveBeenCalledWith(
+        threadA,
+        ThreadStatus.Stopped,
+        expect.any(Object),
+      );
+      expect(threadsDao.updateStatusWithAccumulator).toHaveBeenCalledWith(
+        threadB,
+        ThreadStatus.Stopped,
+        expect.any(Object),
+      );
+      expect(threadsDao.updateStatusWithAccumulator).toHaveBeenCalledWith(
+        threadC,
+        ThreadStatus.Stopped,
+        expect.any(Object),
+      );
+
+      // The rejection reason for thread-b must be surfaced via logger.error so
+      // operators can see why a thread was left in Running/Waiting. Today this
+      // line never executes, so the test fails on current code.
+      const errorMock = vi.mocked(logger.error);
+      const sawRejectionInLogger = errorMock.mock.calls.some((call) =>
+        call.some((arg) => arg === dbFailure || (arg instanceof Error && arg.message === dbFailure.message)),
+      );
+      expect(sawRejectionInLogger).toBe(true);
+    });
+
     it('should cleanup registry when database update fails', async () => {
       const graph = createMockGraphEntity({ status: GraphStatus.Created });
       const compiledGraph = createMockCompiledGraph();

@@ -157,4 +157,35 @@ describe('useLiveThreadDuration', () => {
     expect(result.current).toBe(3000);
     expect(Number.isNaN(result.current)).toBe(false);
   });
+
+  it('clock skew (runningStartedAt in the future): never returns less than totalRunningMs', () => {
+    // Server-clock-ahead-of-client scenario: the API returned a
+    // runningStartedAt timestamp that, parsed locally, lies in the future
+    // relative to Date.now() on the client. The displayed live duration must
+    // never DROP BELOW the accumulated totalRunningMs the user has already
+    // seen — going backwards from the previous reading is jarring and
+    // misleading (a counter that ticks down to a smaller number suggests the
+    // thread "un-ran" some work).
+    //
+    // Today the hook computes (totalRunningMs ?? 0) + (nowMs - startedAtMs)
+    // with no Math.max(0, …) guard on the delta, so a 5-second future
+    // skew on a base of 10_000 yields 5_000 (i.e. 5s LESS than the
+    // accumulated 10s). Test fails today.
+    const baseTotalMs = 10_000;
+    const skewMs = 5_000;
+    const fixedNow = new Date('2026-04-01T10:00:00.000Z').getTime();
+    vi.setSystemTime(fixedNow);
+
+    const futureStartedAt = new Date(fixedNow + skewMs).toISOString();
+
+    const { result } = renderHook(() =>
+      useLiveThreadDuration({
+        runningStartedAt: futureStartedAt,
+        totalRunningMs: baseTotalMs,
+        status: ThreadDtoStatusEnum.Running,
+      }),
+    );
+
+    expect(result.current).toBeGreaterThanOrEqual(baseTotalMs);
+  });
 });
