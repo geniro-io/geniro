@@ -20,7 +20,7 @@ import { ProjectsDao } from '../../projects/dao/projects.dao';
 import { ThreadsDao } from '../../threads/dao/threads.dao';
 import { ThreadResumeQueueService } from '../../threads/services/thread-resume-queue.service';
 import { ThreadStatusTransitionService } from '../../threads/services/thread-status-transition.service';
-import { ThreadsService } from '../../threads/services/threads.service';
+import { THREADS_SERVICE_TOKEN } from '../../threads/services/threads.tokens';
 import { ThreadStatus } from '../../threads/threads.types';
 import { GraphDao } from '../dao/graph.dao';
 import {
@@ -60,7 +60,7 @@ describe('GraphsService', () => {
   let notificationsService: NotificationsService;
   let graphRevisionService: GraphRevisionService;
   let threadsDao: ThreadsDao;
-  let threadsService: ThreadsService;
+  let threadsService: { upsertRunningThread: ReturnType<typeof vi.fn> };
   let eventEmitter: EventEmitter2;
   let logger: DefaultLogger;
   let projectsDao: ProjectsDao;
@@ -228,7 +228,7 @@ describe('GraphsService', () => {
           },
         },
         {
-          provide: ThreadsService,
+          provide: THREADS_SERVICE_TOKEN,
           useValue: {
             upsertRunningThread: vi.fn(),
           },
@@ -365,7 +365,7 @@ describe('GraphsService', () => {
     graphRevisionService =
       module.get<GraphRevisionService>(GraphRevisionService);
     threadsDao = module.get<ThreadsDao>(ThreadsDao);
-    threadsService = module.get<ThreadsService>(ThreadsService);
+    threadsService = module.get(THREADS_SERVICE_TOKEN);
     eventEmitter = module.get<EventEmitter2>(EventEmitter2);
     logger = module.get<DefaultLogger>(DefaultLogger);
     projectsDao = module.get<ProjectsDao>(ProjectsDao);

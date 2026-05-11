@@ -1,7 +1,7 @@
 import { HumanMessage } from '@langchain/core/messages';
 import { LockMode } from '@mikro-orm/core';
 import { EntityManager } from '@mikro-orm/postgresql';
-import { forwardRef, Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
   BadRequestException,
@@ -21,7 +21,8 @@ import { ProjectsDao } from '../../projects/dao/projects.dao';
 import { ThreadsDao } from '../../threads/dao/threads.dao';
 import { ThreadResumeQueueService } from '../../threads/services/thread-resume-queue.service';
 import { ThreadStatusTransitionService } from '../../threads/services/thread-status-transition.service';
-import { ThreadsService } from '../../threads/services/threads.service';
+import type { ThreadsService } from '../../threads/services/threads.service';
+import { THREADS_SERVICE_TOKEN } from '../../threads/services/threads.tokens';
 import { ThreadStatus } from '../../threads/threads.types';
 import { clearWaitMetadata } from '../../threads/threads.utils';
 import { GraphDao } from '../dao/graph.dao';
@@ -70,7 +71,7 @@ export class GraphsService {
     private readonly checkpointStateService: CheckpointStateService,
     private readonly transitionService: ThreadStatusTransitionService,
     private readonly logger: DefaultLogger,
-    @Inject(forwardRef(() => ThreadsService))
+    @Inject(THREADS_SERVICE_TOKEN)
     private readonly threadsService: ThreadsService,
   ) {}
 

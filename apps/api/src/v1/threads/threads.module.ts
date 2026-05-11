@@ -16,6 +16,7 @@ import { ThreadResumeService } from './services/thread-resume.service';
 import { ThreadResumeQueueService } from './services/thread-resume-queue.service';
 import { ThreadStatusTransitionService } from './services/thread-status-transition.service';
 import { ThreadsService } from './services/threads.service';
+import { THREADS_SERVICE_TOKEN } from './services/threads.tokens';
 import { ThreadsListener } from './threads.listener';
 
 @Module({
@@ -30,6 +31,7 @@ import { ThreadsListener } from './threads.listener';
   controllers: [ThreadsController],
   providers: [
     ThreadsService,
+    { provide: THREADS_SERVICE_TOKEN, useExisting: ThreadsService },
     ThreadsDao,
     MessagesDao,
     ThreadNameGeneratorService,
@@ -42,6 +44,7 @@ import { ThreadsListener } from './threads.listener';
     ThreadsDao,
     MessagesDao,
     ThreadsService,
+    THREADS_SERVICE_TOKEN,
     ThreadNameGeneratorService,
     ThreadResumeQueueService,
     ThreadResumeService,
