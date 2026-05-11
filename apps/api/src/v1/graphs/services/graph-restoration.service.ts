@@ -4,6 +4,7 @@ import type { FastifyRequest } from 'fastify';
 
 import { AppContextStorage } from '../../../auth/app-context-storage';
 import { ThreadsDao } from '../../threads/dao/threads.dao';
+import { ThreadStatusTransitionService } from '../../threads/services/thread-status-transition.service';
 import { ThreadStatus } from '../../threads/threads.types';
 import { GraphDao } from '../dao/graph.dao';
 import { GraphEntity } from '../entity/graph.entity';
@@ -19,18 +20,12 @@ export class GraphRestorationService {
     private readonly threadsDao: ThreadsDao,
     private readonly graphsService: GraphsService,
     private readonly logger: DefaultLogger,
+    private readonly transitionService: ThreadStatusTransitionService,
   ) {}
 
-  /**
-   * Restores all graphs that were running before server restart
-   * Process order:
-   * 1. First: Destroy temporary graphs (run destroy pipeline)
-   * 2. Finally: Restore permanent graphs
-   */
   async restoreRunningGraphs(): Promise<void> {
     this.logger.log('Starting graph restoration process...');
 
-    // Destroy temporary graphs first (run destroy pipeline)
     await this.graphDao.hardDelete({ temporary: true });
 
     // Restore permanent graphs (both running and compiling)
@@ -68,7 +63,6 @@ export class GraphRestorationService {
       );
       await this.graphsService.run(contextDataStorage, id);
 
-      // Stop interrupted threads instead of resuming them
       await this.stopInterruptedThreads(id);
 
       this.logger.log(`Successfully restored graph ${id}`);
@@ -85,31 +79,45 @@ export class GraphRestorationService {
     }
   }
 
-  /**
-   * Stops all interrupted threads for a restored graph
-   * Threads that were running before server restart are marked as stopped
-   * Users can manually restart them if needed
-   */
   private async stopInterruptedThreads(graphId: string): Promise<void> {
     try {
-      // Get all running threads for this graph
       const runningThreads = await this.threadsDao.getAll({
         graphId,
-        status: ThreadStatus.Running,
+        status: { $in: [ThreadStatus.Running, ThreadStatus.Waiting] },
       });
 
       if (runningThreads.length === 0) {
         return;
       }
 
-      // Update thread status (token usage is in checkpoint state only)
-      const updatePromises = runningThreads.map(async (thread) => {
-        return this.threadsDao.updateById(thread.id, {
-          status: ThreadStatus.Stopped,
-        });
-      });
-
-      await Promise.allSettled(updatePromises);
+      // token usage is in checkpoint state only — no need to read it here
+      const results = await Promise.allSettled(
+        runningThreads.map((thread) => {
+          const patch = this.transitionService.computeTransition(
+            thread,
+            ThreadStatus.Stopped,
+          );
+          return this.threadsDao.updateById(thread.id, patch);
+        }),
+      );
+      for (const [idx, result] of results.entries()) {
+        if (result.status === 'rejected') {
+          const thread = runningThreads[idx]!;
+          const reason =
+            result.reason instanceof Error
+              ? result.reason
+              : new Error(String(result.reason));
+          this.logger.error(
+            reason,
+            'Failed to stop interrupted thread during boot recovery',
+            {
+              threadId: thread.id,
+              externalThreadId: thread.externalThreadId,
+              graphId,
+            },
+          );
+        }
+      }
     } catch (error) {
       this.logger.error(
         error instanceof Error ? error : new Error(String(error)),

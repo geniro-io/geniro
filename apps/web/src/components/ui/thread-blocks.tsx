@@ -30,7 +30,6 @@ import { SyntaxHighlighter } from './syntax-highlighter';
 import {
   CopyButton,
   fmtK,
-  formatDuration,
   formatUsd,
   type RawTokenUsage,
   StatRow,
@@ -51,7 +50,6 @@ const buildFooterTokens = (
         usage?: {
           totalTokens?: number;
           totalPrice?: number;
-          durationMs?: number;
         };
       }
     | undefined,
@@ -63,7 +61,6 @@ const buildFooterTokens = (
   return {
     total: usage.totalTokens ?? 0,
     cost: formatUsd(usage.totalPrice),
-    duration: formatDuration(usage.durationMs),
   };
 };
 
@@ -1353,7 +1350,6 @@ export interface SubagentBlockProps {
     usage?: {
       totalTokens?: number;
       totalPrice?: number;
-      durationMs?: number;
     };
     toolCallsMade?: number;
     totalPrice?: number;
@@ -1645,7 +1641,6 @@ export interface CommunicationBlockProps {
     usage?: {
       totalTokens?: number;
       totalPrice?: number;
-      durationMs?: number;
     };
     toolCallsMade?: number;
     totalPrice?: number;

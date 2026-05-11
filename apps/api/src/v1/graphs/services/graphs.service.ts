@@ -1,9 +1,13 @@
 import { HumanMessage } from '@langchain/core/messages';
 import { LockMode } from '@mikro-orm/core';
 import { EntityManager } from '@mikro-orm/postgresql';
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { BadRequestException, NotFoundException } from '@packages/common';
+import {
+  BadRequestException,
+  DefaultLogger,
+  NotFoundException,
+} from '@packages/common';
 import { isEqual } from 'lodash';
 
 import { AppContextStorage } from '../../../auth/app-context-storage';
@@ -16,6 +20,9 @@ import { NotificationsService } from '../../notifications/services/notifications
 import { ProjectsDao } from '../../projects/dao/projects.dao';
 import { ThreadsDao } from '../../threads/dao/threads.dao';
 import { ThreadResumeQueueService } from '../../threads/services/thread-resume-queue.service';
+import { ThreadStatusTransitionService } from '../../threads/services/thread-status-transition.service';
+import type { ThreadsService } from '../../threads/services/threads.service';
+import { THREADS_SERVICE_TOKEN } from '../../threads/services/threads.tokens';
 import { ThreadStatus } from '../../threads/threads.types';
 import { clearWaitMetadata } from '../../threads/threads.utils';
 import { GraphDao } from '../dao/graph.dao';
@@ -62,6 +69,10 @@ export class GraphsService {
     private readonly threadResumeQueueService: ThreadResumeQueueService,
     private readonly costLimitResolver: CostLimitResolverService,
     private readonly checkpointStateService: CheckpointStateService,
+    private readonly transitionService: ThreadStatusTransitionService,
+    private readonly logger: DefaultLogger,
+    @Inject(THREADS_SERVICE_TOKEN)
+    private readonly threadsService: ThreadsService,
   ) {}
 
   private extractGraphCostLimitUsd(entity: GraphEntity): number | null {
@@ -86,7 +97,6 @@ export class GraphsService {
     ctx: AppContextStorage,
     data: CreateGraphDto,
   ): Promise<GraphDto> {
-    // Validate schema before creating the graph
     this.graphCompiler.validateSchema(data.schema);
 
     const userId = ctx.checkSub();
@@ -375,7 +385,6 @@ export class GraphsService {
             { enqueueImmediately: false },
           );
 
-          // Return updated graph state with the created revision
           graph.targetVersion = revision.toVersion;
           return {
             response: {
@@ -390,7 +399,6 @@ export class GraphsService {
           };
         }
 
-        // No schema change (sync-only or no-op).
         return {
           response: {
             graph: this.prepareResponse(graph),
@@ -427,7 +435,6 @@ export class GraphsService {
       throw new NotFoundException('GRAPH_NOT_FOUND');
     }
 
-    // Stop and destroy the graph if it's running
     if (graph.status === GraphStatus.Running) {
       await this.destroy(ctx, id);
     }
@@ -461,7 +468,6 @@ export class GraphsService {
 
     const schema = graph.schema;
 
-    // Update status to compiling
     await this.graphDao.updateById(id, {
       status: GraphStatus.Compiling,
       error: undefined,
@@ -486,7 +492,6 @@ export class GraphsService {
         version: graph.version,
       });
 
-      // Update status to running
       await this.graphDao.updateById(id, {
         status: GraphStatus.Running,
         error: undefined,
@@ -512,7 +517,6 @@ export class GraphsService {
 
       return this.prepareResponse(updated);
     } catch (error) {
-      // Cleanup registry if it was registered
       if (this.graphRegistry.get(id)) {
         await this.graphRegistry.destroy(id);
       }
@@ -559,13 +563,33 @@ export class GraphsService {
       return;
     }
 
-    await Promise.allSettled(
-      runningThreads.map((thread) =>
-        this.threadsDao.updateById(thread.id, {
-          status: ThreadStatus.Stopped,
-        }),
-      ),
+    const results = await Promise.allSettled(
+      runningThreads.map((thread) => {
+        const patch = this.transitionService.computeTransition(
+          thread,
+          ThreadStatus.Stopped,
+        );
+        return this.threadsDao.updateById(thread.id, patch);
+      }),
     );
+    for (const [idx, result] of results.entries()) {
+      if (result.status === 'rejected') {
+        const thread = runningThreads[idx]!;
+        const reason =
+          result.reason instanceof Error
+            ? result.reason
+            : new Error(String(result.reason));
+        this.logger.error(
+          reason,
+          'Failed to stop running thread during graph stop',
+          {
+            threadId: thread.id,
+            externalThreadId: thread.externalThreadId,
+            graphId,
+          },
+        );
+      }
+    }
   }
 
   private async emitGraphPreview(
@@ -638,7 +662,6 @@ export class GraphsService {
       throw new NotFoundException('GRAPH_NOT_FOUND');
     }
 
-    // Destroy the graph if it's in the registry
     if (this.graphRegistry.get(id)) {
       await this.graphRegistry.destroy(id);
     }
@@ -657,7 +680,6 @@ export class GraphsService {
       // Best effort: keep destroy flowing even if resume job cancellation fails
     }
 
-    // Update status to stopped
     await this.graphDao.updateById(id, {
       status: GraphStatus.Stopped,
       error: undefined,
@@ -689,7 +711,6 @@ export class GraphsService {
     dto: ExecuteTriggerDto,
   ): Promise<ExecuteTriggerResponseDto> {
     const userId = ctx.checkSub();
-    // Verify graph exists and user has access
     const graph = await this.graphDao.getOne({
       id: graphId,
       createdBy: userId,
@@ -699,7 +720,6 @@ export class GraphsService {
       throw new NotFoundException('GRAPH_NOT_FOUND');
     }
 
-    // Get the compiled graph from registry
     const compiledGraph = this.graphRegistry.get(graphId);
     if (!compiledGraph || compiledGraph.status !== GraphStatus.Running) {
       throw new BadRequestException(
@@ -708,7 +728,6 @@ export class GraphsService {
       );
     }
 
-    // Get the trigger node
     const triggerNode = this.graphRegistry.getNode<BaseTrigger>(
       graphId,
       triggerId,
@@ -726,7 +745,6 @@ export class GraphsService {
 
     const trigger = triggerNode.instance;
 
-    // Check if trigger is started
     if (!trigger.isStarted) {
       throw new BadRequestException(
         'TRIGGER_NOT_STARTED',
@@ -858,17 +876,34 @@ export class GraphsService {
           nextMetadata as { effectiveCostLimitUsd?: number | null }
         ).effectiveCostLimitUsd = effectiveCostLimitUsd;
 
-        await this.threadsDao.updateById(
-          existingThread.id,
-          {
-            metadata: nextMetadata,
-            ...(nextStatus ? { status: nextStatus } : {}),
-          },
-          em,
-        );
+        if (nextStatus === ThreadStatus.Running) {
+          // Compute the transition patch (sets runningStartedAt atomically alongside
+          // status) and merge with metadata for a single DB round trip — avoids the
+          // stale-drift window where status=Running but runningStartedAt=null.
+          const patch = this.transitionService.computeTransition(
+            existingThread,
+            ThreadStatus.Running,
+          );
+          await this.threadsDao.updateById(
+            existingThread.id,
+            { ...patch, metadata: nextMetadata },
+            em,
+          );
+        } else {
+          // No status transition — only refresh metadata (e.g. cost-limit fields).
+          await this.threadsDao.updateById(
+            existingThread.id,
+            { metadata: nextMetadata },
+            em,
+          );
+        }
       });
     }
 
+    // Why: capture eagerStartedAt before invokeAgent so the running timer
+    // includes agent startup time (connection setup, queue drain, etc.) —
+    // using new Date() after awaiting invokeAgent would undercount elapsed ms.
+    const eagerStartedAt = new Date();
     const res = await trigger.invokeAgent(messages, {
       configurable: {
         thread_id: dto.threadSubId,
@@ -896,16 +931,20 @@ export class GraphsService {
     };
 
     // Eagerly upsert the thread row so the frontend can immediately load it.
-    // upsertByExternalThreadId merges only status/lastRunId/updatedAt on
-    // conflict, so a concurrent AgentInvokeNotificationHandler upsert and the
-    // upper transactional metadata update both remain authoritative for their
-    // respective fields — no PK race, no metadata stomp.
-    await this.threadsDao.upsertByExternalThreadId({
+    // ThreadsService.upsertRunningThread merges only status/lastRunId/
+    // updatedAt/runningStartedAt/totalRunningMs on conflict, so a concurrent
+    // AgentInvokeNotificationHandler upsert and the upper transactional
+    // metadata update both remain authoritative for their respective fields —
+    // no PK race, no metadata stomp. eagerStartedAt seeds the runtime timer
+    // so the running clock includes agent-startup time.
+    await this.threadsService.upsertRunningThread({
       graphId,
       createdBy: userId,
       projectId: graph.projectId,
       externalThreadId,
       status: ThreadStatus.Running,
+      runningStartedAt: eagerStartedAt,
+      totalRunningMs: 0,
       metadata: initialMetadata,
     });
 

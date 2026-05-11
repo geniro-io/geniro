@@ -34,6 +34,8 @@ describe('AgentMessageNotificationHandler', () => {
     metadata: {},
     lastRunId: undefined,
     status: 'running' as ThreadEntity['status'],
+    runningStartedAt: null,
+    totalRunningMs: 0,
     createdAt: new Date('2024-01-01T00:00:00Z'),
     updatedAt: new Date('2024-01-01T00:00:00Z'),
     deletedAt: null,

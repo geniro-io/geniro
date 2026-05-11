@@ -79,6 +79,8 @@ export const StorybookChatsHarness: React.FC<StorybookChatsHarnessProps> = ({
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       name: null,
+      runningStartedAt: new Date().toISOString(),
+      totalRunningMs: 0,
     },
   ]);
 
@@ -243,6 +245,9 @@ export const StorybookChatsHarness: React.FC<StorybookChatsHarnessProps> = ({
         inFlightSum={usageStats.selectedThreadHeaderInFlightSum}
         contextPercent={usageStats.selectedThreadHeaderContextPercent}
         contextMaxTokens={usageStats.selectedThreadHeaderContextMaxTokens}
+        runningStartedAt={selectedThread?.runningStartedAt}
+        totalRunningMs={selectedThread?.totalRunningMs}
+        threadStatus={selectedThread?.status}
       />
       <ThreadMessagesView
         messages={messagesForSelectedThread}

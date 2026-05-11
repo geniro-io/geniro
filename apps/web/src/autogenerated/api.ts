@@ -2963,6 +2963,18 @@ export interface ThreadDto {
    * @type {string}
    * @memberof ThreadDto
    */
+  'runningStartedAt': string | null;
+  /**
+   * Cumulative milliseconds the thread has spent in Running status
+   * @type {number}
+   * @memberof ThreadDto
+   */
+  'totalRunningMs': number;
+  /**
+   *
+   * @type {string}
+   * @memberof ThreadDto
+   */
   'createdAt': string;
   /**
    *

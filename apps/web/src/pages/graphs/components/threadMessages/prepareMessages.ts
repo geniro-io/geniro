@@ -66,9 +66,9 @@ const extractSubagentModel = (
  *    Pass 1 — credit chat / reasoning / system items and nested
  *      subagent/communication blocks; remember each item's `requestTokenUsage`
  *      object identity in `credited` (a WeakSet).
- *    Pass 2 — walk tool items.  Always contribute `durationMs` + `count`.
- *      Credit `totalTokens` / `totalPrice` only when the item's
- *      `requestTokenUsage` ref is NOT already in `credited`, then add it.
+ *    Pass 2 — walk tool items.  Always contribute `count`.  Credit
+ *      `totalTokens` / `totalPrice` only when the item's `requestTokenUsage`
+ *      ref is NOT already in `credited`, then add it.
  *
  *  Why reference equality is sound: `prepareReadyMessages` propagates the
  *  SAME `requestTokenUsage` object from a parent AI ThreadMessageDto to BOTH
@@ -90,7 +90,6 @@ const accumulatePreparedStatistics = (
 ): SubagentStatistics | undefined => {
   let totalTokens = 0;
   let totalPrice = 0;
-  let durationMs = 0;
   let count = 0;
   const credited = new WeakSet<object>();
 
@@ -109,9 +108,6 @@ const accumulatePreparedStatistics = (
       if (typeof s.usage?.totalTokens === 'number') {
         totalTokens += s.usage.totalTokens;
       }
-      if (typeof s.usage?.durationMs === 'number') {
-        durationMs += s.usage.durationMs;
-      }
     } else if (item.type !== 'tool') {
       // chat / reasoning / system — have a .message (ThreadMessageDto).
       const usage =
@@ -127,29 +123,23 @@ const accumulatePreparedStatistics = (
       if (typeof usage.totalPrice === 'number') {
         totalPrice += usage.totalPrice;
       }
-      const dur = extractDurationMs(item.message.message);
-      if (typeof dur === 'number') {
-        durationMs += dur;
-      }
     }
   }
 
-  // Pass 2: tool items.  Always durationMs + count.  Tokens/price only when
-  // no sibling chat (or earlier tool sibling) has already credited the usage.
+  // Pass 2: tool items.  Tokens/price only when no sibling chat (or earlier
+  // tool sibling) has already credited the usage.  Per-block durationMs has
+  // been removed in favour of the live thread-runtime timer; per-tool /
+  // per-LLM-call leaf durations are still surfaced on the tool block itself.
   for (const item of prepared) {
     if (item.type !== 'tool') {
       continue;
     }
     const usage = item.requestTokenUsage;
-    const hasDuration = typeof item.durationMs === 'number';
-    if (!usage && !hasDuration) {
+    if (!usage) {
       continue;
     }
     count++;
-    if (hasDuration) {
-      durationMs += item.durationMs!;
-    }
-    if (usage && !credited.has(usage as unknown as object)) {
+    if (!credited.has(usage as unknown as object)) {
       credited.add(usage as unknown as object);
       if (typeof usage.totalTokens === 'number') {
         totalTokens += usage.totalTokens;
@@ -171,33 +161,6 @@ const accumulatePreparedStatistics = (
     usage: {
       totalTokens,
       totalPrice,
-      durationMs,
-    },
-  };
-};
-
-/** When backend-provided statistics lack durationMs, supplement it from
- *  the frontend-accumulated statistics (which derive durationMs from
- *  individual message __requestUsage fields). */
-const supplementDurationMs = (
-  backendStats: SubagentStatistics,
-  accumulatedStats: SubagentStatistics | undefined,
-): SubagentStatistics => {
-  if (
-    typeof backendStats.usage?.durationMs === 'number' &&
-    backendStats.usage.durationMs > 0
-  ) {
-    return backendStats;
-  }
-  const accDuration = accumulatedStats?.usage?.durationMs;
-  if (typeof accDuration !== 'number' || accDuration <= 0) {
-    return backendStats;
-  }
-  return {
-    ...backendStats,
-    usage: {
-      ...backendStats.usage,
-      durationMs: accDuration,
     },
   };
 };
@@ -788,10 +751,8 @@ export const prepareReadyMessages = (
           const backendStats = resultObj?.statistics as
             | SubagentStatistics
             | undefined;
-          const accumulatedStats = accumulatePreparedStatistics(innerPrepared);
-          const statistics = backendStats
-            ? supplementDurationMs(backendStats, accumulatedStats)
-            : accumulatedStats;
+          const statistics =
+            backendStats ?? accumulatePreparedStatistics(innerPrepared);
           const resultText =
             typeof resultObj?.result === 'string'
               ? resultObj.result
@@ -895,11 +856,8 @@ export const prepareReadyMessages = (
           const commBackendStats = commResultObj?.statistics as
             | SubagentStatistics
             | undefined;
-          const commAccumulatedStats =
-            accumulatePreparedStatistics(innerPrepared);
-          const commStatistics = commBackendStats
-            ? supplementDurationMs(commBackendStats, commAccumulatedStats)
-            : commAccumulatedStats;
+          const commStatistics =
+            commBackendStats ?? accumulatePreparedStatistics(innerPrepared);
 
           const parsedArgs = argsToObject(toolArgs);
           const targetNodeId =
@@ -1461,34 +1419,6 @@ export const prepareReadyMessages = (
   // place reasoning as close to the actual agent as possible (e.g. inside a
   // subagent block nested within a communication block).
   result = adoptOrphanStreamingReasoning(result, getRawMsg);
-
-  // Dev-mode invariant check: block duration must equal sum of children durations.
-  if (import.meta.env.DEV) {
-    const checkBlockDuration = (items: PreparedMessage[]): void => {
-      for (const item of items) {
-        if (item.type !== 'subagent' && item.type !== 'communication') {
-          continue;
-        }
-        if (item.innerMessages.length > 0) {
-          checkBlockDuration(item.innerMessages);
-        }
-        const blockDuration = item.statistics?.usage?.durationMs;
-        if (typeof blockDuration !== 'number') {
-          continue;
-        }
-        const childrenSum = accumulatePreparedStatistics(item.innerMessages);
-        const childDuration = childrenSum?.usage?.durationMs ?? 0;
-        if (Math.abs(blockDuration - childDuration) > 1) {
-          console.warn(
-            `[threadMessages] Block duration mismatch for ${item.id}: ` +
-              `block=${blockDuration}ms, children sum=${childDuration}ms ` +
-              `(innerMessages.length=${item.innerMessages.length})`,
-          );
-        }
-      }
-    };
-    checkBlockDuration(result);
-  }
 
   return result;
 };

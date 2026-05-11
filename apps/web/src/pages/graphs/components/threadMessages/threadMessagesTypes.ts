@@ -41,7 +41,6 @@ export interface SubagentStatistics {
     outputTokens?: number;
     currentContext?: number;
     totalPrice?: number;
-    durationMs?: number;
   };
   toolCallsMade?: number;
   totalIterations?: number;

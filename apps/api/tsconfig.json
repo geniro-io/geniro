@@ -4,6 +4,9 @@
   "compilerOptions": {
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-    "verbatimModuleSyntax": false
+    "verbatimModuleSyntax": false,
+    "paths": {
+      "@packages/*": ["../../packages/*/src"]
+    }
   }
 }

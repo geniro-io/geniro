@@ -463,12 +463,13 @@ describe('accumulatePreparedStatistics', () => {
     expect(stats!.usage!.totalTokens).toBe(1000);
   });
 
-  it('1.2 — 3 tool items with durationMs and no sibling chat: all aggregates preserved as genuine 0/sum', () => {
-    // When tool items have durationMs but no sibling chat, they must not
-    // contribute any tokens (which are attributed to the sibling chat item to
-    // avoid double-counting). durationMs is accumulated normally. All aggregates
-    // are preserved as their genuine values — `0` is meaningful (formatUsd/fmtK
-    // render it as "$0.000" / "0") and must not be coerced to undefined.
+  it('1.2 — 3 tool items with no requestTokenUsage and no sibling chat: accumulator returns undefined', () => {
+    // Per-block durationMs aggregates were removed in favour of the live
+    // thread-runtime timer (which counts wall-clock once instead of summing
+    // per-leaf, fixing the parallel-subagent double-count bug). Tools that
+    // carry only a per-leaf durationMs and no requestTokenUsage therefore
+    // contribute nothing to the block-level accumulator; with no usage on
+    // any item the accumulator reports undefined (count = 0).
     const toolA: PreparedMessage = {
       type: 'tool',
       id: 'tool-a',
@@ -495,12 +496,7 @@ describe('accumulatePreparedStatistics', () => {
 
     const stats = _accumulatePreparedStatistics([toolA, toolB, toolC]);
 
-    expect(stats).toBeDefined();
-    // No chat item → no tokens (double-count avoidance) — preserved as 0.
-    expect(stats!.usage!.totalPrice).toBe(0);
-    expect(stats!.usage!.totalTokens).toBe(0);
-    // durationMs is the sum across all three tool items.
-    expect(stats!.usage!.durationMs).toBe(600);
+    expect(stats).toBeUndefined();
   });
 
   it('1.3 — communication child block + 2 outer chat items: totalPrice accumulates from both sources', () => {
@@ -539,7 +535,6 @@ describe('accumulatePreparedStatistics', () => {
         usage: {
           totalPrice: 0.1,
           totalTokens: 500,
-          durationMs: 1000,
         },
       },
     };
@@ -704,8 +699,6 @@ describe('accumulatePreparedStatistics', () => {
     // Credited exactly once via reference dedup — not 3×.
     expect(stats!.usage!.totalPrice).toBeCloseTo(0.02, 10);
     expect(stats!.usage!.totalTokens).toBe(500);
-    // durationMs sums across all tool items normally.
-    expect(stats!.usage!.durationMs).toBe(600);
   });
 });
 

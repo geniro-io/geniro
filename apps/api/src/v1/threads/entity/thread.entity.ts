@@ -70,4 +70,10 @@ export class ThreadEntity extends AuditEntity {
 
   @Property({ type: 'uuid', nullable: true })
   lastRunId?: string;
+
+  @Property({ type: 'timestamptz', nullable: true })
+  runningStartedAt: Date | null = null;
+
+  @Property({ type: 'bigint', default: 0 })
+  totalRunningMs!: number;
 }

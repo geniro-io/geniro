@@ -12,7 +12,6 @@ import {
 } from '../../../notifications/notifications.types';
 import { NotificationsService } from '../../../notifications/services/notifications.service';
 import { ProjectsDao } from '../../../projects/dao/projects.dao';
-import { ThreadsDao } from '../../../threads/dao/threads.dao';
 import { ThreadNameGeneratorService } from '../../../threads/services/thread-name-generator.service';
 import { ThreadsService } from '../../../threads/services/threads.service';
 import { ThreadStatus } from '../../../threads/threads.types';
@@ -31,7 +30,6 @@ export class AgentInvokeNotificationHandler extends BaseNotificationHandler<neve
   readonly pattern = NotificationEvent.AgentInvoke;
 
   constructor(
-    private readonly threadDao: ThreadsDao,
     private readonly graphDao: GraphDao,
     private readonly notificationsService: NotificationsService,
     private readonly threadsService: ThreadsService,
@@ -63,10 +61,12 @@ export class AgentInvokeNotificationHandler extends BaseNotificationHandler<neve
     const externalThreadKey = parentThreadId ?? threadId;
     const isRootThreadExecution = threadId === externalThreadKey;
 
+    const now = new Date();
+
     // Seed effectiveCostLimitUsd into the INSERT-path metadata so the client's
     // header can render the limit on a brand-new thread even when this handler
     // wins the race against executeTrigger's eager creation. On CONFLICT the
-    // upsert's merge list excludes metadata, so this does not overwrite an
+    // upsert preserves existing metadata, so this does not overwrite an
     // already-populated metadata from the eager path or a prior resume.
     const insertMetadata =
       threadMetadata || effectiveCostLimitUsd !== undefined
@@ -78,34 +78,23 @@ export class AgentInvokeNotificationHandler extends BaseNotificationHandler<neve
           }
         : undefined;
 
-    // Upsert: INSERT or ON CONFLICT(externalThreadId) UPDATE status/source/lastRunId.
-    // This eliminates the race condition between executeTrigger (eager thread creation)
-    // and this handler — both can safely write without 23505 unique violations.
-    await this.threadDao.upsertByExternalThreadId({
+    // Start or resume the thread in a single service call. The service owns
+    // the transition machinery: on INSERT, runningStartedAt/totalRunningMs
+    // come from this payload; on CONFLICT the existing row is locked and the
+    // running-timer fields are recomputed via ThreadStatusTransitionService
+    // (idempotent if already Running, fresh resume clock if non-Running).
+    const thread = await this.threadsService.upsertRunningThread({
       graphId,
       createdBy: graph.createdBy,
       projectId: graph.projectId,
       externalThreadId: externalThreadKey,
       status: ThreadStatus.Running,
+      runningStartedAt: now,
+      totalRunningMs: 0,
       ...(source ? { source } : {}),
       ...(runId ? { lastRunId: runId } : {}),
       ...(insertMetadata ? { metadata: insertMetadata } : {}),
     });
-
-    // Fetch the full entity after upsert to get all fields (including name, metadata
-    // that are not overwritten on conflict).
-    const thread = await this.threadDao.getOne({
-      externalThreadId: externalThreadKey,
-      graphId,
-    });
-
-    if (!thread) {
-      this.logger.error(
-        new Error('Thread missing after upsert'),
-        `Thread not found after upsert for externalThreadId=${externalThreadKey}, graphId=${graphId}`,
-      );
-      return [];
-    }
 
     // A thread without a name was just created (either by this upsert or by the
     // eager path in executeTrigger). Emit ThreadCreate so the frontend picks it up.

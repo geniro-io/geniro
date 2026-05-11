@@ -1,3 +1,4 @@
+import { EntityManager } from '@mikro-orm/postgresql';
 import { StreamableFile } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { DefaultLogger } from '@packages/common';
@@ -17,6 +18,7 @@ import { MessageEntity } from '../entity/message.entity';
 import { ThreadEntity } from '../entity/thread.entity';
 import { ThreadStatus } from '../threads.types';
 import { ThreadResumeService } from './thread-resume.service';
+import { ThreadStatusTransitionService } from './thread-status-transition.service';
 import { ThreadsService } from './threads.service';
 
 describe('ThreadsService', () => {
@@ -28,6 +30,7 @@ describe('ThreadsService', () => {
   let graphDao: GraphDao;
   let graphsService: GraphsService;
   let threadResumeService: ThreadResumeService;
+  let transitionService: ThreadStatusTransitionService;
 
   const mockUserId = 'user-123';
   const mockGraphId = 'graph-456';
@@ -101,6 +104,7 @@ describe('ThreadsService', () => {
             create: vi.fn(),
             updateById: vi.fn(),
             deleteById: vi.fn(),
+            insertIfNotExists: vi.fn(),
           },
         },
         {
@@ -139,6 +143,25 @@ describe('ThreadsService', () => {
             cancelWait: vi.fn(),
           },
         },
+        {
+          provide: ThreadStatusTransitionService,
+          useValue: {
+            computeTransition: vi.fn(),
+          },
+        },
+        {
+          provide: EntityManager,
+          useValue: {
+            fork: vi.fn().mockReturnValue({
+              transactional: vi.fn(
+                async (cb: (em: EntityManager) => Promise<unknown>) =>
+                  cb({
+                    flush: vi.fn().mockResolvedValue(undefined),
+                  } as unknown as EntityManager),
+              ),
+            }),
+          },
+        },
       ],
     }).compile();
 
@@ -153,6 +176,9 @@ describe('ThreadsService', () => {
     graphDao = module.get<GraphDao>(GraphDao);
     graphsService = module.get<GraphsService>(GraphsService);
     threadResumeService = module.get<ThreadResumeService>(ThreadResumeService);
+    transitionService = module.get<ThreadStatusTransitionService>(
+      ThreadStatusTransitionService,
+    );
   });
 
   describe('getThreads', () => {
@@ -486,6 +512,86 @@ describe('ThreadsService', () => {
       const result = await service.prepareThreadsResponse([mockThread]);
 
       expect(result[0]!.stopReason).toBe('cost_limit');
+    });
+  });
+
+  describe('prepareThreadsResponse — runningStartedAt & totalRunningMs', () => {
+    it('returns both timer fields populated for a Running thread', async () => {
+      const startedAt = new Date('2024-06-01T10:00:00Z');
+      const mockThread = createMockThreadEntity({
+        status: ThreadStatus.Running,
+        runningStartedAt: startedAt,
+        totalRunningMs: 5000,
+      });
+
+      vi.spyOn(threadsDao, 'getOne').mockResolvedValue(mockThread);
+
+      const result = await service.getThreadById(mockCtx, mockThreadId);
+
+      expect(result.runningStartedAt).toBe(startedAt.toISOString());
+      expect(result.totalRunningMs).toBe(5000);
+    });
+
+    it('returns runningStartedAt as null and totalRunningMs populated for a Stopped thread', async () => {
+      const mockThread = createMockThreadEntity({
+        status: ThreadStatus.Stopped,
+        runningStartedAt: null,
+        totalRunningMs: 12000,
+      });
+
+      vi.spyOn(threadsDao, 'getOne').mockResolvedValue(mockThread);
+
+      const result = await service.getThreadById(mockCtx, mockThreadId);
+
+      expect(result.runningStartedAt).toBeNull();
+      expect(result.totalRunningMs).toBe(12000);
+    });
+
+    it('nulls out runningStartedAt and logs a warning when non-Running thread has stale runningStartedAt', async () => {
+      const staleDate = new Date('2024-05-01T08:00:00Z');
+      const mockThread = createMockThreadEntity({
+        status: ThreadStatus.Stopped,
+        runningStartedAt: staleDate,
+        totalRunningMs: 3000,
+      });
+
+      vi.spyOn(threadsDao, 'getOne').mockResolvedValue(mockThread);
+
+      const result = await service.getThreadById(mockCtx, mockThreadId);
+
+      expect(result.runningStartedAt).toBeNull();
+      expect(result.totalRunningMs).toBe(3000);
+      expect(mockLogger.warn).toHaveBeenCalledWith(
+        'Thread has stale runningStartedAt — DB invariant violated',
+        { threadId: mockThreadId, status: ThreadStatus.Stopped },
+      );
+    });
+
+    it('logs a warning when a Running thread has null runningStartedAt (inverse stale-drift)', async () => {
+      // The inverse of the existing stale-drift defense: a thread in status
+      // Running MUST have a non-null runningStartedAt. If the DB row says
+      // Running + runningStartedAt=null, the writer that flipped status to
+      // Running failed to set the clock — an invariant violation symmetric to
+      // the existing "non-Running + non-null runningStartedAt" case. The
+      // frontend's live duration hook silently treats a null runningStartedAt
+      // on a Running thread as "not live" and freezes at totalRunningMs, so
+      // operators must see this in logs to debug missing timer writes.
+      // Today no warning fires for the inverse case — this test fails.
+      mockLogger.warn.mockClear();
+      const mockThread = createMockThreadEntity({
+        status: ThreadStatus.Running,
+        runningStartedAt: null,
+        totalRunningMs: 0,
+      });
+
+      vi.spyOn(threadsDao, 'getOne').mockResolvedValue(mockThread);
+
+      await service.getThreadById(mockCtx, mockThreadId);
+
+      expect(mockLogger.warn).toHaveBeenCalledWith(
+        expect.stringMatching(/running.*runningstartedat/i),
+        expect.objectContaining({ threadId: mockThreadId }),
+      );
     });
   });
 
@@ -2726,7 +2832,7 @@ describe('ThreadsService', () => {
         'Graph execution was stopped',
       );
       // When stopped via event chain, no direct DB update or notification emit
-      expect(threadsDao.updateById).not.toHaveBeenCalled();
+      expect(transitionService.computeTransition).not.toHaveBeenCalled();
       expect(notificationsService.emit).not.toHaveBeenCalled();
       expect(result).toMatchObject({
         id: mockThreadId,
@@ -2742,17 +2848,26 @@ describe('ThreadsService', () => {
 
       vi.mocked(threadsDao.getOne).mockResolvedValue(thread);
       vi.mocked(graphsService.stopThreadExecution).mockResolvedValue(false);
-      vi.mocked(threadsDao.updateById).mockResolvedValue(undefined as never);
+      vi.mocked(transitionService.computeTransition).mockReturnValue({
+        status: ThreadStatus.Stopped,
+        runningStartedAt: null,
+        totalRunningMs: 0,
+      });
+      vi.mocked(threadsDao.updateById).mockResolvedValue(1);
       vi.mocked(threadsDao.getById).mockResolvedValue(updatedThread);
 
       const result = await service.stopThread(mockCtx, mockThreadId);
 
-      // The direct-DB fallback also clears stale cost-limit metadata so a
-      // manual stop after an auto-stop doesn't leave a stale stopReason.
-      expect(threadsDao.updateById).toHaveBeenCalledWith(mockThreadId, {
-        status: ThreadStatus.Stopped,
-        metadata: expect.any(Object),
-      });
+      // The direct-DB fallback uses computeTransition + updateById and also
+      // clears stale cost-limit metadata so a manual stop after an auto-stop
+      // doesn't leave a stale stopReason.
+      expect(threadsDao.updateById).toHaveBeenCalledWith(
+        thread.id,
+        expect.objectContaining({
+          status: ThreadStatus.Stopped,
+          metadata: expect.any(Object),
+        }),
+      );
       expect(notificationsService.emit).toHaveBeenCalledWith({
         type: NotificationEvent.ThreadUpdate,
         graphId: thread.graphId,
@@ -2780,15 +2895,23 @@ describe('ThreadsService', () => {
       vi.mocked(graphsService.stopThreadExecution).mockRejectedValue(
         new Error('Graph runtime error'),
       );
-      vi.mocked(threadsDao.updateById).mockResolvedValue(undefined as never);
+      vi.mocked(transitionService.computeTransition).mockReturnValue({
+        status: ThreadStatus.Stopped,
+        runningStartedAt: null,
+        totalRunningMs: 0,
+      });
+      vi.mocked(threadsDao.updateById).mockResolvedValue(1);
       vi.mocked(threadsDao.getById).mockResolvedValue(updatedThread);
 
       const result = await service.stopThread(mockCtx, mockThreadId);
 
-      expect(threadsDao.updateById).toHaveBeenCalledWith(mockThreadId, {
-        status: ThreadStatus.Stopped,
-        metadata: expect.any(Object),
-      });
+      expect(threadsDao.updateById).toHaveBeenCalledWith(
+        thread.id,
+        expect.objectContaining({
+          status: ThreadStatus.Stopped,
+          metadata: expect.any(Object),
+        }),
+      );
       expect(notificationsService.emit).toHaveBeenCalledWith({
         type: NotificationEvent.ThreadUpdate,
         graphId: thread.graphId,
@@ -2814,7 +2937,7 @@ describe('ThreadsService', () => {
       const result = await service.stopThread(mockCtx, mockThreadId);
 
       expect(graphsService.stopThreadExecution).not.toHaveBeenCalled();
-      expect(threadsDao.updateById).not.toHaveBeenCalled();
+      expect(transitionService.computeTransition).not.toHaveBeenCalled();
       expect(notificationsService.emit).not.toHaveBeenCalled();
       expect(result).toMatchObject({
         id: mockThreadId,
@@ -3215,6 +3338,115 @@ describe('ThreadsService', () => {
 
       await expect(service.cancelWait(otherCtx, mockThreadId)).rejects.toThrow(
         '[THREAD_NOT_FOUND] An exception has occurred',
+      );
+    });
+  });
+
+  describe('upsertRunningThread', () => {
+    const payload = () => ({
+      graphId: 'graph-1',
+      createdBy: 'user-1',
+      projectId: 'project-1',
+      externalThreadId: 'ext-1',
+      status: ThreadStatus.Running as typeof ThreadStatus.Running,
+      runningStartedAt: new Date('2026-05-01T10:00:00Z'),
+      totalRunningMs: 0,
+    });
+
+    it('throws InternalException when status is not Running (runtime guard)', async () => {
+      await expect(
+        service.upsertRunningThread({
+          ...payload(),
+          status: ThreadStatus.Done as unknown as typeof ThreadStatus.Running,
+        }),
+      ).rejects.toThrow(/upsertRunningThread requires status=Running/);
+    });
+
+    it('returns the inserted entity and never enters the conflict path when INSERT succeeds', async () => {
+      const inserted = { id: 't-1', status: ThreadStatus.Running };
+      vi.spyOn(threadsDao, 'insertIfNotExists').mockResolvedValue(
+        inserted as never,
+      );
+
+      const result = await service.upsertRunningThread(payload());
+
+      expect(result).toBe(inserted);
+      expect(threadsDao.insertIfNotExists).toHaveBeenCalledOnce();
+      expect(threadsDao.getOne).not.toHaveBeenCalled();
+      expect(transitionService.computeTransition).not.toHaveBeenCalled();
+    });
+
+    it('on INSERT conflict locks via PESSIMISTIC_WRITE, applies computeTransition patch, and flushes', async () => {
+      vi.spyOn(threadsDao, 'insertIfNotExists').mockResolvedValue(null);
+      const existing = {
+        id: 't-2',
+        externalThreadId: 'ext-1',
+        status: ThreadStatus.Done,
+        runningStartedAt: null,
+        totalRunningMs: 7_000,
+      };
+      vi.spyOn(threadsDao, 'getOne').mockResolvedValue(existing as never);
+      const patch = {
+        status: ThreadStatus.Running,
+        runningStartedAt: new Date('2026-05-01T10:00:00Z'),
+        totalRunningMs: 7_000,
+      };
+      vi.mocked(transitionService.computeTransition).mockReturnValue(patch);
+
+      const result = await service.upsertRunningThread(payload());
+
+      expect(threadsDao.getOne).toHaveBeenCalledWith(
+        { externalThreadId: 'ext-1' },
+        expect.objectContaining({ lockMode: expect.anything() }),
+        expect.anything(),
+      );
+      expect(transitionService.computeTransition).toHaveBeenCalledWith(
+        existing,
+        ThreadStatus.Running,
+        expect.any(Date),
+      );
+      // computeTransition patch applied via Object.assign
+      expect(result).toBe(existing);
+      expect(result.status).toBe(ThreadStatus.Running);
+      expect(result.runningStartedAt).toEqual(new Date('2026-05-01T10:00:00Z'));
+      expect(result.totalRunningMs).toBe(7_000);
+    });
+
+    it('preserves lastRunId when caller omits it; overwrites when provided', async () => {
+      vi.spyOn(threadsDao, 'insertIfNotExists').mockResolvedValue(null);
+      const existing = {
+        id: 't-3',
+        externalThreadId: 'ext-1',
+        status: ThreadStatus.Running,
+        runningStartedAt: new Date('2026-05-01T09:00:00Z'),
+        totalRunningMs: 0,
+        lastRunId: 'run-existing',
+      };
+      vi.spyOn(threadsDao, 'getOne').mockResolvedValue(existing as never);
+      vi.mocked(transitionService.computeTransition).mockReturnValue({
+        status: ThreadStatus.Running,
+        runningStartedAt: existing.runningStartedAt,
+        totalRunningMs: 0,
+      });
+
+      // Without lastRunId — must NOT overwrite
+      const omitted = await service.upsertRunningThread(payload());
+      expect(omitted.lastRunId).toBe('run-existing');
+
+      // With lastRunId — must overwrite
+      const overwritten = await service.upsertRunningThread({
+        ...payload(),
+        lastRunId: 'run-new',
+      });
+      expect(overwritten.lastRunId).toBe('run-new');
+    });
+
+    it('throws UPSERT_ROW_VANISHED when row disappears between INSERT and SELECT FOR UPDATE', async () => {
+      vi.spyOn(threadsDao, 'insertIfNotExists').mockResolvedValue(null);
+      vi.spyOn(threadsDao, 'getOne').mockResolvedValue(null);
+
+      await expect(service.upsertRunningThread(payload())).rejects.toThrow(
+        /upsertRunningThread: row vanished/,
       );
     });
   });

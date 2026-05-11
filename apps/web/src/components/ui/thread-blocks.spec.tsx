@@ -240,7 +240,7 @@ describe('SubagentBlock — footer tokens source', () => {
       <SubagentBlock
         status="done"
         statistics={{
-          usage: { totalTokens: 12345, totalPrice: 0.053, durationMs: 1000 },
+          usage: { totalTokens: 12345, totalPrice: 0.053 },
         }}>
         <div>child</div>
       </SubagentBlock>,
@@ -257,7 +257,7 @@ describe('SubagentBlock — footer tokens source', () => {
       <SubagentBlock
         status="running"
         statistics={{
-          usage: { totalTokens: 0, totalPrice: 0, durationMs: 1500 },
+          usage: { totalTokens: 0, totalPrice: 0 },
         }}>
         <div>child</div>
       </SubagentBlock>,

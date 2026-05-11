@@ -1136,6 +1136,21 @@ export const ChatsPage = () => {
                           contextMaxTokens={
                             selectedThreadHeaderContextMaxTokens
                           }
+                          runningStartedAt={
+                            'isDraft' in selectedThread
+                              ? undefined
+                              : selectedThread.runningStartedAt
+                          }
+                          totalRunningMs={
+                            'isDraft' in selectedThread
+                              ? undefined
+                              : selectedThread.totalRunningMs
+                          }
+                          threadStatus={
+                            'isDraft' in selectedThread
+                              ? undefined
+                              : selectedThread.status
+                          }
                         />
                       </div>
                     </div>
