@@ -42,13 +42,23 @@ export class ThreadsDao extends BaseDao<ThreadEntity> {
   }
 
   /**
-   * Inserts a thread or updates it on externalThreadId conflict.
-   * On conflict, merges: status, lastRunId, updatedAt, runningStartedAt, totalRunningMs.
-   * Source is only set on first insert — never overwritten on conflict.
-   * Metadata is intentionally excluded from onConflictMergeFields — it is preserved
-   * across conflict to avoid clobbering values set by the eager-create path (e.g.
-   * effectiveCostLimitUsd). Metadata writes flow through the dedicated updateById path.
-   * Returns the upserted row.
+   * Inserts a thread or updates it on externalThreadId conflict, returning the
+   * upserted row. Single SQL statement: callers never need a pre-fetch or a
+   * post-fetch.
+   *
+   * Conflict-merge contract:
+   *   - status, last_run_id, updated_at: overwritten from the incoming row
+   *     (last_run_id via COALESCE — a null EXCLUDED value preserves existing).
+   *   - source, metadata: insert-only, preserved on conflict. Metadata
+   *     specifically must NOT be clobbered (effectiveCostLimitUsd lives there).
+   *   - running_started_at: CASE on the existing row's status. Already-Running
+   *     threads keep their clock (idempotent); non-Running → Running takes the
+   *     incoming `now` (resume). Encodes the "into-Running" branch of
+   *     ThreadStatusTransitionService.computeTransition directly in SQL.
+   *   - total_running_ms: always preserved on conflict. The accumulator is
+   *     owned exclusively by out-of-Running transitions via
+   *     updateStatusWithAccumulator; the upsert path never writes it on
+   *     update.
    */
   async upsertByExternalThreadId(
     data: Pick<
@@ -66,17 +76,47 @@ export class ThreadsDao extends BaseDao<ThreadEntity> {
         >
       >,
   ): Promise<ThreadEntity> {
-    return await this.getRepo().upsert(data, {
-      onConflictFields: ['externalThreadId'],
-      onConflictAction: 'merge',
-      onConflictMergeFields: [
-        'status',
-        'lastRunId',
-        'updatedAt',
-        'runningStartedAt',
-        'totalRunningMs',
-      ],
-    });
+    const sql = `INSERT INTO threads (
+      created_by, project_id, graph_id, external_thread_id,
+      status, last_run_id, source, metadata,
+      running_started_at, total_running_ms
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?)
+    ON CONFLICT (external_thread_id) DO UPDATE SET
+      status = EXCLUDED.status,
+      last_run_id = COALESCE(EXCLUDED.last_run_id, threads.last_run_id),
+      updated_at = now(),
+      running_started_at = CASE WHEN threads.status = ?
+        THEN threads.running_started_at
+        ELSE EXCLUDED.running_started_at
+      END,
+      total_running_ms = threads.total_running_ms
+    RETURNING *`;
+
+    const params = [
+      data.createdBy,
+      data.projectId,
+      data.graphId,
+      data.externalThreadId,
+      data.status,
+      data.lastRunId ?? null,
+      data.source ?? null,
+      data.metadata != null ? JSON.stringify(data.metadata) : null,
+      data.runningStartedAt ?? null,
+      data.totalRunningMs ?? 0,
+      ThreadStatus.Running,
+    ];
+
+    const rows = await this.em
+      .getConnection()
+      .execute<Record<string, unknown>[]>(sql, params);
+    const row = rows[0];
+    if (!row) {
+      throw new Error(
+        `upsertByExternalThreadId returned no row for externalThreadId=${data.externalThreadId}`,
+      );
+    }
+    return this.em.map(ThreadEntity, row);
   }
 
   /**

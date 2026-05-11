@@ -14,7 +14,6 @@ import { NotificationsService } from '../../../notifications/services/notificati
 import { ProjectsDao } from '../../../projects/dao/projects.dao';
 import { ThreadsDao } from '../../../threads/dao/threads.dao';
 import { ThreadNameGeneratorService } from '../../../threads/services/thread-name-generator.service';
-import { ThreadStatusTransitionService } from '../../../threads/services/thread-status-transition.service';
 import { ThreadsService } from '../../../threads/services/threads.service';
 import { ThreadStatus } from '../../../threads/threads.types';
 import { BaseNotificationHandler } from './base-notification-handler';
@@ -41,7 +40,6 @@ export class AgentInvokeNotificationHandler extends BaseNotificationHandler<neve
     private readonly logger: DefaultLogger,
     private readonly projectsDao: ProjectsDao,
     private readonly graphRegistry: GraphRegistry,
-    private readonly transitionService: ThreadStatusTransitionService,
   ) {
     super();
   }
@@ -67,34 +65,10 @@ export class AgentInvokeNotificationHandler extends BaseNotificationHandler<neve
 
     const now = new Date();
 
-    // Look up the existing thread before upsert to compute the correct running-time
-    // accumulator fields. The upsert path cannot use updateStatusWithAccumulator
-    // (which requires updateById), so we drive the transition through computeTransition.
-    // When no thread exists yet, we use a synthetic Done-status seed so that
-    // computeTransition produces the same result as the old new-thread branch
-    // (runningStartedAt = now, totalRunningMs = 0) — keeping the transition logic in
-    // a single source of truth instead of duplicating it here.
-    const existing = await this.threadsDao.getOne({
-      externalThreadId: externalThreadKey,
-      projectId: graph.projectId,
-    });
-
-    const seed = existing ?? {
-      status: ThreadStatus.Done,
-      runningStartedAt: null,
-      totalRunningMs: 0,
-    };
-    const patch = this.transitionService.computeTransition(
-      seed,
-      ThreadStatus.Running,
-      now,
-    );
-    const { runningStartedAt, totalRunningMs } = patch;
-
     // Seed effectiveCostLimitUsd into the INSERT-path metadata so the client's
     // header can render the limit on a brand-new thread even when this handler
     // wins the race against executeTrigger's eager creation. On CONFLICT the
-    // upsert's merge list excludes metadata, so this does not overwrite an
+    // upsert preserves existing metadata, so this does not overwrite an
     // already-populated metadata from the eager path or a prior resume.
     const insertMetadata =
       threadMetadata || effectiveCostLimitUsd !== undefined
@@ -106,36 +80,23 @@ export class AgentInvokeNotificationHandler extends BaseNotificationHandler<neve
           }
         : undefined;
 
-    // Upsert: INSERT or ON CONFLICT(externalThreadId) UPDATE status/source/lastRunId/timer fields.
-    // This eliminates the race condition between executeTrigger (eager thread creation)
-    // and this handler — both can safely write without 23505 unique violations.
-    await this.threadsDao.upsertByExternalThreadId({
+    // Single SQL upsert. The DAO's ON CONFLICT clause uses a CASE on the
+    // existing row's status, so passing `runningStartedAt: now` is safe in both
+    // the "fresh thread" branch (used) and the "already-Running" branch
+    // (ignored — existing clock preserved). totalRunningMs=0 is only used on
+    // INSERT; on CONFLICT the accumulator is preserved by SQL.
+    const thread = await this.threadsDao.upsertByExternalThreadId({
       graphId,
       createdBy: graph.createdBy,
       projectId: graph.projectId,
       externalThreadId: externalThreadKey,
       status: ThreadStatus.Running,
-      runningStartedAt,
-      totalRunningMs,
+      runningStartedAt: now,
+      totalRunningMs: 0,
       ...(source ? { source } : {}),
       ...(runId ? { lastRunId: runId } : {}),
       ...(insertMetadata ? { metadata: insertMetadata } : {}),
     });
-
-    // Fetch the full entity after upsert to get all fields (including name, metadata
-    // that are not overwritten on conflict).
-    const thread = await this.threadsDao.getOne({
-      externalThreadId: externalThreadKey,
-      graphId,
-    });
-
-    if (!thread) {
-      this.logger.error(
-        new Error('Thread missing after upsert'),
-        `Thread not found after upsert for externalThreadId=${externalThreadKey}, graphId=${graphId}`,
-      );
-      return [];
-    }
 
     // A thread without a name was just created (either by this upsert or by the
     // eager path in executeTrigger). Emit ThreadCreate so the frontend picks it up.
