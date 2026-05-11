@@ -101,10 +101,14 @@ export const environment = () =>
     codebaseIndexMaxAgeDays: +getEnv('CODEBASE_INDEX_MAX_AGE_DAYS', '30'),
     // Staleness window for the in-path repair of Pending/InProgress
     // repo_indexes rows. When a row older than this is observed during a
-    // getOrInitIndexForRepo call, the background job is re-enqueued — guards
-    // against BullMQ jobs lost to Redis flushes or worker evictions since
-    // recoverStuckJobs only runs on module init. Default 15 minutes (in ms).
-    codebaseIndexStaleMs: +getEnv('CODEBASE_INDEX_STALE_MS', '900000'),
+    // getOrInitIndexForRepo call, the repair path consults BullMQ to confirm
+    // the job is not actively being processed before force-failing and
+    // re-enqueueing — guards against BullMQ jobs lost to Redis flushes or
+    // worker evictions since recoverStuckJobs only runs on module init.
+    // Default 2 minutes (in ms); the BullMQ active-state check is the
+    // second-layer defense for slow embedding batches that can leave updatedAt
+    // stagnant for >2 min while the worker is still alive.
+    codebaseIndexStaleMs: +getEnv('CODEBASE_INDEX_STALE_MS', '120000'),
     // Multiplier applied to topK in codebase search to overfetch candidates
     // before filtering and slicing. Separate env vars cover the single-vector
     // path and the query-expansion path (where each variant already broadens

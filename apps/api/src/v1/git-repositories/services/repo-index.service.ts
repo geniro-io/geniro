@@ -507,10 +507,17 @@ export class RepoIndexService implements OnModuleInit {
 
     // If indexing is actively running, return immediately.
     // Repair-on-read: if the row has been sitting in Pending/InProgress beyond
-    // the staleness window, the BullMQ job was likely lost (Redis flush,
-    // mid-enqueue crash, worker pod eviction) — reset and re-enqueue so the
-    // next user interaction unblocks the zombie row. `recoverStuckJobs` only
-    // runs on module init, so long-lived pods need this in-path recovery.
+    // the staleness window, the BullMQ job may be lost (Redis flush, worker
+    // eviction, or crash between updateById and queue.add). Reset and re-enqueue
+    // so the next user interaction unblocks the zombie row. `recoverStuckJobs`
+    // only runs on module init, so long-lived pods need this in-path recovery.
+    //
+    // Two-layer defense: `updatedAt` is the first filter (age > window), but a
+    // slow embedding batch (many large files × slow LiteLLM) can stall
+    // `incrementIndexedTokens` for >2 min while the worker is still alive.
+    // The BullMQ `getJobState` check is the second layer — it confirms the job
+    // is not actively being processed before force-failing and re-enqueueing.
+    // Both conditions must hold before the repair fires.
     if (
       existing &&
       (existing.status === RepoIndexStatus.InProgress ||
@@ -518,12 +525,6 @@ export class RepoIndexService implements OnModuleInit {
     ) {
       const ageMs = Date.now() - new Date(existing.updatedAt).getTime();
       if (ageMs > environment.codebaseIndexStaleMs) {
-        // Stale `updatedAt` alone is not enough to decide the job is lost —
-        // `incrementIndexedTokens` uses a raw update that does not bump
-        // `updatedAt`, so a legitimately-running large-repo job can look
-        // stale. Only repair when BullMQ confirms the job is not actively
-        // being processed, otherwise `addIndexJob` would force-fail the
-        // running worker.
         const jobState = await this.repoIndexQueueService.getJobState(
           existing.id,
         );
