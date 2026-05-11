@@ -15,8 +15,10 @@ describe('formatDurationMs', () => {
     expect(formatDurationMs(999)).toBe('999ms');
   });
 
-  it('renders sub-minute durations as seconds with one decimal', () => {
-    expect(formatDurationMs(2_600)).toBe('2.6s');
+  it('renders sub-minute durations as whole seconds', () => {
+    expect(formatDurationMs(2_600)).toBe('3s');
+    expect(formatDurationMs(3_400)).toBe('3s');
+    expect(formatDurationMs(3_700)).toBe('4s');
     expect(formatDurationMs(45_000)).toBe('45s');
   });
 

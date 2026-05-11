@@ -56,7 +56,7 @@ export const formatRequestUsdShort = (amount?: number | null): string => {
 };
 
 /** Formats a duration in milliseconds to a human-readable string.
- *  Examples: "2.6s", "45s", "1m 23s", "5m 2s" */
+ *  Examples: "3s", "45s", "1m 23s", "5m 2s" */
 export const formatDurationMs = (ms: number): string => {
   if (!Number.isFinite(ms) || ms <= 0) {
     return '—';
@@ -66,8 +66,7 @@ export const formatDurationMs = (ms: number): string => {
   }
   const totalSecondsRounded = Math.round(ms / 1000);
   if (totalSecondsRounded < 60) {
-    const oneDecimal = Math.round(ms / 100) / 10;
-    return `${oneDecimal}s`;
+    return `${totalSecondsRounded}s`;
   }
   const minutes = Math.floor(totalSecondsRounded / 60);
   const seconds = totalSecondsRounded % 60;
