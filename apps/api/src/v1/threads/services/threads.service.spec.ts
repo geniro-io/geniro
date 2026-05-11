@@ -1,3 +1,4 @@
+import { EntityManager } from '@mikro-orm/postgresql';
 import { StreamableFile } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { DefaultLogger } from '@packages/common';
@@ -103,6 +104,7 @@ describe('ThreadsService', () => {
             create: vi.fn(),
             updateById: vi.fn(),
             deleteById: vi.fn(),
+            insertIfNotExists: vi.fn(),
           },
         },
         {
@@ -145,6 +147,19 @@ describe('ThreadsService', () => {
           provide: ThreadStatusTransitionService,
           useValue: {
             computeTransition: vi.fn(),
+          },
+        },
+        {
+          provide: EntityManager,
+          useValue: {
+            fork: vi.fn().mockReturnValue({
+              transactional: vi.fn(
+                async (cb: (em: EntityManager) => Promise<unknown>) =>
+                  cb({
+                    flush: vi.fn().mockResolvedValue(undefined),
+                  } as unknown as EntityManager),
+              ),
+            }),
           },
         },
       ],
@@ -3323,6 +3338,115 @@ describe('ThreadsService', () => {
 
       await expect(service.cancelWait(otherCtx, mockThreadId)).rejects.toThrow(
         '[THREAD_NOT_FOUND] An exception has occurred',
+      );
+    });
+  });
+
+  describe('upsertRunningThread', () => {
+    const payload = () => ({
+      graphId: 'graph-1',
+      createdBy: 'user-1',
+      projectId: 'project-1',
+      externalThreadId: 'ext-1',
+      status: ThreadStatus.Running as typeof ThreadStatus.Running,
+      runningStartedAt: new Date('2026-05-01T10:00:00Z'),
+      totalRunningMs: 0,
+    });
+
+    it('throws InternalException when status is not Running (runtime guard)', async () => {
+      await expect(
+        service.upsertRunningThread({
+          ...payload(),
+          status: ThreadStatus.Done as unknown as typeof ThreadStatus.Running,
+        }),
+      ).rejects.toThrow(/upsertRunningThread requires status=Running/);
+    });
+
+    it('returns the inserted entity and never enters the conflict path when INSERT succeeds', async () => {
+      const inserted = { id: 't-1', status: ThreadStatus.Running };
+      vi.spyOn(threadsDao, 'insertIfNotExists').mockResolvedValue(
+        inserted as never,
+      );
+
+      const result = await service.upsertRunningThread(payload());
+
+      expect(result).toBe(inserted);
+      expect(threadsDao.insertIfNotExists).toHaveBeenCalledOnce();
+      expect(threadsDao.getOne).not.toHaveBeenCalled();
+      expect(transitionService.computeTransition).not.toHaveBeenCalled();
+    });
+
+    it('on INSERT conflict locks via PESSIMISTIC_WRITE, applies computeTransition patch, and flushes', async () => {
+      vi.spyOn(threadsDao, 'insertIfNotExists').mockResolvedValue(null);
+      const existing = {
+        id: 't-2',
+        externalThreadId: 'ext-1',
+        status: ThreadStatus.Done,
+        runningStartedAt: null,
+        totalRunningMs: 7_000,
+      };
+      vi.spyOn(threadsDao, 'getOne').mockResolvedValue(existing as never);
+      const patch = {
+        status: ThreadStatus.Running,
+        runningStartedAt: new Date('2026-05-01T10:00:00Z'),
+        totalRunningMs: 7_000,
+      };
+      vi.mocked(transitionService.computeTransition).mockReturnValue(patch);
+
+      const result = await service.upsertRunningThread(payload());
+
+      expect(threadsDao.getOne).toHaveBeenCalledWith(
+        { externalThreadId: 'ext-1' },
+        expect.objectContaining({ lockMode: expect.anything() }),
+        expect.anything(),
+      );
+      expect(transitionService.computeTransition).toHaveBeenCalledWith(
+        existing,
+        ThreadStatus.Running,
+        expect.any(Date),
+      );
+      // computeTransition patch applied via Object.assign
+      expect(result).toBe(existing);
+      expect(result.status).toBe(ThreadStatus.Running);
+      expect(result.runningStartedAt).toEqual(new Date('2026-05-01T10:00:00Z'));
+      expect(result.totalRunningMs).toBe(7_000);
+    });
+
+    it('preserves lastRunId when caller omits it; overwrites when provided', async () => {
+      vi.spyOn(threadsDao, 'insertIfNotExists').mockResolvedValue(null);
+      const existing = {
+        id: 't-3',
+        externalThreadId: 'ext-1',
+        status: ThreadStatus.Running,
+        runningStartedAt: new Date('2026-05-01T09:00:00Z'),
+        totalRunningMs: 0,
+        lastRunId: 'run-existing',
+      };
+      vi.spyOn(threadsDao, 'getOne').mockResolvedValue(existing as never);
+      vi.mocked(transitionService.computeTransition).mockReturnValue({
+        status: ThreadStatus.Running,
+        runningStartedAt: existing.runningStartedAt,
+        totalRunningMs: 0,
+      });
+
+      // Without lastRunId — must NOT overwrite
+      const omitted = await service.upsertRunningThread(payload());
+      expect(omitted.lastRunId).toBe('run-existing');
+
+      // With lastRunId — must overwrite
+      const overwritten = await service.upsertRunningThread({
+        ...payload(),
+        lastRunId: 'run-new',
+      });
+      expect(overwritten.lastRunId).toBe('run-new');
+    });
+
+    it('throws UPSERT_ROW_VANISHED when row disappears between INSERT and SELECT FOR UPDATE', async () => {
+      vi.spyOn(threadsDao, 'insertIfNotExists').mockResolvedValue(null);
+      vi.spyOn(threadsDao, 'getOne').mockResolvedValue(null);
+
+      await expect(service.upsertRunningThread(payload())).rejects.toThrow(
+        /upsertRunningThread: row vanished/,
       );
     });
   });

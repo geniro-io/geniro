@@ -1,7 +1,7 @@
 import { HumanMessage } from '@langchain/core/messages';
 import { LockMode } from '@mikro-orm/core';
 import { EntityManager } from '@mikro-orm/postgresql';
-import { Injectable } from '@nestjs/common';
+import { forwardRef, Inject, Injectable } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
   BadRequestException,
@@ -21,6 +21,7 @@ import { ProjectsDao } from '../../projects/dao/projects.dao';
 import { ThreadsDao } from '../../threads/dao/threads.dao';
 import { ThreadResumeQueueService } from '../../threads/services/thread-resume-queue.service';
 import { ThreadStatusTransitionService } from '../../threads/services/thread-status-transition.service';
+import { ThreadsService } from '../../threads/services/threads.service';
 import { ThreadStatus } from '../../threads/threads.types';
 import { clearWaitMetadata } from '../../threads/threads.utils';
 import { GraphDao } from '../dao/graph.dao';
@@ -69,6 +70,8 @@ export class GraphsService {
     private readonly checkpointStateService: CheckpointStateService,
     private readonly transitionService: ThreadStatusTransitionService,
     private readonly logger: DefaultLogger,
+    @Inject(forwardRef(() => ThreadsService))
+    private readonly threadsService: ThreadsService,
   ) {}
 
   private extractGraphCostLimitUsd(entity: GraphEntity): number | null {
@@ -927,13 +930,13 @@ export class GraphsService {
     };
 
     // Eagerly upsert the thread row so the frontend can immediately load it.
-    // upsertByExternalThreadId merges only status/lastRunId/updatedAt/
-    // runningStartedAt/totalRunningMs on conflict, so a concurrent
+    // ThreadsService.upsertRunningThread merges only status/lastRunId/
+    // updatedAt/runningStartedAt/totalRunningMs on conflict, so a concurrent
     // AgentInvokeNotificationHandler upsert and the upper transactional
     // metadata update both remain authoritative for their respective fields —
     // no PK race, no metadata stomp. eagerStartedAt seeds the runtime timer
     // so the running clock includes agent-startup time.
-    await this.threadsDao.upsertByExternalThreadId({
+    await this.threadsService.upsertRunningThread({
       graphId,
       createdBy: userId,
       projectId: graph.projectId,

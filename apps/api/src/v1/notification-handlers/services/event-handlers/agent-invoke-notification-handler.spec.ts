@@ -14,7 +14,6 @@ import {
 } from '../../../notifications/notifications.types';
 import { NotificationsService } from '../../../notifications/services/notifications.service';
 import { ProjectsDao } from '../../../projects/dao/projects.dao';
-import { ThreadsDao } from '../../../threads/dao/threads.dao';
 import { ThreadEntity } from '../../../threads/entity/thread.entity';
 import { ThreadNameGeneratorService } from '../../../threads/services/thread-name-generator.service';
 import { ThreadsService } from '../../../threads/services/threads.service';
@@ -23,11 +22,11 @@ import { AgentInvokeNotificationHandler } from './agent-invoke-notification-hand
 
 describe('AgentInvokeNotificationHandler', () => {
   let handler: AgentInvokeNotificationHandler;
-  let threadsDao: ThreadsDao;
   let graphDao: GraphDao;
   let notificationsService: NotificationsService;
   let threadsServiceMock: {
     prepareThreadResponse: ReturnType<typeof vi.fn>;
+    upsertRunningThread: ReturnType<typeof vi.fn>;
   };
   let threadNameGenerator: {
     generateFromFirstUserMessage: ReturnType<typeof vi.fn>;
@@ -116,6 +115,7 @@ describe('AgentInvokeNotificationHandler', () => {
       prepareThreadResponse: vi.fn(async (thread: ThreadEntity) =>
         buildThreadResponseDto(thread),
       ),
+      upsertRunningThread: vi.fn(),
     };
 
     threadNameGenerator = {
@@ -129,12 +129,6 @@ describe('AgentInvokeNotificationHandler', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AgentInvokeNotificationHandler,
-        {
-          provide: ThreadsDao,
-          useValue: {
-            upsertByExternalThreadId: vi.fn(),
-          },
-        },
         {
           provide: GraphDao,
           useValue: {
@@ -193,7 +187,6 @@ describe('AgentInvokeNotificationHandler', () => {
     handler = module.get<AgentInvokeNotificationHandler>(
       AgentInvokeNotificationHandler,
     );
-    threadsDao = module.get<ThreadsDao>(ThreadsDao);
     graphDao = module.get<GraphDao>(GraphDao);
     notificationsService =
       module.get<NotificationsService>(NotificationsService);
@@ -210,15 +203,13 @@ describe('AgentInvokeNotificationHandler', () => {
       });
 
       vi.spyOn(graphDao, 'getOne').mockResolvedValue(mockGraph);
-      vi.spyOn(threadsDao, 'upsertByExternalThreadId').mockResolvedValue(
-        upsertedThread,
-      );
+      threadsServiceMock.upsertRunningThread.mockResolvedValue(upsertedThread);
 
       const result = await handler.handle(notification);
 
       expect(graphDao.getOne).toHaveBeenCalledWith({ id: mockGraphId });
-      expect(threadsDao.upsertByExternalThreadId).toHaveBeenCalledOnce();
-      expect(threadsDao.upsertByExternalThreadId).toHaveBeenCalledWith(
+      expect(threadsServiceMock.upsertRunningThread).toHaveBeenCalledOnce();
+      expect(threadsServiceMock.upsertRunningThread).toHaveBeenCalledWith(
         expect.objectContaining({
           graphId: mockGraphId,
           createdBy: mockUserId,
@@ -252,9 +243,7 @@ describe('AgentInvokeNotificationHandler', () => {
       });
 
       vi.spyOn(graphDao, 'getOne').mockResolvedValue(mockGraph);
-      vi.spyOn(threadsDao, 'upsertByExternalThreadId').mockResolvedValue(
-        upsertedThread,
-      );
+      threadsServiceMock.upsertRunningThread.mockResolvedValue(upsertedThread);
       threadNameGenerator.generateFromFirstUserMessage.mockResolvedValue(
         'Thread Name',
       );
@@ -292,13 +281,11 @@ describe('AgentInvokeNotificationHandler', () => {
       });
 
       vi.spyOn(graphDao, 'getOne').mockResolvedValue(mockGraph);
-      vi.spyOn(threadsDao, 'upsertByExternalThreadId').mockResolvedValue(
-        upsertedThread,
-      );
+      threadsServiceMock.upsertRunningThread.mockResolvedValue(upsertedThread);
 
       await handler.handle(notification);
 
-      expect(threadsDao.upsertByExternalThreadId).toHaveBeenCalledWith(
+      expect(threadsServiceMock.upsertRunningThread).toHaveBeenCalledWith(
         expect.objectContaining({
           graphId: mockGraphId,
           createdBy: mockUserId,
@@ -333,9 +320,7 @@ describe('AgentInvokeNotificationHandler', () => {
       });
 
       vi.spyOn(graphDao, 'getOne').mockResolvedValue(mockGraph);
-      vi.spyOn(threadsDao, 'upsertByExternalThreadId').mockResolvedValue(
-        existingThread,
-      );
+      threadsServiceMock.upsertRunningThread.mockResolvedValue(existingThread);
 
       const expectedThreadDto = buildThreadResponseDto(existingThread);
 
@@ -370,9 +355,7 @@ describe('AgentInvokeNotificationHandler', () => {
       });
 
       vi.spyOn(graphDao, 'getOne').mockResolvedValue(mockGraph);
-      vi.spyOn(threadsDao, 'upsertByExternalThreadId').mockResolvedValue(
-        existingThread,
-      );
+      threadsServiceMock.upsertRunningThread.mockResolvedValue(existingThread);
 
       const expectedThreadDto = buildThreadResponseDto(existingThread);
 
@@ -409,9 +392,7 @@ describe('AgentInvokeNotificationHandler', () => {
       });
 
       vi.spyOn(graphDao, 'getOne').mockResolvedValue(mockGraph);
-      vi.spyOn(threadsDao, 'upsertByExternalThreadId').mockResolvedValue(
-        existingThread,
-      );
+      threadsServiceMock.upsertRunningThread.mockResolvedValue(existingThread);
 
       await handler.handle(notification);
 
@@ -430,9 +411,7 @@ describe('AgentInvokeNotificationHandler', () => {
       });
 
       vi.spyOn(graphDao, 'getOne').mockResolvedValue(mockGraph);
-      vi.spyOn(threadsDao, 'upsertByExternalThreadId').mockResolvedValue(
-        existingThread,
-      );
+      threadsServiceMock.upsertRunningThread.mockResolvedValue(existingThread);
 
       await handler.handle(notification);
 
@@ -443,12 +422,11 @@ describe('AgentInvokeNotificationHandler', () => {
       const notification = createMockNotification();
 
       vi.spyOn(graphDao, 'getOne').mockResolvedValue(null);
-      vi.spyOn(threadsDao, 'upsertByExternalThreadId');
 
       const result = await handler.handle(notification);
 
       expect(graphDao.getOne).toHaveBeenCalledWith({ id: mockGraphId });
-      expect(threadsDao.upsertByExternalThreadId).not.toHaveBeenCalled();
+      expect(threadsServiceMock.upsertRunningThread).not.toHaveBeenCalled();
       expect(result).toEqual([]);
     });
 
@@ -462,13 +440,11 @@ describe('AgentInvokeNotificationHandler', () => {
       });
 
       vi.spyOn(graphDao, 'getOne').mockResolvedValue(mockGraph);
-      vi.spyOn(threadsDao, 'upsertByExternalThreadId').mockResolvedValue(
-        upsertedThread,
-      );
+      threadsServiceMock.upsertRunningThread.mockResolvedValue(upsertedThread);
 
       await handler.handle(notification);
 
-      expect(threadsDao.upsertByExternalThreadId).toHaveBeenCalledWith(
+      expect(threadsServiceMock.upsertRunningThread).toHaveBeenCalledWith(
         expect.objectContaining({
           source,
           status: ThreadStatus.Running,
@@ -487,13 +463,11 @@ describe('AgentInvokeNotificationHandler', () => {
       });
 
       vi.spyOn(graphDao, 'getOne').mockResolvedValue(mockGraph);
-      vi.spyOn(threadsDao, 'upsertByExternalThreadId').mockResolvedValue(
-        upsertedThread,
-      );
+      threadsServiceMock.upsertRunningThread.mockResolvedValue(upsertedThread);
 
       await handler.handle(notification);
 
-      expect(threadsDao.upsertByExternalThreadId).toHaveBeenCalledWith(
+      expect(threadsServiceMock.upsertRunningThread).toHaveBeenCalledWith(
         expect.objectContaining({
           metadata: threadMetadata,
           status: ThreadStatus.Running,
@@ -510,14 +484,11 @@ describe('AgentInvokeNotificationHandler', () => {
       });
 
       vi.spyOn(graphDao, 'getOne').mockResolvedValue(mockGraph);
-      vi.spyOn(threadsDao, 'upsertByExternalThreadId').mockResolvedValue(
-        upsertedThread,
-      );
+      threadsServiceMock.upsertRunningThread.mockResolvedValue(upsertedThread);
 
       await handler.handle(notification);
 
-      const call = vi.mocked(threadsDao.upsertByExternalThreadId).mock
-        .calls[0]![0]!;
+      const call = threadsServiceMock.upsertRunningThread.mock.calls[0]![0]!;
       expect(call).not.toHaveProperty('metadata');
     });
 
@@ -536,9 +507,7 @@ describe('AgentInvokeNotificationHandler', () => {
       });
 
       vi.spyOn(graphDao, 'getOne').mockResolvedValue(mockGraph);
-      vi.spyOn(threadsDao, 'upsertByExternalThreadId').mockResolvedValue(
-        existingThread,
-      );
+      threadsServiceMock.upsertRunningThread.mockResolvedValue(existingThread);
 
       await handler.handle(notification);
       await new Promise((resolve) => setTimeout(resolve, 0));
@@ -559,9 +528,7 @@ describe('AgentInvokeNotificationHandler', () => {
       });
 
       vi.spyOn(graphDao, 'getOne').mockResolvedValue(mockGraph);
-      vi.spyOn(threadsDao, 'upsertByExternalThreadId').mockResolvedValue(
-        upsertedThread,
-      );
+      threadsServiceMock.upsertRunningThread.mockResolvedValue(upsertedThread);
 
       await handler.handle(notification);
       await new Promise((resolve) => setTimeout(resolve, 0));
@@ -589,9 +556,7 @@ describe('AgentInvokeNotificationHandler', () => {
       });
 
       vi.spyOn(graphDao, 'getOne').mockResolvedValue(mockGraph);
-      vi.spyOn(threadsDao, 'upsertByExternalThreadId').mockResolvedValue(
-        upsertedThread,
-      );
+      threadsServiceMock.upsertRunningThread.mockResolvedValue(upsertedThread);
       threadNameGenerator.generateFromFirstUserMessage.mockResolvedValue(
         'Hello world',
       );
@@ -618,9 +583,7 @@ describe('AgentInvokeNotificationHandler', () => {
       });
 
       vi.spyOn(graphDao, 'getOne').mockResolvedValue(mockGraph);
-      vi.spyOn(threadsDao, 'upsertByExternalThreadId').mockResolvedValue(
-        upsertedThread,
-      );
+      threadsServiceMock.upsertRunningThread.mockResolvedValue(upsertedThread);
       threadNameGenerator.generateFromFirstUserMessage.mockResolvedValue(
         'Hello world',
       );
@@ -647,9 +610,7 @@ describe('AgentInvokeNotificationHandler', () => {
       });
 
       vi.spyOn(graphDao, 'getOne').mockResolvedValue(mockGraph);
-      vi.spyOn(threadsDao, 'upsertByExternalThreadId').mockResolvedValue(
-        upsertedThread,
-      );
+      threadsServiceMock.upsertRunningThread.mockResolvedValue(upsertedThread);
 
       await handler.handle(notification);
       await new Promise((resolve) => setImmediate(resolve));
@@ -661,8 +622,8 @@ describe('AgentInvokeNotificationHandler', () => {
 
     // Timer-payload contract: handler always passes runningStartedAt=now and
     // totalRunningMs=0. The "preserve existing on Running→Running" / "reset on
-    // resume" semantic is encoded in the DAO's ON CONFLICT clause and verified
-    // by the integration test for upsertByExternalThreadId.
+    // resume" semantic is encoded in ThreadsService.upsertRunningThread and
+    // verified by the integration test for upsert-by-external-thread-id.
     it('always passes runningStartedAt=now and totalRunningMs=0 to the upsert', async () => {
       const mockGraph = createMockGraphEntity();
       const upsertedThread = createMockThreadEntity({
@@ -671,16 +632,13 @@ describe('AgentInvokeNotificationHandler', () => {
       const notification = createMockNotification();
 
       vi.spyOn(graphDao, 'getOne').mockResolvedValue(mockGraph);
-      vi.spyOn(threadsDao, 'upsertByExternalThreadId').mockResolvedValue(
-        upsertedThread,
-      );
+      threadsServiceMock.upsertRunningThread.mockResolvedValue(upsertedThread);
 
       const before = new Date();
       await handler.handle(notification);
       const after = new Date();
 
-      const call = vi.mocked(threadsDao.upsertByExternalThreadId).mock
-        .calls[0]![0]!;
+      const call = threadsServiceMock.upsertRunningThread.mock.calls[0]![0]!;
 
       expect(call.status).toBe(ThreadStatus.Running);
       expect(call.totalRunningMs).toBe(0);

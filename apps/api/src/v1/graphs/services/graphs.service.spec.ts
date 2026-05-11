@@ -20,6 +20,7 @@ import { ProjectsDao } from '../../projects/dao/projects.dao';
 import { ThreadsDao } from '../../threads/dao/threads.dao';
 import { ThreadResumeQueueService } from '../../threads/services/thread-resume-queue.service';
 import { ThreadStatusTransitionService } from '../../threads/services/thread-status-transition.service';
+import { ThreadsService } from '../../threads/services/threads.service';
 import { ThreadStatus } from '../../threads/threads.types';
 import { GraphDao } from '../dao/graph.dao';
 import {
@@ -59,6 +60,7 @@ describe('GraphsService', () => {
   let notificationsService: NotificationsService;
   let graphRevisionService: GraphRevisionService;
   let threadsDao: ThreadsDao;
+  let threadsService: ThreadsService;
   let eventEmitter: EventEmitter2;
   let logger: DefaultLogger;
   let projectsDao: ProjectsDao;
@@ -219,11 +221,16 @@ describe('GraphsService', () => {
             getOne: vi.fn(),
             getAll: vi.fn(),
             create: vi.fn(),
-            upsertByExternalThreadId: vi.fn(),
             updateById: vi.fn(),
             deleteById: vi.fn(),
             hardDelete: vi.fn(),
             countByGraphIds: vi.fn(),
+          },
+        },
+        {
+          provide: ThreadsService,
+          useValue: {
+            upsertRunningThread: vi.fn(),
           },
         },
         {
@@ -358,6 +365,7 @@ describe('GraphsService', () => {
     graphRevisionService =
       module.get<GraphRevisionService>(GraphRevisionService);
     threadsDao = module.get<ThreadsDao>(ThreadsDao);
+    threadsService = module.get<ThreadsService>(ThreadsService);
     eventEmitter = module.get<EventEmitter2>(EventEmitter2);
     logger = module.get<DefaultLogger>(DefaultLogger);
     projectsDao = module.get<ProjectsDao>(ProjectsDao);
@@ -2496,7 +2504,7 @@ describe('GraphsService', () => {
 
       it('should eagerly upsert thread by externalThreadId', async () => {
         setupTriggerMocks();
-        vi.mocked(threadsDao.upsertByExternalThreadId).mockResolvedValue(
+        vi.mocked(threadsService.upsertRunningThread).mockResolvedValue(
           {} as any,
         );
 
@@ -2512,7 +2520,7 @@ describe('GraphsService', () => {
         );
 
         expect(result.externalThreadId).toBe(expectedThreadId);
-        expect(threadsDao.upsertByExternalThreadId).toHaveBeenCalledWith({
+        expect(threadsService.upsertRunningThread).toHaveBeenCalledWith({
           graphId: mockGraphId,
           createdBy: mockUserId,
           projectId: 'project-123',
@@ -2526,7 +2534,7 @@ describe('GraphsService', () => {
 
       it('should upsert (no-op merge) when thread already exists', async () => {
         setupTriggerMocks();
-        vi.mocked(threadsDao.upsertByExternalThreadId).mockResolvedValue(
+        vi.mocked(threadsService.upsertRunningThread).mockResolvedValue(
           {} as any,
         );
 
@@ -2541,7 +2549,7 @@ describe('GraphsService', () => {
         );
 
         expect(result.externalThreadId).toBe(expectedThreadId);
-        expect(threadsDao.upsertByExternalThreadId).toHaveBeenCalledOnce();
+        expect(threadsService.upsertRunningThread).toHaveBeenCalledOnce();
       });
 
       it('should cancel resume job and clear wait metadata when thread is waiting', async () => {
@@ -2641,7 +2649,7 @@ describe('GraphsService', () => {
         vi.mocked(graphRegistry.getNode).mockReturnValue(
           mockTriggerNode as unknown as CompiledGraphNode,
         );
-        vi.mocked(threadsDao.upsertByExternalThreadId).mockResolvedValue({
+        vi.mocked(threadsService.upsertRunningThread).mockResolvedValue({
           id: 'thread-uuid',
           graphId: mockGraphId,
           externalThreadId: expectedThreadId,
@@ -2654,7 +2662,7 @@ describe('GraphsService', () => {
           threadSubId: 'my-thread',
         });
 
-        const upsertCall = vi.mocked(threadsDao.upsertByExternalThreadId).mock
+        const upsertCall = vi.mocked(threadsService.upsertRunningThread).mock
           .calls[0];
         expect(upsertCall).toBeDefined();
         const [upsertPayload] = upsertCall!;

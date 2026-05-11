@@ -7,29 +7,34 @@ import { AppContextStorage } from '../../../auth/app-context-storage';
 import { GraphsService } from '../../../v1/graphs/services/graphs.service';
 import { ProjectsDao } from '../../../v1/projects/dao/projects.dao';
 import { ThreadsDao } from '../../../v1/threads/dao/threads.dao';
+import { ThreadsService } from '../../../v1/threads/services/threads.service';
 import { ThreadStatus } from '../../../v1/threads/threads.types';
 import { createMockGraphData } from '../helpers/graph-helpers';
 import { createTestProject } from '../helpers/test-context';
 import { createTestModule, TEST_USER_ID } from '../setup';
 
 /**
- * Integration spec: ThreadsDao.upsertByExternalThreadId
+ * Integration spec: ThreadsService.upsertRunningThread
  *
- * Pins the ON CONFLICT clause's CASE semantics for the running-timer fields.
- * The handler always passes runningStartedAt=now and totalRunningMs=0; the
- * three behaviours below come from SQL alone, not from caller-side logic.
+ * Pins the upsert-then-resume semantics for the running-timer fields. The
+ * service composes a single INSERT...ON CONFLICT DO NOTHING (atomic) with a
+ * conflict path that locks the existing row and applies
+ * ThreadStatusTransitionService.computeTransition. The handler always passes
+ * runningStartedAt=now and totalRunningMs=0; the three behaviours below come
+ * from the service's compose, not from caller-side logic.
  *
  *   1. INSERT (no existing row): incoming runningStartedAt/totalRunningMs win.
  *   2. CONFLICT, existing was Running: idempotent — runningStartedAt preserved.
- *   3. CONFLICT, existing was non-Running: runningStartedAt = EXCLUDED (now),
- *      totalRunningMs preserved (accumulator survives).
+ *   3. CONFLICT, existing was non-Running: runningStartedAt reset to a fresh
+ *      resume clock, totalRunningMs preserved (accumulator survives).
  *
  * Also covers the conflict-merge contract for source/metadata (preserved) and
- * last_run_id (overwritten when provided, preserved when null via COALESCE).
+ * last_run_id (overwritten when provided, preserved when null).
  */
-describe('ThreadsDao.upsertByExternalThreadId — ON CONFLICT semantics', () => {
+describe('ThreadsService.upsertRunningThread — INSERT-or-resume semantics', () => {
   let app: INestApplication;
   let threadsDao: ThreadsDao;
+  let threadsService: ThreadsService;
   let graphsService: GraphsService;
   let orm: MikroORM;
   let testProjectId: string;
@@ -41,6 +46,7 @@ describe('ThreadsDao.upsertByExternalThreadId — ON CONFLICT semantics', () => 
   beforeAll(async () => {
     app = await createTestModule();
     threadsDao = app.get(ThreadsDao);
+    threadsService = app.get(ThreadsService);
     graphsService = app.get(GraphsService);
     orm = app.get(MikroORM);
 
@@ -121,7 +127,7 @@ describe('ThreadsDao.upsertByExternalThreadId — ON CONFLICT semantics', () => 
       const externalThreadId = randomUUID();
       const now = new Date();
 
-      const inserted = await threadsDao.upsertByExternalThreadId(
+      const inserted = await threadsService.upsertRunningThread(
         baseUpsertPayload({
           externalThreadId,
           runningStartedAt: now,
@@ -147,7 +153,7 @@ describe('ThreadsDao.upsertByExternalThreadId — ON CONFLICT semantics', () => 
       const externalThreadId = randomUUID();
       const originalStartedAt = new Date('2026-04-01T10:00:00.000Z');
 
-      const inserted = await threadsDao.upsertByExternalThreadId(
+      const inserted = await threadsService.upsertRunningThread(
         baseUpsertPayload({
           externalThreadId,
           runningStartedAt: originalStartedAt,
@@ -162,7 +168,7 @@ describe('ThreadsDao.upsertByExternalThreadId — ON CONFLICT semantics', () => 
 
       // Re-upsert while already Running with a fresh "now"
       const newNow = new Date('2026-04-01T10:05:00.000Z');
-      const upserted = await threadsDao.upsertByExternalThreadId(
+      const upserted = await threadsService.upsertRunningThread(
         baseUpsertPayload({
           externalThreadId,
           runningStartedAt: newNow,
@@ -206,7 +212,7 @@ describe('ThreadsDao.upsertByExternalThreadId — ON CONFLICT semantics', () => 
 
       // Resume: upsert sets status=Running with a fresh now
       const resumeNow = new Date('2026-04-01T12:00:00.000Z');
-      const upserted = await threadsDao.upsertByExternalThreadId(
+      const upserted = await threadsService.upsertRunningThread(
         baseUpsertPayload({
           externalThreadId,
           runningStartedAt: resumeNow,
@@ -233,7 +239,7 @@ describe('ThreadsDao.upsertByExternalThreadId — ON CONFLICT semantics', () => 
       const externalThreadId = randomUUID();
       const firstNow = new Date('2026-04-01T10:00:00.000Z');
 
-      const inserted = await threadsDao.upsertByExternalThreadId(
+      const inserted = await threadsService.upsertRunningThread(
         baseUpsertPayload({
           externalThreadId,
           runningStartedAt: firstNow,
@@ -244,7 +250,7 @@ describe('ThreadsDao.upsertByExternalThreadId — ON CONFLICT semantics', () => 
       createdThreadIds.push(inserted.id);
 
       // Re-upsert WITHOUT source/metadata — must not clobber
-      await threadsDao.upsertByExternalThreadId(
+      await threadsService.upsertRunningThread(
         baseUpsertPayload({
           externalThreadId,
           runningStartedAt: new Date('2026-04-01T11:00:00.000Z'),
@@ -283,7 +289,7 @@ describe('ThreadsDao.upsertByExternalThreadId — ON CONFLICT semantics', () => 
       const externalThreadId = randomUUID();
       const originalStartedAt = new Date('2026-04-01T10:00:00.000Z');
 
-      const inserted = await threadsDao.upsertByExternalThreadId(
+      const inserted = await threadsService.upsertRunningThread(
         baseUpsertPayload({
           externalThreadId,
           runningStartedAt: originalStartedAt,
@@ -311,10 +317,10 @@ describe('ThreadsDao.upsertByExternalThreadId — ON CONFLICT semantics', () => 
       // implementation does neither.
       let threwOnNonRunningUpsert = false;
       let upserted: Awaited<
-        ReturnType<typeof threadsDao.upsertByExternalThreadId>
+        ReturnType<typeof threadsService.upsertRunningThread>
       > | null = null;
       try {
-        upserted = await threadsDao.upsertByExternalThreadId({
+        upserted = await threadsService.upsertRunningThread({
           graphId: sharedGraphId,
           createdBy: TEST_USER_ID,
           projectId: testProjectId,
@@ -364,7 +370,7 @@ describe('ThreadsDao.upsertByExternalThreadId — ON CONFLICT semantics', () => 
       const firstRunId = '11111111-1111-4111-8aaa-111111111111';
       const secondRunId = '22222222-2222-4222-8aaa-222222222222';
 
-      const inserted = await threadsDao.upsertByExternalThreadId(
+      const inserted = await threadsService.upsertRunningThread(
         baseUpsertPayload({
           externalThreadId,
           runningStartedAt: new Date('2026-04-01T10:00:00.000Z'),
@@ -374,7 +380,7 @@ describe('ThreadsDao.upsertByExternalThreadId — ON CONFLICT semantics', () => 
       createdThreadIds.push(inserted.id);
 
       // Provide a new lastRunId — must overwrite
-      await threadsDao.upsertByExternalThreadId(
+      await threadsService.upsertRunningThread(
         baseUpsertPayload({
           externalThreadId,
           runningStartedAt: new Date('2026-04-01T11:00:00.000Z'),
@@ -384,7 +390,7 @@ describe('ThreadsDao.upsertByExternalThreadId — ON CONFLICT semantics', () => 
       expect((await reload(inserted.id)).lastRunId).toBe(secondRunId);
 
       // Omit lastRunId — must preserve (COALESCE)
-      await threadsDao.upsertByExternalThreadId(
+      await threadsService.upsertRunningThread(
         baseUpsertPayload({
           externalThreadId,
           runningStartedAt: new Date('2026-04-01T12:00:00.000Z'),

@@ -12,7 +12,6 @@ import {
 } from '../../../notifications/notifications.types';
 import { NotificationsService } from '../../../notifications/services/notifications.service';
 import { ProjectsDao } from '../../../projects/dao/projects.dao';
-import { ThreadsDao } from '../../../threads/dao/threads.dao';
 import { ThreadNameGeneratorService } from '../../../threads/services/thread-name-generator.service';
 import { ThreadsService } from '../../../threads/services/threads.service';
 import { ThreadStatus } from '../../../threads/threads.types';
@@ -31,7 +30,6 @@ export class AgentInvokeNotificationHandler extends BaseNotificationHandler<neve
   readonly pattern = NotificationEvent.AgentInvoke;
 
   constructor(
-    private readonly threadsDao: ThreadsDao,
     private readonly graphDao: GraphDao,
     private readonly notificationsService: NotificationsService,
     private readonly threadsService: ThreadsService,
@@ -80,12 +78,12 @@ export class AgentInvokeNotificationHandler extends BaseNotificationHandler<neve
           }
         : undefined;
 
-    // Single SQL upsert. The DAO's ON CONFLICT clause uses a CASE on the
-    // existing row's status, so passing `runningStartedAt: now` is safe in both
-    // the "fresh thread" branch (used) and the "already-Running" branch
-    // (ignored — existing clock preserved). totalRunningMs=0 is only used on
-    // INSERT; on CONFLICT the accumulator is preserved by SQL.
-    const thread = await this.threadsDao.upsertByExternalThreadId({
+    // Start or resume the thread in a single service call. The service owns
+    // the transition machinery: on INSERT, runningStartedAt/totalRunningMs
+    // come from this payload; on CONFLICT the existing row is locked and the
+    // running-timer fields are recomputed via ThreadStatusTransitionService
+    // (idempotent if already Running, fresh resume clock if non-Running).
+    const thread = await this.threadsService.upsertRunningThread({
       graphId,
       createdBy: graph.createdBy,
       projectId: graph.projectId,

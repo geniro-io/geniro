@@ -286,9 +286,9 @@ describe('Thread Cost Limits Integration Tests', () => {
     // does and forward it via `dto.metadata.effectiveCostLimitUsd`. Both the
     // (eager) thread create in `executeTrigger` and the upsert in
     // `AgentInvokeNotificationHandler` race to INSERT the thread row, but only
-    // the path that wins persists `metadata` — `upsertByExternalThreadId`'s
-    // ON CONFLICT clause does not touch `metadata`. The eager-create path
-    // already injects the resolved limit, but the upsert path receives only
+    // the path that wins persists `metadata` — `ThreadsService.upsertRunningThread`
+    // never overwrites `metadata` on conflict. The eager-create path already
+    // injects the resolved limit, but the upsert path receives only
     // `cfg.thread_metadata = dto.metadata` from the trigger config. Forwarding
     // the resolved value here ensures both racers write the SAME
     // `effectiveCostLimitUsd` regardless of who wins, which is what the

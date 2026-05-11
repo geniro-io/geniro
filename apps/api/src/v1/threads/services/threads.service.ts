@@ -1,7 +1,10 @@
-import { Injectable, StreamableFile } from '@nestjs/common';
+import { LockMode } from '@mikro-orm/core';
+import { EntityManager } from '@mikro-orm/postgresql';
+import { forwardRef, Inject, Injectable, StreamableFile } from '@nestjs/common';
 import {
   BadRequestException,
   DefaultLogger,
+  InternalException,
   NotFoundException,
 } from '@packages/common';
 import Decimal from 'decimal.js';
@@ -41,13 +44,102 @@ export class ThreadsService {
     private readonly threadDao: ThreadsDao,
     private readonly messagesDao: MessagesDao,
     private readonly notificationsService: NotificationsService,
+    @Inject(forwardRef(() => GraphsService))
     private readonly graphsService: GraphsService,
     private readonly logger: DefaultLogger,
     private readonly checkpointStateService: CheckpointStateService,
     private readonly graphDao: GraphDao,
     private readonly threadResumeService: ThreadResumeService,
     private readonly transitionService: ThreadStatusTransitionService,
+    private readonly em: EntityManager,
   ) {}
+
+  /**
+   * Starts or resumes a thread keyed on externalThreadId. Always lands status=
+   * Running and is the single entry point for the running-timer field
+   * machinery (status, running_started_at, total_running_ms): callers must not
+   * write those fields directly.
+   *
+   * Two-step flow.
+   *   1. INSERT ... ON CONFLICT DO NOTHING (single-statement atomic). If a new
+   *      row is created, return it.
+   *   2. Conflict path: opens a transaction on a private em.fork() so the
+   *      SELECT FOR UPDATE lock is held independently of any caller
+   *      transaction (mirrors graphs.service.ts:782 — direct em.transactional
+   *      on the global em risks "ROLLBACK TO SAVEPOINT" errors when concurrent
+   *      executeTrigger / BullMQ resume / agent-invoke handler races land).
+   *      Inside the lock, transitionService.computeTransition (single source
+   *      of truth) decides the new running-timer fields: idempotent on
+   *      existing=Running, fresh resume clock on existing=non-Running.
+   *
+   * Conflict-update contract:
+   *   - status, running_started_at, total_running_ms: from computeTransition.
+   *   - last_run_id: overwritten when caller provides it; preserved otherwise.
+   *   - source, metadata: insert-only — never overwritten on conflict
+   *     (effectiveCostLimitUsd lives in metadata and must not be clobbered).
+   */
+  async upsertRunningThread(
+    data: Pick<
+      ThreadEntity,
+      'graphId' | 'createdBy' | 'projectId' | 'externalThreadId'
+    > & {
+      status: typeof ThreadStatus.Running;
+    } & Partial<
+        Pick<
+          ThreadEntity,
+          | 'source'
+          | 'lastRunId'
+          | 'metadata'
+          | 'runningStartedAt'
+          | 'totalRunningMs'
+        >
+      >,
+  ): Promise<ThreadEntity> {
+    // Runtime guard against caller casts that bypass the type narrowing.
+    // Producing a row with status=Done + non-null runningStartedAt and no
+    // accumulated delta would corrupt the timer invariant.
+    const statusAtRuntime: string = data.status;
+    if (statusAtRuntime !== ThreadStatus.Running) {
+      throw new InternalException(
+        'UPSERT_REQUIRES_RUNNING_STATUS',
+        `upsertRunningThread requires status=Running; got "${statusAtRuntime}"`,
+      );
+    }
+
+    const inserted = await this.threadDao.insertIfNotExists(data);
+    if (inserted) {
+      return inserted;
+    }
+
+    return await this.em.fork().transactional(async (em: EntityManager) => {
+      const existing = await this.threadDao.getOne(
+        { externalThreadId: data.externalThreadId },
+        { lockMode: LockMode.PESSIMISTIC_WRITE },
+        em,
+      );
+      if (!existing) {
+        throw new InternalException(
+          'UPSERT_ROW_VANISHED',
+          `upsertRunningThread: row vanished between INSERT and SELECT for externalThreadId=${data.externalThreadId}`,
+        );
+      }
+
+      const resumeClock = data.runningStartedAt ?? new Date();
+      const patch = this.transitionService.computeTransition(
+        existing,
+        ThreadStatus.Running,
+        resumeClock,
+      );
+
+      Object.assign(existing, {
+        ...patch,
+        ...(data.lastRunId != null ? { lastRunId: data.lastRunId } : {}),
+        updatedAt: new Date(),
+      });
+      await em.flush();
+      return existing;
+    });
+  }
 
   async getThreads(
     ctx: AppContextStorage,
