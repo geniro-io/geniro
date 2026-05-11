@@ -8,7 +8,12 @@ import {
   Patch,
   Post,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiOkResponse,
+  ApiOperation,
+  ApiTags,
+} from '@nestjs/swagger';
 import { OnlyForAuthorized } from '@packages/http-server';
 
 import { environment } from '../../../environments';
@@ -34,6 +39,7 @@ export class LiteLlmAdminController {
 
   @Get('/models/info')
   @ApiOperation({ summary: 'List all LiteLLM models with full config (admin)' })
+  @ApiOkResponse({ type: LiteLlmModelInfoItemDto, isArray: true })
   async listModelsInfo(): Promise<LiteLlmModelInfoItemDto[]> {
     return this.adminService.listModelsInfo();
   }
@@ -41,6 +47,7 @@ export class LiteLlmAdminController {
   @Post('/models/test')
   @HttpCode(200)
   @ApiOperation({ summary: 'Test a registered model connection' })
+  @ApiOkResponse({ type: TestModelResponseDto })
   async testModel(
     @Body() dto: TestModelRequestDto,
   ): Promise<TestModelResponseDto> {
@@ -52,6 +59,7 @@ export class LiteLlmAdminController {
   @ApiOperation({
     summary: 'Test a model connection with inline config (no registration)',
   })
+  @ApiOkResponse({ type: TestModelResponseDto })
   async testModelConnection(
     @Body() dto: TestModelConnectionDto,
   ): Promise<TestModelResponseDto> {
@@ -81,12 +89,14 @@ export class LiteLlmAdminController {
 
   @Get('/providers')
   @ApiOperation({ summary: 'List available LLM providers' })
+  @ApiOkResponse({ type: LiteLlmProvidersResponseDto })
   async listProviders(): Promise<LiteLlmProvidersResponseDto> {
     return this.adminService.listProviders();
   }
 
   @Get('/credentials')
   @ApiOperation({ summary: 'List saved LiteLLM credentials' })
+  @ApiOkResponse({ type: LiteLlmCredentialsResponseDto })
   async listCredentials(): Promise<LiteLlmCredentialsResponseDto> {
     return this.adminService.listCredentials();
   }

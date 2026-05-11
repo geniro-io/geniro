@@ -1,8 +1,8 @@
-import { FastifyCompressOptions } from '@fastify/compress';
-import { FastifyAdapter } from '@nestjs/platform-fastify';
-import { SwaggerCustomOptions } from '@nestjs/swagger';
-import { IExceptionData, ISentryLogData } from '@packages/common';
-import helmet from 'helmet';
+import type { FastifyCompressOptions } from '@fastify/compress';
+import type { FastifyAdapter } from '@nestjs/platform-fastify';
+import type { SwaggerCustomOptions } from '@nestjs/swagger';
+import type { IExceptionData, ISentryLogData } from '@packages/common';
+import type helmet from 'helmet';
 
 export interface IHttpServerParams {
   globalPrefix?: string;

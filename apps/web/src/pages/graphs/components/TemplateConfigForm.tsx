@@ -682,6 +682,7 @@ const RjsfKeyValueObjectField = (
       }
     }
     if (JSON.stringify(fromLocal) !== JSON.stringify(record)) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- reconcile local pairs with external record
       setLocalPairs(
         Object.entries(record).map(([k, v]) => ({
           key: k,

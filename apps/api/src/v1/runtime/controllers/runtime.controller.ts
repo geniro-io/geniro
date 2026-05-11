@@ -1,5 +1,5 @@
 import { Controller, Get, Param, Query } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import { CtxStorage, OnlyForAuthorized } from '@packages/http-server';
 
 import { AppContextStorage } from '../../../auth/app-context-storage';
@@ -21,11 +21,13 @@ export class RuntimeController {
   constructor(private readonly runtimeService: RuntimeService) {}
 
   @Get('health')
+  @ApiOkResponse({ type: RuntimeHealthDto })
   async checkHealth(): Promise<RuntimeHealthDto> {
     return await this.runtimeService.checkHealth(RuntimeType.Daytona);
   }
 
   @Get()
+  @ApiOkResponse({ type: RuntimeInstanceDto, isArray: true })
   async getRuntimes(
     @Query() query: GetRuntimesQueryDto,
     @CtxStorage() ctx: AppContextStorage,
@@ -34,6 +36,7 @@ export class RuntimeController {
   }
 
   @Get(':id/state')
+  @ApiOkResponse({ type: RuntimeInstanceStateDto })
   async getRuntimeState(
     @Param() { id }: EntityUUIDDto,
     @CtxStorage() ctx: AppContextStorage,

@@ -72,6 +72,7 @@ describe('InvokeLlmNode', () => {
       outputTokens: 7,
       totalTokens: 130,
       currentContext: 123,
+      totalPrice: 0,
     };
 
     (mockLitellm.extractTokenUsageFromResponse as any).mockResolvedValue(usage);
@@ -111,6 +112,7 @@ describe('InvokeLlmNode', () => {
       inputTokens: 50,
       outputTokens: 10,
       totalTokens: 60,
+      totalPrice: 0,
     };
 
     (mockLitellm.extractTokenUsageFromResponse as any).mockResolvedValue(usage);
@@ -150,6 +152,7 @@ describe('InvokeLlmNode', () => {
       inputTokens: 50,
       outputTokens: 10,
       totalTokens: 60,
+      totalPrice: 0,
     };
 
     (mockLitellm.extractTokenUsageFromResponse as any).mockResolvedValue(usage);
@@ -197,6 +200,7 @@ describe('InvokeLlmNode', () => {
       inputTokens: 50,
       outputTokens: 10,
       totalTokens: 60,
+      totalPrice: 0,
     };
 
     (mockLitellm.extractTokenUsageFromResponse as any).mockResolvedValue(usage);
@@ -270,6 +274,130 @@ describe('InvokeLlmNode', () => {
       'gpt-5-mini',
       expect.objectContaining({ cost: 0.00046689 }),
     );
+  });
+
+  describe('cost normalization (chunkMultiple)', () => {
+    it('halves raw cost when streaming aggregation doubles total_tokens (2× detected)', async () => {
+      (mockLitellm.extractTokenUsageFromResponse as any).mockResolvedValue({
+        inputTokens: 10,
+        outputTokens: 3,
+        totalTokens: 13,
+        totalPrice: 0.00005,
+      });
+
+      const llmRes: AIMessageChunk = {
+        id: 'msg-doubled',
+        content: 'ok',
+        contentBlocks: [],
+        response_metadata: {
+          usage: {
+            prompt_tokens: 10,
+            completion_tokens: 3,
+            total_tokens: 26,
+            cost: 0.0001,
+          },
+        },
+        usage_metadata: {
+          input_tokens: 10,
+          output_tokens: 3,
+          total_tokens: 13,
+        },
+        tool_calls: [],
+      } as unknown as AIMessageChunk;
+
+      (mockLlm as any).bindTools.mockReturnValueOnce({
+        invoke: vi.fn().mockResolvedValue(llmRes),
+      });
+
+      await node.invoke(createState(), {
+        configurable: { run_id: 'run-1', thread_id: 'thread-1' },
+      } as any);
+
+      expect(mockLitellm.extractTokenUsageFromResponse).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({ cost: 0.00005 }),
+      );
+    });
+
+    it('passes cost through unchanged when normalised and raw token counts match (non-streaming, 1×)', async () => {
+      (mockLitellm.extractTokenUsageFromResponse as any).mockResolvedValue({
+        inputTokens: 10,
+        outputTokens: 3,
+        totalTokens: 13,
+        totalPrice: 0.0001,
+      });
+
+      const llmRes: AIMessageChunk = {
+        id: 'msg-matching',
+        content: 'ok',
+        contentBlocks: [],
+        response_metadata: {
+          usage: {
+            prompt_tokens: 10,
+            completion_tokens: 3,
+            total_tokens: 13,
+            cost: 0.0001,
+          },
+        },
+        usage_metadata: {
+          input_tokens: 10,
+          output_tokens: 3,
+          total_tokens: 13,
+        },
+        tool_calls: [],
+      } as unknown as AIMessageChunk;
+
+      (mockLlm as any).bindTools.mockReturnValueOnce({
+        invoke: vi.fn().mockResolvedValue(llmRes),
+      });
+
+      await node.invoke(createState(), {
+        configurable: { run_id: 'run-1', thread_id: 'thread-1' },
+      } as any);
+
+      expect(mockLitellm.extractTokenUsageFromResponse).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({ cost: 0.0001 }),
+      );
+    });
+
+    it('passes cost through unchanged when usage_metadata is absent (chunkMultiple stays 1)', async () => {
+      (mockLitellm.extractTokenUsageFromResponse as any).mockResolvedValue({
+        inputTokens: 0,
+        outputTokens: 0,
+        totalTokens: 13,
+        totalPrice: 0.0001,
+      });
+
+      const llmRes: AIMessageChunk = {
+        id: 'msg-no-usage-meta',
+        content: 'ok',
+        contentBlocks: [],
+        response_metadata: {
+          usage: {
+            prompt_tokens: 10,
+            completion_tokens: 3,
+            total_tokens: 13,
+            cost: 0.0001,
+          },
+        },
+        usage_metadata: undefined,
+        tool_calls: [],
+      } as unknown as AIMessageChunk;
+
+      (mockLlm as any).bindTools.mockReturnValueOnce({
+        invoke: vi.fn().mockResolvedValue(llmRes),
+      });
+
+      await node.invoke(createState(), {
+        configurable: { run_id: 'run-1', thread_id: 'thread-1' },
+      } as any);
+
+      expect(mockLitellm.extractTokenUsageFromResponse).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({ cost: 0.0001 }),
+      );
+    });
   });
 
   describe('invokeWithRetry – auth error retry', () => {
@@ -639,6 +767,7 @@ describe('InvokeLlmNode', () => {
       inputTokens: 10,
       outputTokens: 1,
       totalTokens: 11,
+      totalPrice: 0,
     };
 
     (mockLitellm.extractTokenUsageFromResponse as any).mockResolvedValue(usage);

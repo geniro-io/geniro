@@ -2,6 +2,7 @@ import { DiffHtmlView } from '../../../components/markdown/DiffHtmlView';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from '../../../components/ui/dialog';
@@ -27,6 +28,10 @@ export const LocalDiffModal = ({
         <DialogTitle className="text-sm font-semibold">
           {graphVersion ? `Local changes (v${graphVersion})` : 'Local changes'}
         </DialogTitle>
+        <DialogDescription className="sr-only">
+          Diff of local unsaved changes compared to the last saved graph
+          version.
+        </DialogDescription>
       </DialogHeader>
       {diffPatch ? (
         <div className="overflow-y-auto overflow-x-auto flex-1">

@@ -6,11 +6,8 @@ Project-specific rules and steps that apply to core geniro skills (implement, pl
 
 Add project-specific rules that all skills should follow. Each rule should be a single, clear constraint.
 
-Examples (replace with your own):
-- Always update relevant documentation when modifying public APIs
-- Include a CHANGELOG entry for user-facing changes
-- Never modify shared components in `packages/shared/` without updating all consumers
-- Run `pnpm run full-check` before marking any task complete
+- For any change that touches cost accounting, pricing aggregation, or numeric display flows (thread usage stats, subagent footers, header cost widgets, analytics rollups), read `.claude/rules/cost-accounting.md` FIRST and present the required test matrix before writing code. User has requested "solid tests both frontend and backend sides to cover all cases" across two consecutive debug rounds (2026-04-20, 2026-04-21) — this is a durable requirement, not a per-task ask.
+- When removing a reconciliation/fallback (`Math.max`, `?? 0`, etc.), write the replacement single-source-of-truth policy as a docstring on the function BEFORE deleting the reconciliation. The reviewer checks for the policy, not just the absence of the workaround.
 
 ## Additional Steps
 

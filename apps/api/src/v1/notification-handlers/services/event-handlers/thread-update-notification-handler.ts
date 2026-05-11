@@ -8,6 +8,7 @@ import {
 import { ThreadsDao } from '../../../threads/dao/threads.dao';
 import { ThreadDto } from '../../../threads/dto/threads.dto';
 import { ThreadEntity } from '../../../threads/entity/thread.entity';
+import { ThreadStatusTransitionService } from '../../../threads/services/thread-status-transition.service';
 import { ThreadsService } from '../../../threads/services/threads.service';
 import { ThreadStatus } from '../../../threads/threads.types';
 import { clearWaitMetadata } from '../../../threads/threads.utils';
@@ -31,6 +32,7 @@ export class ThreadUpdateNotificationHandler extends BaseNotificationHandler<ITh
     private readonly threadsDao: ThreadsDao,
     private readonly graphDao: GraphDao,
     private readonly threadsService: ThreadsService,
+    private readonly transitionService: ThreadStatusTransitionService,
   ) {
     super();
   }
@@ -56,16 +58,16 @@ export class ThreadUpdateNotificationHandler extends BaseNotificationHandler<ITh
       return [];
     }
 
-    const updates: Partial<Pick<ThreadEntity, 'status' | 'name' | 'metadata'>> =
-      {};
+    const nextStatus: ThreadStatus | undefined = data.status;
 
-    if (data.status !== undefined) {
-      updates.status = data.status;
-    }
+    // Collect non-status updates (name, metadata) separately so that status
+    // transitions go through the accumulator and other field writes follow after.
+    const nonStatusUpdates: Partial<Pick<ThreadEntity, 'name' | 'metadata'>> =
+      {};
 
     // Only update thread name if it doesn't already exist (set once)
     if (data.name !== undefined && !thread.name) {
-      updates.name = data.name ?? undefined;
+      nonStatusUpdates.name = data.name ?? undefined;
     }
 
     // Clear wait metadata when transitioning away from Waiting to a terminal state.
@@ -73,14 +75,14 @@ export class ThreadUpdateNotificationHandler extends BaseNotificationHandler<ITh
     // agent finishes a run that superseded the waiting state.
     if (
       thread.status === ThreadStatus.Waiting &&
-      data.status !== undefined &&
-      data.status !== ThreadStatus.Waiting
+      nextStatus !== undefined &&
+      nextStatus !== ThreadStatus.Waiting
     ) {
-      updates.metadata = clearWaitMetadata(thread.metadata);
+      nonStatusUpdates.metadata = clearWaitMetadata(thread.metadata);
     }
 
     // Base metadata snapshot — read once before the two three-way blocks so
-    // the second block sees any write made by the first (via updates.metadata).
+    // the second block sees any write made by the first (via nonStatusUpdates.metadata).
     const baseMeta =
       (thread.metadata as Record<string, unknown> | null | undefined) ?? {};
 
@@ -95,7 +97,7 @@ export class ThreadUpdateNotificationHandler extends BaseNotificationHandler<ITh
     // cleared by a subsequent manual-stop event (costLimitHit is only cleared
     // when the user successfully raises the limit and resumes).
     if (data.stopReason !== undefined) {
-      const nextMeta = { ...(updates.metadata ?? baseMeta) };
+      const nextMeta = { ...(nonStatusUpdates.metadata ?? baseMeta) };
       if (data.stopReason === null) {
         delete nextMeta.stopReason;
       } else if (typeof data.stopReason === 'string') {
@@ -104,7 +106,7 @@ export class ThreadUpdateNotificationHandler extends BaseNotificationHandler<ITh
           nextMeta.costLimitHit = true;
         }
       }
-      updates.metadata = nextMeta;
+      nonStatusUpdates.metadata = nextMeta;
     }
 
     // Three-way semantics for stopCostUsd mirror stopReason:
@@ -115,17 +117,53 @@ export class ThreadUpdateNotificationHandler extends BaseNotificationHandler<ITh
     // keep 'in' for TS narrowing but add an explicit undefined check at runtime
     // to guard against prototype keys making 'in' return true unexpectedly.
     if ('stopCostUsd' in data && data.stopCostUsd !== undefined) {
-      const nextMeta = { ...(updates.metadata ?? baseMeta) };
+      const nextMeta = { ...(nonStatusUpdates.metadata ?? baseMeta) };
       if (data.stopCostUsd === null) {
         delete nextMeta.stopCostUsd;
       } else if (typeof data.stopCostUsd === 'number') {
         nextMeta.stopCostUsd = data.stopCostUsd;
       }
-      updates.metadata = nextMeta;
+      nonStatusUpdates.metadata = nextMeta;
     }
 
-    if (Object.keys(updates).length > 0) {
-      await this.threadsDao.updateById(thread.id, updates);
+    // Three-way semantics for costLimitHit mirror stopReason/stopCostUsd:
+    //   undefined -> key is absent on data: leave metadata.costLimitHit untouched
+    //   null      -> explicit clear: drop metadata.costLimitHit
+    //   boolean   -> persist metadata.costLimitHit
+    // The stopReason='cost_limit' block above already sets costLimitHit = true.
+    // This block handles the explicit-null clear path (used by the second emit in
+    // AgentInvokeNotificationHandler when an existing thread re-enters Running).
+    if ('costLimitHit' in data && data.costLimitHit !== undefined) {
+      const nextMeta = { ...(nonStatusUpdates.metadata ?? baseMeta) };
+      if (data.costLimitHit === null) {
+        delete nextMeta.costLimitHit;
+      } else if (typeof data.costLimitHit === 'boolean') {
+        nextMeta.costLimitHit = data.costLimitHit;
+      }
+      nonStatusUpdates.metadata = nextMeta;
+    }
+
+    const hasStatusChange =
+      nextStatus !== undefined && nextStatus !== thread.status;
+    const hasNonStatusUpdates = Object.keys(nonStatusUpdates).length > 0;
+
+    // Route the status flip through computeTransition so totalRunningMs is
+    // updated together with the status change. The patch is computed from the
+    // current thread snapshot and written via updateById.
+    // Why: no em.transactional() — both writes (status + non-status) are within
+    // a single handler invocation, which completes both before returning. Strict
+    // atomicity across separate handler invocations is not required because
+    // invariants are defended at read-time (see prepareThreadsResponse
+    // stale-drift guards in threads.service.ts).
+    if (hasStatusChange) {
+      const patch = this.transitionService.computeTransition(
+        thread,
+        nextStatus,
+      );
+      await this.threadsDao.updateById(thread.id, patch);
+    }
+    if (hasNonStatusUpdates) {
+      await this.threadsDao.updateById(thread.id, nonStatusUpdates);
     }
 
     const updatedThread = await this.threadsDao.getOne({

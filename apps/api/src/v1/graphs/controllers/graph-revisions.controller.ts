@@ -1,5 +1,5 @@
 import { Controller, Get, Param, Query } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import { CtxStorage, OnlyForAuthorized } from '@packages/http-server';
 
 import { AppContextStorage } from '../../../auth/app-context-storage';
@@ -18,6 +18,7 @@ export class GraphRevisionsController {
   constructor(private readonly graphRevisionService: GraphRevisionService) {}
 
   @Get()
+  @ApiOkResponse({ type: GraphRevisionDto, isArray: true })
   async getGraphRevisions(
     @Param('graphId') graphId: string,
     @Query() query: GraphRevisionQueryDto,
@@ -31,6 +32,7 @@ export class GraphRevisionsController {
   }
 
   @Get(':id')
+  @ApiOkResponse({ type: GraphRevisionDto })
   async getGraphRevision(
     @Param('graphId') graphId: string,
     @Param() params: EntityUUIDDto,

@@ -14,6 +14,7 @@ import { Button } from '../../../components/ui/button';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from '../../../components/ui/dialog';
@@ -109,6 +110,10 @@ export const GraphAiSuggestionModal = ({
       <DialogContent className="sm:max-w-[1200px] max-h-[90vh] overflow-y-auto overflow-x-hidden">
         <DialogHeader>
           <DialogTitle>Improve workflow with AI</DialogTitle>
+          <DialogDescription className="sr-only">
+            Use AI to suggest improved instructions for agent nodes in this
+            graph.
+          </DialogDescription>
         </DialogHeader>
         <div className="flex flex-col gap-5">
           {showRunningWarning && (

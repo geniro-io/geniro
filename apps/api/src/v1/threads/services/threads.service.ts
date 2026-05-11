@@ -1,7 +1,10 @@
-import { Injectable, StreamableFile } from '@nestjs/common';
+import { LockMode } from '@mikro-orm/core';
+import { EntityManager } from '@mikro-orm/postgresql';
+import { forwardRef, Inject, Injectable, StreamableFile } from '@nestjs/common';
 import {
   BadRequestException,
   DefaultLogger,
+  InternalException,
   NotFoundException,
 } from '@packages/common';
 import Decimal from 'decimal.js';
@@ -33,6 +36,7 @@ import { MessageEntity } from '../entity/message.entity';
 import { ThreadEntity } from '../entity/thread.entity';
 import { ThreadStatus } from '../threads.types';
 import { ThreadResumeService } from './thread-resume.service';
+import { ThreadStatusTransitionService } from './thread-status-transition.service';
 
 @Injectable()
 export class ThreadsService {
@@ -40,12 +44,102 @@ export class ThreadsService {
     private readonly threadDao: ThreadsDao,
     private readonly messagesDao: MessagesDao,
     private readonly notificationsService: NotificationsService,
+    @Inject(forwardRef(() => GraphsService))
     private readonly graphsService: GraphsService,
     private readonly logger: DefaultLogger,
     private readonly checkpointStateService: CheckpointStateService,
     private readonly graphDao: GraphDao,
     private readonly threadResumeService: ThreadResumeService,
+    private readonly transitionService: ThreadStatusTransitionService,
+    private readonly em: EntityManager,
   ) {}
+
+  /**
+   * Starts or resumes a thread keyed on externalThreadId. Always lands status=
+   * Running and is the single entry point for the running-timer field
+   * machinery (status, running_started_at, total_running_ms): callers must not
+   * write those fields directly.
+   *
+   * Two-step flow.
+   *   1. INSERT ... ON CONFLICT DO NOTHING (single-statement atomic). If a new
+   *      row is created, return it.
+   *   2. Conflict path: opens a transaction on a private em.fork() so the
+   *      SELECT FOR UPDATE lock is held independently of any caller
+   *      transaction (mirrors graphs.service.ts:782 — direct em.transactional
+   *      on the global em risks "ROLLBACK TO SAVEPOINT" errors when concurrent
+   *      executeTrigger / BullMQ resume / agent-invoke handler races land).
+   *      Inside the lock, transitionService.computeTransition (single source
+   *      of truth) decides the new running-timer fields: idempotent on
+   *      existing=Running, fresh resume clock on existing=non-Running.
+   *
+   * Conflict-update contract:
+   *   - status, running_started_at, total_running_ms: from computeTransition.
+   *   - last_run_id: overwritten when caller provides it; preserved otherwise.
+   *   - source, metadata: insert-only — never overwritten on conflict
+   *     (effectiveCostLimitUsd lives in metadata and must not be clobbered).
+   */
+  async upsertRunningThread(
+    data: Pick<
+      ThreadEntity,
+      'graphId' | 'createdBy' | 'projectId' | 'externalThreadId'
+    > & {
+      status: typeof ThreadStatus.Running;
+    } & Partial<
+        Pick<
+          ThreadEntity,
+          | 'source'
+          | 'lastRunId'
+          | 'metadata'
+          | 'runningStartedAt'
+          | 'totalRunningMs'
+        >
+      >,
+  ): Promise<ThreadEntity> {
+    // Runtime guard against caller casts that bypass the type narrowing.
+    // Producing a row with status=Done + non-null runningStartedAt and no
+    // accumulated delta would corrupt the timer invariant.
+    const statusAtRuntime: string = data.status;
+    if (statusAtRuntime !== ThreadStatus.Running) {
+      throw new InternalException(
+        'UPSERT_REQUIRES_RUNNING_STATUS',
+        `upsertRunningThread requires status=Running; got "${statusAtRuntime}"`,
+      );
+    }
+
+    const inserted = await this.threadDao.insertIfNotExists(data);
+    if (inserted) {
+      return inserted;
+    }
+
+    return await this.em.fork().transactional(async (em: EntityManager) => {
+      const existing = await this.threadDao.getOne(
+        { externalThreadId: data.externalThreadId },
+        { lockMode: LockMode.PESSIMISTIC_WRITE },
+        em,
+      );
+      if (!existing) {
+        throw new InternalException(
+          'UPSERT_ROW_VANISHED',
+          `upsertRunningThread: row vanished between INSERT and SELECT for externalThreadId=${data.externalThreadId}`,
+        );
+      }
+
+      const resumeClock = data.runningStartedAt ?? new Date();
+      const patch = this.transitionService.computeTransition(
+        existing,
+        ThreadStatus.Running,
+        resumeClock,
+      );
+
+      Object.assign(existing, {
+        ...patch,
+        ...(data.lastRunId != null ? { lastRunId: data.lastRunId } : {}),
+        updatedAt: new Date(),
+      });
+      await em.flush();
+      return existing;
+    });
+  }
 
   async getThreads(
     ctx: AppContextStorage,
@@ -109,7 +203,6 @@ export class ThreadsService {
   ): Promise<ThreadMessageDto[]> {
     const userId = ctx.checkSub();
 
-    // First verify the thread exists and belongs to the user
     const thread = await this.threadDao.getOne({
       id: threadId,
       createdBy: userId,
@@ -131,7 +224,6 @@ export class ThreadsService {
   async deleteThread(ctx: AppContextStorage, threadId: string): Promise<void> {
     const userId = ctx.checkSub();
 
-    // First verify the thread exists and belongs to the user
     const thread = await this.threadDao.getOne({
       id: threadId,
       createdBy: userId,
@@ -141,7 +233,6 @@ export class ThreadsService {
       throw new NotFoundException('THREAD_NOT_FOUND');
     }
 
-    // Delete all messages associated with this thread first
     await this.messagesDao.hardDelete({ threadId });
 
     // Emit thread delete notification before removing the thread record
@@ -153,7 +244,6 @@ export class ThreadsService {
       data: thread,
     });
 
-    // Then delete the thread itself
     await this.threadDao.deleteById(threadId);
   }
 
@@ -191,9 +281,23 @@ export class ThreadsService {
     }
 
     if (!stoppedViaEventChain) {
-      // Graph not in registry or no active agent run — update DB directly
+      // Graph not in registry or no active agent run — update DB directly.
+      // Clear any stale cost-limit metadata: a manual stop is intentional,
+      // so the resume guard (which keys off `costLimitHit` / `stopReason`)
+      // should not later block the user from re-running the thread.
+      const meta = (thread.metadata ?? {}) as Record<string, unknown>;
+      const nextMeta = { ...meta };
+      delete nextMeta.stopReason;
+      delete nextMeta.stopCostUsd;
+      delete nextMeta.costLimitHit;
+
+      const patch = this.transitionService.computeTransition(
+        thread,
+        ThreadStatus.Stopped,
+      );
       await this.threadDao.updateById(thread.id, {
-        status: ThreadStatus.Stopped,
+        ...patch,
+        metadata: nextMeta as ThreadEntity['metadata'],
       });
       const responseThread =
         (await this.threadDao.getById(thread.id)) ?? thread;
@@ -202,7 +306,12 @@ export class ThreadsService {
         type: NotificationEvent.ThreadUpdate,
         graphId: thread.graphId,
         threadId: thread.externalThreadId,
-        data: { status: ThreadStatus.Stopped },
+        data: {
+          status: ThreadStatus.Stopped,
+          stopReason: null,
+          stopCostUsd: null,
+          costLimitHit: null,
+        },
       });
 
       return (await this.prepareThreadsResponse([responseThread]))[0]!;
@@ -339,11 +448,39 @@ export class ThreadsService {
             effectiveCostLimitUsd?: number | null;
           }
         | undefined;
-      const stopReason = metadata?.stopReason ?? null;
+      const stopReason =
+        entity.status === ThreadStatus.Running
+          ? null
+          : (metadata?.stopReason ?? null);
       const effectiveCostLimitUsd =
         typeof metadata?.effectiveCostLimitUsd === 'number'
           ? metadata.effectiveCostLimitUsd
           : null;
+      // Stale-drift defense (G7-style belt-and-suspenders): if the thread is not
+      // Running but still has a non-null runningStartedAt, the DB invariant was
+      // violated (e.g. a crash before the transition could clear the field).
+      // Null out the value so the client never double-counts elapsed time.
+      let runningStartedAt = entity.runningStartedAt ?? null;
+      if (entity.status !== ThreadStatus.Running && runningStartedAt !== null) {
+        this.logger.warn(
+          'Thread has stale runningStartedAt — DB invariant violated',
+          { threadId: entity.id, status: entity.status },
+        );
+        runningStartedAt = null;
+      } else if (
+        entity.status === ThreadStatus.Running &&
+        runningStartedAt === null
+      ) {
+        this.logger.warn(
+          'Running thread has null runningStartedAt — DB invariant violated',
+          {
+            threadId: entity.id,
+            status: entity.status,
+          },
+        );
+        // No fix-up — the caller must restart the transition.
+      }
+
       return {
         ...entityWithoutExcludedFields,
         createdAt: new Date(entity.createdAt).toISOString(),
@@ -352,6 +489,10 @@ export class ThreadsService {
         agents: agentsByGraphId.get(entity.graphId) ?? null,
         stopReason,
         effectiveCostLimitUsd,
+        runningStartedAt: runningStartedAt
+          ? runningStartedAt.toISOString()
+          : null,
+        totalRunningMs: Number(entity.totalRunningMs ?? 0),
       };
     });
   }
@@ -376,7 +517,6 @@ export class ThreadsService {
   ): Promise<ThreadUsageStatisticsDto> {
     const userId = ctx.checkSub();
 
-    // First verify the thread exists and belongs to the user
     const thread = await this.threadDao.getOne({
       id: threadId,
       createdBy: userId,
@@ -386,6 +526,8 @@ export class ThreadsService {
       throw new NotFoundException('THREAD_NOT_FOUND');
     }
 
+    // totalUsage holds checkpoint state (authoritative for currentContext only).
+    // All additive fields are overwritten by the message-scan block below.
     let totalUsage: RequestTokenUsage = {
       inputTokens: 0,
       cachedInputTokens: 0,
@@ -396,6 +538,8 @@ export class ThreadsService {
       currentContext: 0,
     };
     let byNodeUsage = new Map<string, RequestTokenUsage>();
+    const byNodePriceDecimal = new Map<string, Decimal>();
+    const nodeIdsSeenInMessages = new Set<string>();
     const byToolUsage = new Map<
       string,
       {
@@ -417,10 +561,27 @@ export class ThreadsService {
     );
 
     if (threadUsage) {
-      totalUsage = threadUsage;
+      // Only currentContext is used from checkpoint state (see single-source policy below).
+      totalUsage = {
+        inputTokens: threadUsage.inputTokens ?? 0,
+        cachedInputTokens: threadUsage.cachedInputTokens ?? 0,
+        outputTokens: threadUsage.outputTokens ?? 0,
+        reasoningTokens: threadUsage.reasoningTokens ?? 0,
+        totalTokens: threadUsage.totalTokens ?? 0,
+        totalPrice: threadUsage.totalPrice ?? 0,
+        currentContext: threadUsage.currentContext ?? 0,
+      };
 
       if (threadUsage.byNode) {
-        byNodeUsage = new Map(Object.entries(threadUsage.byNode));
+        byNodeUsage = new Map(
+          Object.entries(threadUsage.byNode) as [string, RequestTokenUsage][],
+        );
+        for (const [nodeId, nodeUsage] of byNodeUsage) {
+          byNodePriceDecimal.set(
+            nodeId,
+            new Decimal(nodeUsage.totalPrice ?? 0),
+          );
+        }
       }
     }
 
@@ -452,6 +613,13 @@ export class ThreadsService {
     let userMessageCount = 0;
     const modelsUsedSet = new Set<string>();
 
+    // Guard against NaN values that bypass the `?? 0` null-coalescing operator.
+    // NaN is neither null nor undefined, so `NaN ?? 0` returns NaN. Math.max(x, NaN)
+    // propagates NaN, poisoning the accumulator. This helper normalises all non-finite
+    // numbers (NaN, Infinity, -Infinity) and null/undefined to 0.
+    const toFinite = (n: number | null | undefined): number =>
+      typeof n === 'number' && Number.isFinite(n) ? n : 0;
+
     // Accumulate message-based total to capture in-progress subagent costs.
     // Checkpoint-based totalUsage only includes subagent costs after the subagent completes
     // (ToolExecutorNode folds subagent usage into parent state on return).
@@ -462,6 +630,7 @@ export class ThreadsService {
       outputTokens: 0,
       reasoningTokens: 0,
       totalTokens: 0,
+      currentContext: 0,
       totalPriceDecimal: new Decimal(0),
     };
 
@@ -473,7 +642,57 @@ export class ThreadsService {
       messageTotalUsage.reasoningTokens += usage.reasoningTokens || 0;
       messageTotalUsage.totalTokens += usage.totalTokens;
       messageTotalUsage.totalPriceDecimal =
-        messageTotalUsage.totalPriceDecimal.plus(usage.totalPrice || 0);
+        messageTotalUsage.totalPriceDecimal.plus(usage.totalPrice ?? 0);
+      messageTotalUsage.currentContext = Math.max(
+        messageTotalUsage.currentContext,
+        toFinite(usage.currentContext),
+      );
+    };
+
+    /**
+     * Add a single LLM request's usage to the per-node accumulator.
+     * Mirrors `accumulateUsage` but keyed by nodeId. Integer fields go
+     * into `byNodeUsage` directly; price uses `Decimal` via
+     * `byNodePriceDecimal` for precision, resolved to a number at return
+     * time to avoid floating-point drift across many subagent rows.
+     */
+    const accumulateByNode = (
+      nodeId: string | null | undefined,
+      usage: RequestTokenUsage,
+    ): void => {
+      if (!nodeId) {
+        return;
+      }
+      // On first message-scan hit for this nodeId, discard the checkpoint
+      // seed (message-scan is authoritative per single-source policy).
+      if (!nodeIdsSeenInMessages.has(nodeId)) {
+        nodeIdsSeenInMessages.add(nodeId);
+        byNodeUsage.delete(nodeId);
+        byNodePriceDecimal.delete(nodeId);
+      }
+      const prev = byNodeUsage.get(nodeId);
+      byNodeUsage.set(nodeId, {
+        inputTokens: (prev?.inputTokens ?? 0) + usage.inputTokens,
+        cachedInputTokens:
+          (prev?.cachedInputTokens ?? 0) + (usage.cachedInputTokens ?? 0),
+        outputTokens: (prev?.outputTokens ?? 0) + usage.outputTokens,
+        reasoningTokens:
+          (prev?.reasoningTokens ?? 0) + (usage.reasoningTokens ?? 0),
+        totalTokens: (prev?.totalTokens ?? 0) + usage.totalTokens,
+        totalPrice: prev?.totalPrice ?? 0,
+        // Mirrors accumulateUsage (lines ~509-512): toFinite + Math.max protect against
+        // NaN poisoning of per-node currentContext. The ?? 0 reconciliation is replaced
+        // with explicit toFinite normalization so legacy NaN values don't propagate.
+        currentContext: Math.max(
+          toFinite(usage.currentContext),
+          toFinite(prev?.currentContext),
+        ),
+      });
+      const prevPriceDecimal = byNodePriceDecimal.get(nodeId) ?? new Decimal(0);
+      byNodePriceDecimal.set(
+        nodeId,
+        prevPriceDecimal.plus(usage.totalPrice ?? 0),
+      );
     };
 
     // Map: toolCallId -> parentToolName (for linking subagent internal messages)
@@ -484,7 +703,11 @@ export class ThreadsService {
       string,
       Map<
         string,
-        { callCount: number; totalTokens: number; priceDecimal: Decimal }
+        {
+          callCount: number;
+          totalTokens: number;
+          priceDecimal: Decimal;
+        }
       >
     >();
 
@@ -548,7 +771,7 @@ export class ThreadsService {
 
         if (parentToolName) {
           const embeddedTokens = embeddedUsage?.totalTokens || 0;
-          const embeddedPrice = embeddedUsage?.totalPrice || 0;
+          const embeddedPrice = embeddedUsage?.totalPrice ?? 0;
 
           // Determine child tool name(s) or use (llm_response) for no-tool responses
           const childToolNames =
@@ -585,7 +808,7 @@ export class ThreadsService {
 
           // Attribute subagent LLM cost to toolsAggregate
           toolsPriceDecimal = toolsPriceDecimal.plus(
-            embeddedUsage.totalPrice || 0,
+            embeddedUsage.totalPrice ?? 0,
           );
           toolsAggregate.inputTokens += embeddedUsage.inputTokens;
           toolsAggregate.outputTokens += embeddedUsage.outputTokens;
@@ -594,6 +817,7 @@ export class ThreadsService {
 
           // Accumulate into message-based total (captures in-progress subagent costs)
           accumulateUsage(embeddedUsage);
+          accumulateByNode(messageEntity.nodeId, embeddedUsage);
         }
 
         // Subagent internal messages don't contribute to top-level byTool
@@ -610,7 +834,7 @@ export class ThreadsService {
           const current = byToolUsage.get(toolName);
           byToolUsage.set(toolName, {
             totalTokens: current?.totalTokens || 0,
-            totalPrice: current?.totalPrice || 0,
+            totalPrice: current?.totalPrice ?? 0,
             callCount: (current?.callCount || 0) + 1,
           });
         }
@@ -630,6 +854,7 @@ export class ThreadsService {
 
         // Accumulate into message-based total
         accumulateUsage(requestUsage);
+        accumulateByNode(messageEntity.nodeId, requestUsage);
 
         let attributeToTools: string[] | undefined;
 
@@ -647,7 +872,7 @@ export class ThreadsService {
 
         if (attributeToTools && attributeToTools.length > 0) {
           toolsPriceDecimal = toolsPriceDecimal.plus(
-            requestUsage.totalPrice || 0,
+            requestUsage.totalPrice ?? 0,
           );
 
           toolsAggregate.inputTokens += requestUsage.inputTokens;
@@ -657,11 +882,11 @@ export class ThreadsService {
 
           for (const toolName of attributeToTools) {
             const current = byToolUsage.get(toolName);
+            const addedPrice = requestUsage.totalPrice ?? 0;
             byToolUsage.set(toolName, {
               totalTokens:
                 (current?.totalTokens || 0) + requestUsage.totalTokens,
-              totalPrice:
-                (current?.totalPrice || 0) + (requestUsage.totalPrice || 0),
+              totalPrice: (current?.totalPrice ?? 0) + addedPrice,
               callCount: current?.callCount || 0,
             });
           }
@@ -678,44 +903,60 @@ export class ThreadsService {
         toolOwnUsage.set(messageEntity.name, {
           toolTokens: (existing?.toolTokens || 0) + toolUsage.totalTokens,
           priceDecimal: (existing?.priceDecimal || new Decimal(0)).plus(
-            toolUsage.totalPrice || 0,
+            toolUsage.totalPrice ?? 0,
           ),
         });
       }
     }
 
-    // Finalize price aggregations — always set totalPrice (even when 0) for consistency
     toolsAggregate.totalPrice = toolsPriceDecimal.toNumber();
 
-    // Reconcile checkpoint-based total with message-based total.
-    // Use Math.max per field to capture the most up-to-date value:
-    // - Checkpoint total is authoritative for completed threads (includes all costs)
-    // - Message total captures in-progress subagent costs that haven't been
-    //   folded into the parent checkpoint yet
-    const messageTotalPrice = messageTotalUsage.totalPriceDecimal.toNumber();
+    // Finalize per-node prices from Decimal map to preserve precision
+    // across many rows (same pattern as toolsPriceDecimal above).
+    for (const [nodeId, priceDecimal] of byNodePriceDecimal) {
+      const entry = byNodeUsage.get(nodeId);
+      if (entry) {
+        entry.totalPrice = priceDecimal.toNumber();
+      }
+    }
+
+    /**
+     * Single-source policy for thread total usage.
+     *
+     * Message-scan is authoritative for ALL additive fields (inputTokens,
+     * outputTokens, cachedInputTokens, reasoningTokens, totalTokens,
+     * totalPrice) regardless of thread.status — both for the top-level
+     * `total` AND for `byNode` (per-node projection of the same additive
+     * fields, keyed by messages.node_id). Each messages.request_token_usage
+     * row is one recorded LLM call with Decimal-precision price; summing
+     * them is the most-truthful possible aggregation.
+     *
+     * Checkpoint state.totalPrice is a derived running total that sometimes
+     * lags or is never written — e.g. LangGraph checkpoints where
+     * invoke-llm-node never incremented the accumulator for a model path,
+     * or where subagent costs were not folded into the parent checkpoint.
+     * Checkpoint byNode has the same lag (and is often empty for
+     * subagent/multi-persona graphs whose tuples lack nodeId), so it is
+     * seeded as a fallback only — message-scan entries overwrite it for
+     * any nodeId that appears in messages.
+     *
+     * `currentContext`: checkpoint authoritative WHEN populated; messages
+     * authoritative WHEN checkpoint returns null (multi-agent topologies that
+     * don't write the empty-NS root checkpoint); reconciled via
+     * `Math.max(totalUsage.currentContext ?? 0, messageTotalUsage.currentContext)`
+     * — preserves the higher value, never regresses.
+     */
     totalUsage = {
-      ...totalUsage,
-      inputTokens: Math.max(
-        totalUsage.inputTokens,
-        messageTotalUsage.inputTokens,
+      inputTokens: messageTotalUsage.inputTokens,
+      cachedInputTokens: messageTotalUsage.cachedInputTokens,
+      outputTokens: messageTotalUsage.outputTokens,
+      reasoningTokens: messageTotalUsage.reasoningTokens,
+      totalTokens: messageTotalUsage.totalTokens,
+      totalPrice: messageTotalUsage.totalPriceDecimal.toNumber(),
+      currentContext: Math.max(
+        toFinite(totalUsage.currentContext),
+        messageTotalUsage.currentContext,
       ),
-      cachedInputTokens: Math.max(
-        totalUsage.cachedInputTokens || 0,
-        messageTotalUsage.cachedInputTokens,
-      ),
-      outputTokens: Math.max(
-        totalUsage.outputTokens,
-        messageTotalUsage.outputTokens,
-      ),
-      reasoningTokens: Math.max(
-        totalUsage.reasoningTokens || 0,
-        messageTotalUsage.reasoningTokens,
-      ),
-      totalTokens: Math.max(
-        totalUsage.totalTokens,
-        messageTotalUsage.totalTokens,
-      ),
-      totalPrice: Math.max(totalUsage.totalPrice || 0, messageTotalPrice),
     };
 
     // Build final byTool array with subCalls and toolTokens/toolPrice

@@ -8,7 +8,12 @@ import {
   Post,
   Put,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiCreatedResponse,
+  ApiOkResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { CtxStorage, OnlyForAuthorized } from '@packages/http-server';
 
 import { AppContextStorage } from '../../../auth/app-context-storage';
@@ -28,6 +33,7 @@ export class ProjectsController {
   constructor(private readonly projectsService: ProjectsService) {}
 
   @Post()
+  @ApiCreatedResponse({ type: ProjectDto })
   async createProject(
     @Body() dto: CreateProjectDto,
     @CtxStorage() ctx: AppContextStorage,
@@ -36,6 +42,7 @@ export class ProjectsController {
   }
 
   @Get()
+  @ApiOkResponse({ type: ProjectDto, isArray: true })
   async getAllProjects(
     @CtxStorage() ctx: AppContextStorage,
   ): Promise<ProjectDto[]> {
@@ -43,6 +50,7 @@ export class ProjectsController {
   }
 
   @Get(':id')
+  @ApiOkResponse({ type: ProjectDto })
   async findProjectById(
     @Param() params: EntityUUIDDto,
     @CtxStorage() ctx: AppContextStorage,
@@ -51,6 +59,7 @@ export class ProjectsController {
   }
 
   @Put(':id')
+  @ApiOkResponse({ type: ProjectDto })
   async updateProject(
     @Param() params: EntityUUIDDto,
     @Body() dto: UpdateProjectDto,

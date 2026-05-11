@@ -206,6 +206,10 @@ describe('GraphRevisionService', () => {
           provide: EntityManager,
           useValue: {
             transactional: vi.fn(),
+            getUnitOfWork: vi.fn().mockReturnValue({
+              getById: vi.fn().mockReturnValue(undefined),
+              unsetIdentity: vi.fn(),
+            }),
           },
         },
         {

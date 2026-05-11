@@ -8,7 +8,12 @@ import {
   Patch,
   Post,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiCreatedResponse,
+  ApiOkResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { CtxStorage, OnlyForAuthorized } from '@packages/http-server';
 
 import { AppContextStorage } from '../../../auth/app-context-storage';
@@ -28,6 +33,7 @@ export class SecretsController {
   constructor(private readonly secretsService: SecretsService) {}
 
   @Post()
+  @ApiCreatedResponse({ type: SecretResponseDto })
   async create(
     @Body() dto: CreateSecretDto,
     @CtxStorage() ctx: AppContextStorage,
@@ -36,6 +42,7 @@ export class SecretsController {
   }
 
   @Get()
+  @ApiOkResponse({ type: SecretResponseDto, isArray: true })
   async list(
     @CtxStorage() ctx: AppContextStorage,
   ): Promise<SecretResponseDto[]> {
@@ -43,6 +50,7 @@ export class SecretsController {
   }
 
   @Get(':id')
+  @ApiOkResponse({ type: SecretResponseDto })
   async getById(
     @Param() params: EntityUUIDDto,
     @CtxStorage() ctx: AppContextStorage,
@@ -51,6 +59,7 @@ export class SecretsController {
   }
 
   @Patch(':id')
+  @ApiOkResponse({ type: SecretResponseDto })
   async update(
     @Param() params: EntityUUIDDto,
     @Body() dto: UpdateSecretDto,

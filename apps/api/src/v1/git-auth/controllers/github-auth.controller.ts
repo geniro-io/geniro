@@ -1,5 +1,10 @@
 import { Body, Controller, Delete, Get, Param, Post } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiCreatedResponse,
+  ApiOkResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { BadRequestException } from '@packages/common';
 import { CtxStorage, OnlyForAuthorized } from '@packages/http-server';
 
@@ -23,6 +28,7 @@ export class GitHubAuthController {
   @Get('setup')
   @ApiBearerAuth()
   @OnlyForAuthorized()
+  @ApiOkResponse({ type: SetupInfoResponseDto })
   async getSetupInfo(): Promise<SetupInfoResponseDto> {
     return this.gitHubAppProviderService.getSetupInfo();
   }
@@ -30,6 +36,7 @@ export class GitHubAuthController {
   @Post('oauth/link')
   @ApiBearerAuth()
   @OnlyForAuthorized()
+  @ApiCreatedResponse({ type: LinkInstallationResponseDto })
   async linkViaOAuthCode(
     @Body() body: OAuthLinkRequestDto,
     @CtxStorage() ctx: AppContextStorage,
@@ -45,6 +52,7 @@ export class GitHubAuthController {
   @Get('installations')
   @ApiBearerAuth()
   @OnlyForAuthorized()
+  @ApiOkResponse({ type: ListInstallationsResponseDto })
   async listInstallations(
     @CtxStorage() ctx: AppContextStorage,
   ): Promise<ListInstallationsResponseDto> {
@@ -55,6 +63,7 @@ export class GitHubAuthController {
   @Delete('installations/:installationId')
   @ApiBearerAuth()
   @OnlyForAuthorized()
+  @ApiOkResponse({ type: UnlinkInstallationResponseDto })
   async unlinkInstallation(
     @Param('installationId') installationIdParam: string,
     @CtxStorage() ctx: AppContextStorage,
@@ -76,6 +85,7 @@ export class GitHubAuthController {
   @Delete('disconnect')
   @ApiBearerAuth()
   @OnlyForAuthorized()
+  @ApiOkResponse({ type: UnlinkInstallationResponseDto })
   async disconnectAll(
     @CtxStorage() ctx: AppContextStorage,
   ): Promise<UnlinkInstallationResponseDto> {

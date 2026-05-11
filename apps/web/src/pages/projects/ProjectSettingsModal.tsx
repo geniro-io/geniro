@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -95,6 +96,7 @@ export const ProjectSettingsModal = ({
 
   useEffect(() => {
     if (open) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch settings each time modal opens
       loadData();
     }
   }, [open, loadData]);
@@ -164,6 +166,9 @@ export const ProjectSettingsModal = ({
       <DialogContent className="sm:max-w-[600px]">
         <DialogHeader>
           <DialogTitle>Project Settings — {project.name}</DialogTitle>
+          <DialogDescription className="sr-only">
+            Override default LLM models and cost limits for this project.
+          </DialogDescription>
         </DialogHeader>
 
         {loadingData ? (

@@ -111,6 +111,7 @@ export const useGraphRevisions = ({
   );
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot revision fetch on mount
     void loadRevisions({ silent: true });
   }, [loadRevisions]);
 
@@ -185,6 +186,7 @@ export const useGraphRevisions = ({
     };
   }, [graphId, activeRevKey, upsertRevision]);
 
+  // eslint-disable-next-line react-hooks/preserve-manual-memoization -- intentional manual memoization; React Compiler not enabled
   const activeRevision = useMemo(() => {
     if (!revisions.length) {
       return null;

@@ -50,6 +50,16 @@ export class ReasoningAwareChatCompletions extends ChatOpenAICompletions {
   ): T {
     const reasoning = this.extractReasoningText(source);
     if (!reasoning) {
+      // Newer @langchain/openai sets additional_kwargs.reasoning_content to
+      // an empty string when the upstream payload contains an empty value.
+      // Drop it so consumers can rely on `undefined` meaning "no reasoning".
+      if (
+        msg.additional_kwargs &&
+        msg.additional_kwargs.reasoning_content === ''
+      ) {
+        const { reasoning_content: _empty, ...rest } = msg.additional_kwargs;
+        msg.additional_kwargs = rest;
+      }
       return msg;
     }
 

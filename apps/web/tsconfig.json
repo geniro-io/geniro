@@ -10,7 +10,6 @@
     "useDefineForClassFields": true,
     "forceConsistentCasingInFileNames": true,
     "allowJs": false,
-    "esModuleInterop": false,
     "declaration": false,
     "declarationMap": false,
     "sourceMap": false,

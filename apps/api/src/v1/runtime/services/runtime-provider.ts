@@ -1,5 +1,9 @@
 import { Injectable, Optional } from '@nestjs/common';
-import { DefaultLogger, extractErrorMessage } from '@packages/common';
+import {
+  BaseException,
+  DefaultLogger,
+  extractErrorMessage,
+} from '@packages/common';
 import isEqual from 'lodash/isEqual';
 import {
   adjectives,
@@ -433,9 +437,16 @@ export class RuntimeProvider {
     return this.stopAndDeleteInstances(instances);
   }
 
-  async cleanupRuntimesByNodeId(nodeId: string): Promise<number> {
+  async cleanupRuntimesByNodeId(
+    nodeId: string,
+    graphId?: string | null,
+  ): Promise<number> {
+    // Multiple graphs in the same DB can share a node id (e.g. tests reuse
+    // `runtime-1`). Filter by graphId so destroying one graph doesn't nuke
+    // sibling graphs' runtime instances.
     const instances = await this.runtimeInstanceDao.getAll({
       nodeId,
+      ...(graphId !== undefined ? { graphId } : {}),
     });
 
     return this.stopAndDeleteInstances(instances);
@@ -462,10 +473,32 @@ export class RuntimeProvider {
       return 0;
     }
 
+    // Bulk-cleanup paths (idle reaper, node-id sweep, temp sweep, thread
+    // teardown) can race against each other and against the periodic
+    // RuntimeCleanupService. Two outcomes both surface as exceptions but
+    // are benign for bulk cleanup (which is idempotent by design):
+    //  - RUNTIME_INSTANCE_NOT_FOUND: concurrent path already hard-deleted.
+    //  - INVALID_RUNTIME_STATUS_TRANSITION: concurrent path already moved
+    //    the row to a terminal state (Stopped/Failed) between our snapshot
+    //    read and our transitionStatus call; nothing left to stop.
+    // Both mean "someone else finished the work" — skip and try the
+    // best-effort hard-delete.
     await Promise.all(
       instances.map(async (instance) => {
-        await this.stopRuntime(instance);
-        await this.runtimeInstanceDao.hardDeleteById(instance.id);
+        try {
+          await this.stopRuntime(instance);
+        } catch (error) {
+          if (
+            !(error instanceof BaseException) ||
+            (error.errorCode !== 'RUNTIME_INSTANCE_NOT_FOUND' &&
+              error.errorCode !== 'INVALID_RUNTIME_STATUS_TRANSITION')
+          ) {
+            throw error;
+          }
+        }
+        await this.runtimeInstanceDao
+          .hardDeleteById(instance.id)
+          .catch(() => undefined);
       }),
     );
 

@@ -19,7 +19,7 @@ export class GraphsListener {
       this.logger.log(
         `Deleting graphs for project ${event.projectId} by user ${event.userId}`,
       );
-      await this.graphDao.hardDelete({
+      await this.graphDao.delete({
         projectId: event.projectId,
         createdBy: event.userId,
       });

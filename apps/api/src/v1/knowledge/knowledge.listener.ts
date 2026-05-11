@@ -19,7 +19,7 @@ export class KnowledgeListener {
       this.logger.log(
         `Deleting knowledge docs for project ${event.projectId} by user ${event.userId}`,
       );
-      await this.knowledgeDocDao.hardDelete({
+      await this.knowledgeDocDao.delete({
         projectId: event.projectId,
         createdBy: event.userId,
       });

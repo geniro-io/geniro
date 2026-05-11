@@ -65,10 +65,14 @@ export abstract class BaseDao<T extends object> {
     data: Partial<T>,
     txEm?: EntityManager,
   ): Promise<number> {
-    return await this.getRepo(txEm).nativeUpdate(
-      { id } as FilterQuery<T>,
-      data as T,
-    );
+    const em = txEm ?? this.em;
+    const entity = await this.getRepo(txEm).findOne({ id } as FilterQuery<T>);
+    if (!entity) {
+      return 0;
+    }
+    Object.assign(entity, data);
+    await em.flush();
+    return 1;
   }
 
   async updateAndReturn(
@@ -86,17 +90,60 @@ export abstract class BaseDao<T extends object> {
   }
 
   async deleteById(id: string, txEm?: EntityManager): Promise<void> {
-    await this.getRepo(txEm).nativeUpdate(
-      { id } as FilterQuery<T>,
-      { deletedAt: new Date() } as T,
-    );
+    const em = txEm ?? this.em;
+    const entity = await this.getRepo(txEm).findOne({ id } as FilterQuery<T>);
+    if (!entity) {
+      return;
+    }
+    (entity as unknown as { deletedAt: Date | null }).deletedAt = new Date();
+    await em.flush();
+    this.evictFromIdentityMap(entity, em);
+  }
+
+  async delete(where: FilterQuery<T>, txEm?: EntityManager): Promise<void> {
+    const em = txEm ?? this.em;
+    const matches = await this.getRepo(txEm).find(where);
+    if (matches.length === 0) {
+      return;
+    }
+    const now = new Date();
+    for (const entity of matches) {
+      (entity as unknown as { deletedAt: Date | null }).deletedAt = now;
+    }
+    await em.flush();
+    for (const entity of matches) {
+      this.evictFromIdentityMap(entity, em);
+    }
   }
 
   async hardDeleteById(id: string, txEm?: EntityManager): Promise<void> {
-    await this.getRepo(txEm).nativeDelete({ id } as FilterQuery<T>);
+    const em = txEm ?? this.em;
+    const ref = em.getReference(this.entityClass, id as never);
+    em.remove(ref);
+    await em.flush();
   }
 
   async hardDelete(where: FilterQuery<T>, txEm?: EntityManager): Promise<void> {
-    await this.getRepo(txEm).nativeDelete(where);
+    const em = txEm ?? this.em;
+    const matches = await this.getRepo(txEm).find(where);
+    if (matches.length === 0) {
+      return;
+    }
+    for (const entity of matches) {
+      em.remove(entity);
+    }
+    await em.flush();
+  }
+
+  /**
+   * Soft-deleted entities stay in the identity map after flush, so subsequent
+   * `findOne({ id })` calls hand back the cached entity and bypass the
+   * `softDelete` filter — making the row look alive. Evict the cached entry
+   * (without flipping `__managed = false`) so the next read goes to the DB
+   * and the filter takes effect. Pre-existing JS references stay coherent.
+   */
+  private evictFromIdentityMap(entity: T, em: EntityManager): void {
+    const uow = em.getUnitOfWork();
+    uow.getIdentityMap().delete(entity);
   }
 }

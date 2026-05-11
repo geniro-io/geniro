@@ -9,6 +9,7 @@ export function useCountdown(targetDate: string | undefined): number | null {
   const [remaining, setRemaining] = useState<number | null>(null);
   useEffect(() => {
     if (!targetDate) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- clear stale countdown when target removed
       setRemaining(null);
       return;
     }

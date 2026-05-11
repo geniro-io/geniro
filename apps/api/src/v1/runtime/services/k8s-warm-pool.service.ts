@@ -7,7 +7,7 @@ import { DefaultLogger } from '@packages/common';
 import { Job, Queue, Worker } from 'bullmq';
 import IORedis from 'ioredis';
 
-import { environment } from '../../../environments';
+import { environment, getInstanceFingerprint } from '../../../environments';
 import {
   GENIRO_CLAIMED_LABEL,
   GENIRO_GRAPH_LABEL,
@@ -38,7 +38,7 @@ export class K8sWarmPoolService
   private watchRestartBackoffMs: number = 1000;
   private lastResourceVersion: string | null = null;
   private isShuttingDown: boolean = false;
-  private readonly queueName = `k8s-warmpool-${environment.env}`;
+  private readonly queueName = `k8s-warmpool-${getInstanceFingerprint()}`;
 
   constructor(private readonly logger: DefaultLogger) {}
 
@@ -59,6 +59,13 @@ export class K8sWarmPoolService
 
     this.redis = new IORedis(environment.redisUrl, {
       maxRetriesPerRequest: null,
+      // BullMQ-managed connection — see thread-resume-queue.service.ts for
+      // the full rationale. `enableReadyCheck: false` is safe here because
+      // BullMQ retries jobs at its own layer when commands fail during a
+      // Redis LOADING window. `disableClientInfo: true` is purely cosmetic
+      // (skips the SETINFO telemetry roundtrip).
+      enableReadyCheck: false,
+      disableClientInfo: true,
     });
 
     this.redis.on('error', (err) => {
@@ -67,6 +74,9 @@ export class K8sWarmPoolService
 
     this.queue = new Queue(this.queueName, {
       connection: this.redis,
+      // Skip BullMQ's startup INFO call — see queue services for full
+      // rationale (race with teardown surfaces ioredis stderr noise).
+      skipVersionCheck: true,
       defaultJobOptions: {
         removeOnComplete: 25,
         removeOnFail: 25,
@@ -81,6 +91,15 @@ export class K8sWarmPoolService
     this.worker = new Worker(this.queueName, this.processJob.bind(this), {
       connection: this.redis,
       concurrency: 1,
+      skipVersionCheck: true,
+    });
+    // Forward BullMQ worker errors to our logger so the internal blocking-
+    // connection duplicate's transient socket errors don't surface as
+    // unhandled `[ioredis] Unhandled error event:` console noise.
+    this.worker.on('error', (err) => {
+      this.logger.warn('K8s warm pool worker error', {
+        error: err instanceof Error ? err.message : String(err),
+      });
     });
 
     await this.queue.add(

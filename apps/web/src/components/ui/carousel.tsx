@@ -99,6 +99,7 @@ function Carousel({
     if (!api) {
       return;
     }
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- syncs slide state from embla on init/event
     onSelect(api);
     api.on('reInit', onSelect);
     api.on('select', onSelect);

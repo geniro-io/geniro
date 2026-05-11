@@ -39,9 +39,18 @@ export class BaseMcpTool<TSchema, TConfig = unknown> extends BaseTool<
    * Returns the original MCP JSON Schema directly, bypassing the lossy
    * Zod round-trip (jsonSchemaToZod may produce transforms/nullable that
    * cannot be converted back to JSON Schema).
+   *
+   * Forces the draft-07 `$schema` annotation so consumers (e.g. graph node
+   * metadata, /templates) receive a consistent schema dialect — MCP servers
+   * are not required to emit `$schema`, and matching `zodToAjvSchema`'s
+   * draft-07 output keeps tool-list payloads uniform across tool sources.
    */
   public override get ajvSchema(): JSONSchema {
-    return (this.tool.inputSchema ?? {}) as JSONSchema;
+    const raw = (this.tool.inputSchema ?? {}) as JSONSchema;
+    return {
+      $schema: 'http://json-schema.org/draft-07/schema#',
+      ...raw,
+    };
   }
 
   constructor(

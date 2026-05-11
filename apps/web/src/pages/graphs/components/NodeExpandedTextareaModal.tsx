@@ -4,6 +4,7 @@ import { Button } from '../../../components/ui/button';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -57,6 +58,9 @@ export const NodeExpandedTextareaModal: FC<NodeExpandedTextareaModalProps> = ({
     <DialogContent className="sm:max-w-[1200px]">
       <DialogHeader>
         <DialogTitle>Edit Text</DialogTitle>
+        <DialogDescription className="sr-only">
+          Edit the text field in an expanded markdown editor.
+        </DialogDescription>
       </DialogHeader>
       {expandedTextarea && (
         <>

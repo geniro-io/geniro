@@ -291,7 +291,7 @@ export class SimpleAgent extends BaseAgent<SimpleAgentSchemaType> {
       const toolExecutorNode = new ToolExecutorNode(
         toolsArray,
         this.litellmService,
-        undefined,
+        { enforceCostLimit: true },
         this.logger,
         (name: string) => this.loadTool(name),
       );
@@ -492,7 +492,7 @@ export class SimpleAgent extends BaseAgent<SimpleAgentSchemaType> {
       outputTokens: s.outputTokens,
       ...(s.reasoningTokens ? { reasoningTokens: s.reasoningTokens } : {}),
       totalTokens: s.totalTokens,
-      ...(s.totalPrice ? { totalPrice: s.totalPrice } : {}),
+      totalPrice: s.totalPrice,
       ...(s.currentContext ? { currentContext: s.currentContext } : {}),
     };
   }
@@ -538,7 +538,6 @@ export class SimpleAgent extends BaseAgent<SimpleAgentSchemaType> {
       effectiveCostLimitUsd?: number | null;
     };
 
-    // Build state change object with only changed fields
     const stateChange: StateChangePayload = {};
 
     if (prevState.toolsMetadata !== nextState.toolsMetadata) {
@@ -559,7 +558,6 @@ export class SimpleAgent extends BaseAgent<SimpleAgentSchemaType> {
         nextState.toolUsageGuardActivatedCount;
     }
 
-    // Track token usage changes
     if (prevState.inputTokens !== nextState.inputTokens) {
       stateChange.inputTokens = nextState.inputTokens;
     }
@@ -588,7 +586,6 @@ export class SimpleAgent extends BaseAgent<SimpleAgentSchemaType> {
       stateChange.currentContext = nextState.currentContext;
     }
 
-    // Only emit if there are changes
     if (Object.keys(stateChange).length === 0) {
       return;
     }
@@ -944,45 +941,6 @@ export class SimpleAgent extends BaseAgent<SimpleAgentSchemaType> {
     };
   }
 
-  /**
-   * Extracts per-block reasoning entries from a streaming AIMessageChunk.
-   * Returns one entry per reasoning content block found in the chunk, using
-   * the block's own stable id (b.id) as the key for accumulation. Falls back
-   * to chunk.id when the block carries no id of its own (older providers).
-   */
-  private extractReasoningFromChunk(
-    chunk: AIMessageChunk,
-  ): { text: string; blockId: string }[] | null {
-    const blocks =
-      chunk?.contentBlocks ?? chunk?.response_metadata?.output ?? [];
-
-    if (!Array.isArray(blocks)) {
-      return null;
-    }
-
-    const entries: { text: string; blockId: string }[] = [];
-    for (const b of blocks as {
-      type?: unknown;
-      reasoning?: unknown;
-      id?: unknown;
-    }[]) {
-      if (!b || b.type !== 'reasoning') {
-        continue;
-      }
-      if (typeof b.reasoning !== 'string' || b.reasoning.length === 0) {
-        continue;
-      }
-      const blockId =
-        typeof b.id === 'string' && b.id.length > 0 ? b.id : (chunk.id ?? '');
-      if (!blockId) {
-        continue;
-      }
-      entries.push({ text: b.reasoning, blockId });
-    }
-
-    return entries.length > 0 ? entries : null;
-  }
-
   public async run(
     threadId: string,
     messages: BaseMessage[],
@@ -1027,16 +985,6 @@ export class SimpleAgent extends BaseAgent<SimpleAgentSchemaType> {
       mergedConfig,
     );
     const inputMessageSet = new Set(updateMessages);
-
-    // Emit invoke event
-    this.emit({
-      type: 'invoke',
-      data: {
-        threadId,
-        messages: updateMessages,
-        config: mergedConfig,
-      },
-    });
 
     const g = await this.buildGraph(config);
 
@@ -1111,7 +1059,6 @@ export class SimpleAgent extends BaseAgent<SimpleAgentSchemaType> {
 
     let finalState: BaseAgentState = initialState;
 
-    // Track active run for cancellation and status updates
     const runEntry: ActiveRunEntry = {
       abortController,
       runnableConfig: mergedConfig,
@@ -1121,6 +1068,21 @@ export class SimpleAgent extends BaseAgent<SimpleAgentSchemaType> {
     };
 
     this.activeRuns.set(runId, runEntry);
+
+    // Emit invoke AFTER `activeRuns.set` so consumers reacting to
+    // status=Running (e.g. follow-up triggers calling `runOrAppend`) see the
+    // active entry and route via `appendMessages` instead of starting a new
+    // run. Otherwise: `executeTrigger`'s eager status flip beats the active
+    // mark, and a follow-up trigger arriving in that window starts a parallel
+    // `run()` for the same thread instead of appending to the in-flight one.
+    this.emit({
+      type: 'invoke',
+      data: {
+        threadId,
+        messages: updateMessages,
+        config: mergedConfig,
+      },
+    });
 
     const initialStateChange: BaseAgentStateChange = {
       messages: {
@@ -1144,7 +1106,6 @@ export class SimpleAgent extends BaseAgent<SimpleAgentSchemaType> {
       },
     );
 
-    // Emit initial messages notification
     await this.emitNewMessages(updateMessages, mergedConfig, threadId);
 
     // Track the most recent updates-mode node. Leaked subagent invoke_llm chunks
@@ -1161,17 +1122,15 @@ export class SimpleAgent extends BaseAgent<SimpleAgentSchemaType> {
 
           for (const [_nodeName, nodeState] of Object.entries(chunk)) {
             lastUpdatesNode = _nodeName;
-            // Update final state - cast to BaseAgentStateChange first, then to BaseAgentState
-            const stateChange = nodeState;
-            if (!stateChange || typeof stateChange !== 'object') {
+            if (!nodeState || typeof nodeState !== 'object') {
               continue;
             }
+            const stateChange = nodeState;
 
             const beforeLen = finalState.messages.length;
             const prevMessages = finalState.messages;
             const prevState = { ...finalState };
 
-            // Convert state change to final state for tracking
             finalState = this.applyChange(finalState, stateChange);
             this.syncThreadTotals(threadId, finalState);
 
@@ -1231,6 +1190,22 @@ export class SimpleAgent extends BaseAgent<SimpleAgentSchemaType> {
       if (err instanceof CostLimitExceededError) {
         runEntry.stopped = true;
         runEntry.stopReason = 'cost_limit';
+
+        // LiteLLM has already billed the LLM call that tripped the threshold. Persist
+        // the in-flight AIMessage (and any reasoning messages) so the per-thread cost
+        // rollup includes that spend instead of silently leaking it.
+        if (err.inFlightMessages && err.inFlightMessages.length > 0) {
+          // Already passed through updateMessagesListWithMetadata at the throw site —
+          // emit them as-is. Do NOT re-stamp.
+          this.emit({
+            type: 'message',
+            data: {
+              threadId,
+              messages: err.inFlightMessages,
+              config: mergedConfig,
+            },
+          });
+        }
 
         // Emit a user-visible SystemMessage describing the cost-limit stop.
         const limitText = err.effectiveLimitUsd.toFixed(2);
@@ -1390,7 +1365,6 @@ export class SimpleAgent extends BaseAgent<SimpleAgentSchemaType> {
         );
         const msgs = updateMessagesListWithMetadata([msg], run.runnableConfig);
 
-        // Emit message event
         this.emit({
           type: 'message',
           data: {
@@ -1456,7 +1430,6 @@ export class SimpleAgent extends BaseAgent<SimpleAgentSchemaType> {
         );
         const msgs = updateMessagesListWithMetadata([msg], run.runnableConfig);
 
-        // Emit message event so the user can see the stop reason in thread history
         this.emit({
           type: 'message',
           data: {

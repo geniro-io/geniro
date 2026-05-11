@@ -9,6 +9,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { stringify as stringifyYaml } from 'yaml';
 
 import type { LitellmService } from '../../../litellm/services/litellm.service';
+import { CostLimitExceededError } from '../../agents.errors';
 import { BaseAgentState } from '../../agents.types';
 import { ToolExecutorNode } from './tool-executor-node';
 
@@ -780,6 +781,118 @@ describe('ToolExecutorNode', () => {
       // Third should be second additional message
       expect(result.messages?.items?.[2]).toBeInstanceOf(AIMessage);
       expect(result.messages?.items?.[2]?.content).toBe('Second status update');
+    });
+
+    it('re-throws CostLimitExceededError with the higher of subagent-local and parent+folded total on cost-limit result', async () => {
+      const toolCall = {
+        id: 'call-cost-limit',
+        name: 'test-tool-1',
+        args: { input: 'test' },
+      };
+
+      const aiMessage = new AIMessage({
+        content: 'Using tool',
+        tool_calls: [toolCall],
+      });
+
+      // Parent state has already spent $0.30
+      mockState.totalPrice = 0.3;
+      mockState.messages = [aiMessage];
+
+      // Tool returns a cost-limit stop with subagent-local stopCostUsd=$0.15
+      // and toolRequestUsage.totalPrice=$0.05 (the folded usage from the sub-agent run)
+      mockTool1.invoke = vi.fn().mockResolvedValue({
+        output: 'stopped',
+        stopReason: 'cost_limit' as const,
+        stopCostUsd: 0.15,
+        toolRequestUsage: {
+          inputTokens: 100,
+          outputTokens: 50,
+          totalTokens: 150,
+          totalPrice: 0.05,
+        },
+      });
+
+      // sumTokenUsages returns the folded usage containing totalPrice
+      mockLitellmService.sumTokenUsages = vi.fn().mockReturnValue({
+        inputTokens: 100,
+        outputTokens: 50,
+        totalTokens: 150,
+        totalPrice: 0.05,
+      });
+
+      const configWithLimit = {
+        configurable: {
+          thread_id: 'test-thread',
+          effective_cost_limit_usd: 0.3,
+        },
+      };
+
+      // Expected: Math.max(subagent-local=0.15, parent+folded=0.3+0.05=0.35) = 0.35
+      await expect(node.invoke(mockState, configWithLimit)).rejects.toSatisfy(
+        (err: unknown) => {
+          if (!(err instanceof CostLimitExceededError)) {
+            return false;
+          }
+          return err.totalPriceUsd === 0.35;
+        },
+      );
+    });
+
+    it('re-throws CostLimitExceededError with subagent-local stopCostUsd when it exceeds parent+folded', async () => {
+      const toolCall = {
+        id: 'call-cost-limit-2',
+        name: 'test-tool-1',
+        args: { input: 'test' },
+      };
+
+      const aiMessage = new AIMessage({
+        content: 'Using tool',
+        tool_calls: [toolCall],
+      });
+
+      // Parent state has spent very little
+      mockState.totalPrice = 0.01;
+      mockState.messages = [aiMessage];
+
+      // Tool returns a cost-limit stop with subagent-local stopCostUsd=$0.50
+      // and toolRequestUsage.totalPrice=$0.01 (folded usage from the sub-agent run)
+      mockTool1.invoke = vi.fn().mockResolvedValue({
+        output: 'stopped',
+        stopReason: 'cost_limit' as const,
+        stopCostUsd: 0.5,
+        toolRequestUsage: {
+          inputTokens: 100,
+          outputTokens: 50,
+          totalTokens: 150,
+          totalPrice: 0.01,
+        },
+      });
+
+      // sumTokenUsages returns the folded usage
+      mockLitellmService.sumTokenUsages = vi.fn().mockReturnValue({
+        inputTokens: 100,
+        outputTokens: 50,
+        totalTokens: 150,
+        totalPrice: 0.01,
+      });
+
+      const configWithLimit = {
+        configurable: {
+          thread_id: 'test-thread',
+          effective_cost_limit_usd: 0.3,
+        },
+      };
+
+      // Expected: Math.max(subagent-local=0.50, parent+folded=0.01+0.01=0.02) = 0.50
+      await expect(node.invoke(mockState, configWithLimit)).rejects.toSatisfy(
+        (err: unknown) => {
+          if (!(err instanceof CostLimitExceededError)) {
+            return false;
+          }
+          return err.totalPriceUsd === 0.5;
+        },
+      );
     });
 
     it('should mark tool message with __hideForLlm when messageMetadata specifies it', async () => {

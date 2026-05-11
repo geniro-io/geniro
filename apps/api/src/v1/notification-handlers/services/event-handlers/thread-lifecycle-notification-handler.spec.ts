@@ -27,6 +27,8 @@ const toThreadDto = (entity: ThreadEntity): ThreadDto => ({
   source: entity.source ?? null,
   name: entity.name ?? null,
   status: entity.status,
+  runningStartedAt: null,
+  totalRunningMs: 0,
 });
 
 describe('ThreadLifecycleNotificationHandler', () => {

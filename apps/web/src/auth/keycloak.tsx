@@ -1,7 +1,7 @@
 import { ReactKeycloakProvider, useKeycloak } from '@react-keycloak/web';
 import axios from 'axios';
 import Keycloak from 'keycloak-js';
-import { ReactNode } from 'react';
+import type { ReactNode } from 'react';
 
 import { GraphStorageService } from '../services/GraphStorageService';
 import type { AuthModule, AuthProvider } from './types';

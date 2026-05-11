@@ -2,9 +2,9 @@
 
 ## Properties
 
-| Name        | Type                                                                                                                   | Description                            | Notes                  |
-| ----------- | ---------------------------------------------------------------------------------------------------------------------- | -------------------------------------- | ---------------------- |
-| **content** | [**Array&lt;ExecuteTriggerDtoMessagesInnerAnyOfContentInner&gt;**](ExecuteTriggerDtoMessagesInnerAnyOfContentInner.md) | Content blocks for multimodal messages | [default to undefined] |
+| Name        | Type                                                                                                               | Description                            | Notes                  |
+| ----------- | ------------------------------------------------------------------------------------------------------------------ | -------------------------------------- | ---------------------- |
+| **content** | [**Array&lt;ThreadMessageDtoMessageOneOfContentAnyOfInner&gt;**](ThreadMessageDtoMessageOneOfContentAnyOfInner.md) | Content blocks for multimodal messages | [default to undefined] |
 
 ## Example
 

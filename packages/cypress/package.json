@@ -3,22 +3,31 @@
   "version": "1.7.14",
   "author": "Sergey Razumovskiy <s.razumru@gmail.com>",
   "bin": {
-    "cy-generate-api": "src/bin/generate-api.js"
+    "cy-generate-api": "src/bin/generate-api.mjs"
+  },
+  "exports": {
+    ".": {
+      "source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
+    }
   },
   "dependencies": {
-    "@hey-api/openapi-ts": "^0.94.5",
-    "@nestjs/common": "^11.1.17",
-    "ajv": "^8.18.0",
+    "@hey-api/openapi-ts": "^0.97.0",
+    "@nestjs/common": "^11.1.19",
+    "ajv": "^8.20.0",
     "ajv-formats": "^3.0.1",
-    "cypress": "^15.13.0",
+    "cypress": "^15.14.2",
     "reflect-metadata": "^0.2.2"
   },
   "devDependencies": {
-    "@types/node": "^25.5.0",
-    "eslint": "^10.1.0",
-    "typescript": "^6.0.2"
+    "@types/node": "^25.6.0",
+    "eslint": "^10.3.0",
+    "typescript": "^6.0.3"
   },
   "main": "dist/index.js",
+  "module": "./dist/index.mjs",
   "peerDependencies": {
     "@nestjs/common": "^11.1.8",
     "cypress": "^15.5.0"
@@ -26,7 +35,7 @@
   "scripts": {
     "lint:fix": "pnpm run lint --fix",
     "lint": "pnpm eslint src",
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsup",
     "prebuild": "rm -rf ./dist || true"
   },
   "types": "dist/index.d.ts"

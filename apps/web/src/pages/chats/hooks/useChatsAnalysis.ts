@@ -48,6 +48,7 @@ export const useChatsAnalysis = (deps: UseChatsAnalysisDeps) => {
 
   // Reset analysis state on thread change
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reset modal/result state when selected thread changes
     setAnalyzeModalOpen(false);
     setAnalyzeLoading(false);
     setAnalysisResult(null);

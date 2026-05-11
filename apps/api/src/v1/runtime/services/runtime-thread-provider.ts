@@ -119,6 +119,7 @@ export class RuntimeThreadProvider {
     this.initJobsByNodeId.clear();
     await this.runtimeProvider.cleanupRuntimesByNodeId(
       this.params.runtimeNodeId,
+      this.params.graphId ?? null,
     );
   }
 

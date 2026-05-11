@@ -32,23 +32,31 @@ export class GraphDao extends BaseDao<GraphEntity> {
     where: FilterQuery<GraphEntity>,
     options?: FindOptions<GraphEntity, never, keyof GraphEntity & string>,
   ) {
-    return await this.getAll(where, {
-      fields: [
-        'id',
-        'name',
-        'description',
-        'error',
-        'version',
-        'targetVersion',
-        'status',
-        'temporary',
-        'createdBy',
-        'projectId',
-        'createdAt',
-        'updatedAt',
-      ],
-      ...options,
-    });
+    // Fork the EM so the field projection contract holds even when callers
+    // have already loaded the full entity. With a shared identity map,
+    // MikroORM short-circuits to the cached entity and ignores `fields`.
+    return await this.getAll(
+      where,
+      {
+        fields: [
+          'id',
+          'name',
+          'description',
+          'error',
+          'version',
+          'targetVersion',
+          'status',
+          'temporary',
+          'createdBy',
+          'projectId',
+          'createdAt',
+          'updatedAt',
+          'settings',
+        ],
+        ...options,
+      },
+      this.em.fork(),
+    );
   }
 
   async getSchemaAndMetadata(

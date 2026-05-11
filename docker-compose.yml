@@ -1,6 +1,6 @@
 services:
   litellm:
-    image: ghcr.io/berriai/litellm:main-stable
+    image: ghcr.io/berriai/litellm:v1.83.7-stable
     entrypoint: ["litellm"]
     command: ["--config=/app/config.yaml","--detailed_debug"]
     environment:
@@ -106,6 +106,7 @@ services:
 
   daytona-proxy:
     image: nginx:alpine
+    profiles: ["daytona"]
     networks:
       - daytona
     profiles: ["daytona"]
@@ -128,6 +129,7 @@ services:
   daytona-api:
     image: daytonaio/daytona-api:v0.160.0
     restart: on-failure
+    profiles: ["daytona"]
     networks:
       - daytona
       - geniro-infra
@@ -209,6 +211,7 @@ services:
     image: daytonaio/daytona-runner:v0.160.0
     restart: on-failure
     privileged: true
+    profiles: ["daytona"]
     networks:
       - daytona
       - geniro-infra

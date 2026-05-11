@@ -12,10 +12,6 @@ export class ThreadsDao extends BaseDao<ThreadEntity> {
     super(em, ThreadEntity);
   }
 
-  /**
-   * Returns thread counts grouped by graphId.
-   * Each entry contains the total count and the running count.
-   */
   async countByGraphIds(
     graphIds: string[],
   ): Promise<Map<string, { total: number; running: number }>> {
@@ -45,31 +41,61 @@ export class ThreadsDao extends BaseDao<ThreadEntity> {
   }
 
   /**
-   * Inserts a thread or updates it on externalThreadId conflict.
-   * On conflict, only updates: status, lastRunId, updatedAt.
-   * Source is only set on first insert -- never overwritten on conflict.
-   * Returns the upserted row.
+   * Attempts to insert a new thread row keyed on externalThreadId. Returns the
+   * hydrated entity on success, or null when the row already exists (caller
+   * handles the conflict path — typically by locking the existing row and
+   * applying a transition patch via update). Runs as a single atomic SQL
+   * statement; safe to call outside a transaction.
    */
-  async upsertByExternalThreadId(
+  async insertIfNotExists(
     data: Pick<
       ThreadEntity,
       'graphId' | 'createdBy' | 'projectId' | 'externalThreadId' | 'status'
     > &
-      Partial<Pick<ThreadEntity, 'source' | 'lastRunId' | 'metadata'>>,
-  ): Promise<ThreadEntity> {
-    return await this.getRepo().upsert(data, {
-      onConflictFields: ['externalThreadId'],
-      onConflictAction: 'merge',
-      onConflictMergeFields: ['status', 'lastRunId', 'updatedAt'],
-    });
+      Partial<
+        Pick<
+          ThreadEntity,
+          | 'source'
+          | 'lastRunId'
+          | 'metadata'
+          | 'runningStartedAt'
+          | 'totalRunningMs'
+        >
+      >,
+    txEm?: EntityManager,
+  ): Promise<ThreadEntity | null> {
+    const em = txEm ?? this.em;
+    const now = new Date();
+    const insertedRaw = await em
+      .createQueryBuilder(ThreadEntity)
+      .insert({
+        createdBy: data.createdBy,
+        projectId: data.projectId,
+        graphId: data.graphId,
+        externalThreadId: data.externalThreadId,
+        status: data.status,
+        lastRunId: data.lastRunId ?? undefined,
+        source: data.source ?? undefined,
+        metadata: data.metadata ?? undefined,
+        runningStartedAt: data.runningStartedAt ?? null,
+        totalRunningMs: data.totalRunningMs ?? 0,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .onConflict('externalThreadId')
+      .ignore()
+      .returning('*')
+      .execute<Record<string, unknown> | undefined>('get');
+
+    return insertedRaw ? em.map(ThreadEntity, insertedRaw) : null;
   }
 
   async touchById(id: string): Promise<void> {
-    await this.getRepo().nativeUpdate(
-      { id },
-      {
-        updatedAt: new Date(),
-      },
-    );
+    const entity = await this.getRepo().findOne({ id });
+    if (!entity) {
+      return;
+    }
+    entity.updatedAt = new Date();
+    await this.em.flush();
   }
 }

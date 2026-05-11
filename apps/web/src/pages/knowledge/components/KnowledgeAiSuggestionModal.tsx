@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -108,6 +109,10 @@ export const KnowledgeAiSuggestionModal = ({
       <DialogContent className="sm:max-w-[1000px] max-h-[90vh] overflow-y-auto overflow-x-hidden">
         <DialogHeader>
           <DialogTitle>Improve knowledge with AI</DialogTitle>
+          <DialogDescription className="sr-only">
+            Use AI to generate or improve the content of this knowledge document
+            based on your request.
+          </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4 min-w-0">

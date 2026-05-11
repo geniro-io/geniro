@@ -3,7 +3,7 @@ import { EntityManager } from '@mikro-orm/postgresql';
 import { INestApplication } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { v5 as uuidv5 } from 'uuid';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { environment } from '../../../environments';
 import { FilesCodebaseSearchTool } from '../../../v1/agent-tools/tools/common/files/files-codebase-search.tool';
@@ -11,8 +11,7 @@ import { BaseAgentConfigurable } from '../../../v1/agents/agents.types';
 import { RepoIndexDao } from '../../../v1/git-repositories/dao/repo-index.dao';
 import { GitRepositoryProvider } from '../../../v1/git-repositories/git-repositories.types';
 import { RepoIndexerService } from '../../../v1/git-repositories/services/repo-indexer.service';
-import { LlmModelsService } from '../../../v1/litellm/services/llm-models.service';
-import { OpenaiService } from '../../../v1/openai/openai.service';
+import { LiteLlmClient } from '../../../v1/litellm/services/litellm.client';
 import { ProjectsDao } from '../../../v1/projects/dao/projects.dao';
 import { QdrantService } from '../../../v1/qdrant/services/qdrant.service';
 import { RuntimeType } from '../../../v1/runtime/runtime.types';
@@ -21,6 +20,8 @@ import { DockerRuntime } from '../../../v1/runtime/services/docker-runtime';
 import { RuntimeProvider } from '../../../v1/runtime/services/runtime-provider';
 import { RuntimeThreadProvider } from '../../../v1/runtime/services/runtime-thread-provider';
 import { createTestProject } from '../helpers/test-context';
+import { mockLiteLlmClient } from '../helpers/test-stubs';
+import { getMockLlm } from '../mocks/mock-llm';
 import { createTestModule } from '../setup';
 
 const THREAD_ID = `codebase-search-int-${Date.now()}`;
@@ -30,11 +31,16 @@ const RUNNABLE_CONFIG: ToolRunnableConfig<BaseAgentConfigurable> = {
   },
 };
 const INT_TEST_TIMEOUT = 120_000;
-const VECTOR_SIZE = 3;
 const REPO_ROOT = '/runtime-workspace';
 const REPO_ID = `local:${REPO_ROOT}`;
 const REPOSITORY_ID = uuidv5(REPO_ID, environment.codebaseUuidNamespace);
 
+/**
+ * Deterministic embeddings that distinguish alpha-needle vs beta-needle tokens.
+ * MockOpenaiAdapter pads these 3-dim vectors to the full llmEmbeddingDimensions.
+ * The padded vectors remain semantically distinct, so Qdrant semantic search
+ * still finds the correct file.
+ */
 const buildEmbedding = (text: string): number[] => {
   const normalized = text.toLowerCase();
   if (normalized.includes('beta-needle')) {
@@ -52,6 +58,7 @@ describe('Codebase search tool (integration)', () => {
   let qdrantService: QdrantService;
   let repoIndexerService: RepoIndexerService;
   let repoIndexDao: RepoIndexDao;
+  let em: EntityManager;
   let runtime: BaseRuntime;
   let runtimeThreadProvider: RuntimeThreadProvider;
   let collectionName: string | null = null;
@@ -73,29 +80,31 @@ describe('Codebase search tool (integration)', () => {
     const branchSlug = repoIndexerService.deriveBranchSlug(branch);
     collectionName = repoIndexerService.buildCollectionName(
       repoSlug,
-      VECTOR_SIZE,
+      environment.llmEmbeddingDimensions,
       branchSlug,
     );
     return collectionName;
   };
 
   beforeAll(async () => {
-    app = await createTestModule(async (moduleBuilder) =>
-      moduleBuilder
-        .overrideProvider(OpenaiService)
-        .useValue({
-          embeddings: async ({ input }: { input: string[] | string }) => {
-            const inputs = Array.isArray(input) ? input : [input];
-            return {
-              embeddings: inputs.map(buildEmbedding),
-            };
-          },
-        })
-        .overrideProvider(LlmModelsService)
-        .useValue({
-          getKnowledgeEmbeddingModel: () => 'test-embedding',
-        })
-        .compile(),
+    app = await createTestModule(
+      async (moduleBuilder) =>
+        moduleBuilder
+          .overrideProvider(LiteLlmClient)
+          .useValue(mockLiteLlmClient)
+          .compile(),
+      // Codebase-search clones a real repo and runs git/grep inside the
+      // runtime — needs a real container.
+      { mockRuntime: false },
+    );
+
+    // Register embeddings fixture: MockOpenaiAdapter intercepts all
+    // OpenaiService.embeddings() calls and routes them through MockLlmService.
+    // The deterministic buildEmbedding function ensures alpha-needle and
+    // beta-needle queries return distinct vectors so Qdrant search works correctly.
+    getMockLlm(app).onEmbeddings(
+      {},
+      { kind: 'embeddings', vector: buildEmbedding },
     );
 
     tool = await app.resolve(FilesCodebaseSearchTool);
@@ -200,6 +209,17 @@ describe('Codebase search tool (integration)', () => {
 
     await app?.close();
   }, INT_TEST_TIMEOUT);
+
+  beforeEach(() => {
+    getMockLlm(app).reset();
+    // Re-register the embeddings fixture after each reset, since reset() clears
+    // all fixtures. The beforeAll registration is consumed on first call but we
+    // need it available for every test in this suite.
+    getMockLlm(app).onEmbeddings(
+      {},
+      { kind: 'embeddings', vector: buildEmbedding },
+    );
+  });
 
   it(
     'indexes repo contents and updates index on commit change',

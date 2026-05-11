@@ -160,8 +160,28 @@ export class InvokeLlmNode extends BaseNode<
     const rawUsage = res.response_metadata?.usage as
       | Record<string, unknown>
       | undefined;
+    const normalisedTokens = res.usage_metadata?.total_tokens;
+    const rawTokens =
+      typeof rawUsage?.total_tokens === 'number'
+        ? rawUsage.total_tokens
+        : undefined;
+    // LangChain@1.3.1 streaming aggregation yields the usage-bearing chunk twice;
+    // AIMessageChunk.concat() sums response_metadata.usage.*, so raw cost/total_tokens
+    // arrive 2× (or Nx) relative to LangChain's normalised usage_metadata. Divide by
+    // the detected multiple to recover the real per-request figure.
+    // Non-exact-multiple ratios intentionally pass through uncompensated (conservative fallback).
+    const chunkMultiple =
+      typeof normalisedTokens === 'number' &&
+      typeof rawTokens === 'number' &&
+      normalisedTokens > 0 &&
+      rawTokens >= normalisedTokens &&
+      rawTokens % normalisedTokens === 0
+        ? rawTokens / normalisedTokens
+        : 1;
     const providerCost =
-      typeof rawUsage?.cost === 'number' ? rawUsage.cost : undefined;
+      typeof rawUsage?.cost === 'number'
+        ? rawUsage.cost / chunkMultiple
+        : undefined;
     const usageMetadata = {
       ...(res.usage_metadata ?? rawUsage ?? {}),
       // Preserve provider-reported cost (e.g. OpenRouter `usage.cost`) which
@@ -176,25 +196,7 @@ export class InvokeLlmNode extends BaseNode<
       threadUsage.durationMs = durationMs;
     }
 
-    // Enforcement is opt-in via `enforceCostLimit`. The effective limit is
-    // provided by the caller through `config.configurable.effective_cost_limit_usd`
-    // (resolved once per user message in GraphsService.executeTrigger and
-    // persisted to thread metadata). Subagents skip enforcement by construction:
-    // their costs fold up via tool-executor-node's usage merge and are checked
-    // on the next parent LLM call. Slight overshoot is acceptable.
-    if (this.opts?.enforceCostLimit) {
-      const effectiveLimit =
-        typeof cfg.configurable?.effective_cost_limit_usd === 'number'
-          ? cfg.configurable.effective_cost_limit_usd
-          : null;
-      const projectedTotal =
-        (state.totalPrice ?? 0) + (threadUsage?.totalPrice ?? 0);
-      if (effectiveLimit !== null && projectedTotal >= effectiveLimit) {
-        throw new CostLimitExceededError(effectiveLimit, projectedTotal);
-      }
-    }
-
-    // Attach model metadata and request usage
+    // Stamp metadata FIRST so the in-flight message can be persisted on cost-limit throw.
     preparedRes.additional_kwargs = {
       ...preparedRes.additional_kwargs,
       __model: model,
@@ -226,9 +228,40 @@ export class InvokeLlmNode extends BaseNode<
       cfg,
     );
 
-    // Destructure durationMs out — it is per-message metadata stored in
-    // __requestUsage on the AI message kwargs, not an aggregatable state counter.
-    const { durationMs: _dur, ...stateUsage } = threadUsage || {};
+    // Enforcement runs against the agent's own accumulated spend combined
+    // with the current LLM call's contribution. The parent-level tool-executor
+    // is responsible for enforcement at sub-agent boundaries.
+    if (this.opts?.enforceCostLimit) {
+      const effectiveLimit =
+        typeof cfg.configurable?.effective_cost_limit_usd === 'number'
+          ? cfg.configurable.effective_cost_limit_usd
+          : null;
+      // Defense in depth against legacy checkpoints predating state.totalPrice.
+      // LangGraph reducer default at base-agent.ts:212-215 is 0 for fresh threads,
+      // but pre-fix checkpoints may not encode the field — guard against undefined.
+      const projectedTotal =
+        (state.totalPrice ?? 0) + (threadUsage?.totalPrice ?? 0);
+      if (effectiveLimit !== null && projectedTotal >= effectiveLimit) {
+        throw new CostLimitExceededError(effectiveLimit, projectedTotal, [
+          ...out,
+          ...reasoningMessages,
+        ]);
+      }
+    }
+
+    // Destructure durationMs out of threadUsage — it is per-message metadata
+    // stored in __requestUsage on the AI message kwargs, not accumulated state.
+    // Cumulative `state.totalPrice` is `number` (the reducer accumulates).
+    // Unknown pricing (null) is preserved on the per-message `__requestUsage`
+    // kwargs, but the accumulator skips it by coercing to 0 here.
+    let stateUsage: Record<string, number> = {};
+    if (threadUsage) {
+      const { durationMs: _dur, ...rest } = threadUsage;
+      stateUsage = {
+        ...rest,
+        totalPrice: typeof rest.totalPrice === 'number' ? rest.totalPrice : 0,
+      };
+    }
 
     return {
       messages: { mode: 'append', items: [...reasoningMessages, ...out] },
@@ -587,19 +620,13 @@ export class InvokeLlmNode extends BaseNode<
       (error as { status?: unknown })?.status ??
       (error as { statusCode?: unknown })?.statusCode;
 
-    if (typeof message === 'string') {
-      const lower = message.toLowerCase();
-      if (
-        lower.includes('prompt is too long') ||
-        lower.includes('maximum context length') ||
-        lower.includes('context_length_exceeded') ||
-        (lower.includes('too many tokens') && status === 400)
-      ) {
-        return true;
-      }
-    }
-
-    return false;
+    const lower = message.toLowerCase();
+    return (
+      lower.includes('prompt is too long') ||
+      lower.includes('maximum context length') ||
+      lower.includes('context_length_exceeded') ||
+      (lower.includes('too many tokens') && status === 400)
+    );
   }
 
   /**

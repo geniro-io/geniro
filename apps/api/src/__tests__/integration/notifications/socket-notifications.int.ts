@@ -55,7 +55,8 @@ import {
   waitForCondition,
 } from '../helpers/graph-helpers';
 import { createTestProject } from '../helpers/test-context';
-import { createTestModule, TEST_USER_ID } from '../setup';
+import type { MockLlmService } from '../mocks/mock-llm/mock-llm.service';
+import { createTestModule, getMockLlm, TEST_USER_ID } from '../setup';
 
 // Type aliases for socket notifications (using business logic interfaces)
 type MessageNotification = IEnrichedNotification<ThreadMessageDto>;
@@ -79,6 +80,7 @@ describe('Socket Notifications Integration Tests', () => {
   let socket: Socket;
   let ioAdapter: IoAdapter;
   let baseUrl: string;
+  let mockLlm: MockLlmService;
   const createdGraphIds: string[] = [];
   let baseGraphId: string;
   let commandGraphId: string;
@@ -154,6 +156,7 @@ describe('Socket Notifications Integration Tests', () => {
     messageTransformer = app.get<MessageTransformerService>(
       MessageTransformerService,
     );
+    mockLlm = getMockLlm(app);
     baseUrl = 'http://localhost:5050';
 
     const projectResult = await createTestProject(app);
@@ -246,7 +249,7 @@ describe('Socket Notifications Integration Tests', () => {
     await waitForCondition(
       () => graphsService.findById(contextDataStorage, graphId),
       (g) => g.status === GraphStatus.Running,
-      { timeout: 60_000, interval: 1_000 },
+      { timeout: 30_000, interval: 200 },
     );
   };
 
@@ -492,8 +495,14 @@ describe('Socket Notifications Integration Tests', () => {
           },
         );
 
-        // Wait for messages to arrive
-        await new Promise((resolve) => setTimeout(resolve, 30000));
+        // Wait for messages to settle (at least user + AI message expected),
+        // then a short grace period to catch any late duplicates.
+        await waitForCondition(
+          async () => messageNotifications,
+          (notifs) => notifs.length >= 2,
+          { timeout: 10_000, interval: 100 },
+        );
+        await new Promise((resolve) => setTimeout(resolve, 500));
 
         // Check for duplicates by comparing message content and threadId
         const typedNotifications =
@@ -512,85 +521,139 @@ describe('Socket Notifications Integration Tests', () => {
 
     it(
       'emits a single stop message notification when graph execution is stopped',
-      { timeout: 120_000 },
+      { timeout: 60_000 },
       async () => {
-        socket = createSocketConnection(TEST_USER_ID);
-        await waitForSocketConnection(socket);
-
         const graphId = commandGraphId;
 
-        socket.emit('subscribe_graph', { graphId });
-        await new Promise((resolve) => setTimeout(resolve, 500));
-
-        const stopNotifications: MessageNotification[] = [];
-
-        socket.on('agent.message', (notification: unknown) => {
-          const typedNotification = notification as MessageNotification;
-          const messageContent = typedNotification?.data?.message?.content;
-
-          if (
-            typeof messageContent === 'string' &&
-            messageContent.includes(
-              'Graph execution was stopped for agent Test Agent',
-            )
-          ) {
-            stopNotifications.push(typedNotification);
-          }
-        });
-
-        await restartGraph(graphId);
-
-        const execution = await graphsService.executeTrigger(
-          contextDataStorage,
-          graphId,
-          STOP_TRIGGER_NODE_ID,
+        // Keep the agent's first LLM call in flight long enough for the thread
+        // to reach Running state before we trigger destroy. Higher specificity
+        // than the default `{ hasTools: ['finish'] }` fixture ensures this
+        // matches first when the user message contains the trigger phrase.
+        mockLlm.onChat(
+          { lastUserMessage: 'Run this command', hasTools: ['finish'] },
           {
-            messages: ['Run this command: sleep 100 && echo "interrupt me"'],
-            async: true,
-            threadSubId: uniqueThreadSubId('socket-stop'),
+            kind: 'toolCall',
+            toolName: 'finish',
+            args: { purpose: 'done', message: 'OK', needsMoreInfo: false },
+            usage: {
+              inputTokens: 100,
+              outputTokens: 50,
+              totalTokens: 150,
+              totalPrice: 0.0001,
+            },
+            delayMs: 10_000,
           },
         );
 
-        await waitForCondition(
-          () =>
-            threadsService.getThreadByExternalId(
-              contextDataStorage,
-              execution.externalThreadId,
-            ),
-          (thread) => thread.status === ThreadStatus.Running,
-          { timeout: 60000, interval: 1000 },
-        );
+        // Spy on the notifications service so we can count stop messages
+        // independently of the WebSocket transport (the agent's `stop()`
+        // emits the system message synchronously before the graph node
+        // listeners are unsubscribed; capturing it via spy avoids any
+        // transport-layer races).
+        const stopMessages: { threadId?: string; content: string }[] = [];
+        const emitSpy = vi
+          .spyOn(notificationsService, 'emit')
+          .mockImplementation(async (event: Notification) => {
+            if (
+              event.type === NotificationEvent.AgentMessage &&
+              event.graphId === graphId
+            ) {
+              const messages = (
+                event as unknown as {
+                  data?: { messages?: { content?: unknown }[] };
+                }
+              ).data?.messages;
+              if (Array.isArray(messages)) {
+                for (const m of messages) {
+                  const content =
+                    typeof m?.content === 'string' ? m.content : '';
+                  if (
+                    content.includes(
+                      'Graph execution was stopped for agent Test Agent',
+                    )
+                  ) {
+                    stopMessages.push({
+                      threadId: (event as unknown as { threadId?: string })
+                        .threadId,
+                      content,
+                    });
+                  }
+                }
+              }
+            }
+            return undefined;
+          });
 
-        await graphsService.destroy(contextDataStorage, graphId);
+        try {
+          await restartGraph(graphId);
 
-        await waitForCondition(
-          async () => stopNotifications,
-          (notifications) => notifications.length >= 1,
-          { timeout: 60000, interval: 500 },
-        );
+          const execution = await graphsService.executeTrigger(
+            contextDataStorage,
+            graphId,
+            STOP_TRIGGER_NODE_ID,
+            {
+              messages: ['Run this command: sleep 100 && echo "interrupt me"'],
+              async: true,
+              threadSubId: uniqueThreadSubId('socket-stop'),
+            },
+          );
 
-        // Give time for any duplicate notifications to surface
-        await new Promise((resolve) => setTimeout(resolve, 1000));
+          await waitForCondition(
+            () =>
+              threadsService.getThreadByExternalId(
+                contextDataStorage,
+                execution.externalThreadId,
+              ),
+            (thread) => thread.status === ThreadStatus.Running,
+            { timeout: 30_000, interval: 200 },
+          );
 
-        const stopMessageNotifications = stopNotifications.filter(
-          (notification) =>
-            typeof notification.data.message.content === 'string' &&
-            notification.data.message.content.includes(
-              'Graph execution was stopped for agent Test Agent',
-            ),
-        );
+          // Race guard: thread.status flips to Running after the agent emits
+          // its `invoke` event but BEFORE `activeRuns` is populated (the agent
+          // does build-graph + checkpoint-load between those two steps). Wait
+          // for the registry's agent instance to actually have an active run
+          // before destroying — otherwise `agent.stop()` iterates an empty
+          // map and no stop message is emitted.
+          await waitForCondition(
+            () => {
+              const node = graphRegistry.getNode<SimpleAgent>(
+                graphId,
+                STOP_AGENT_NODE_ID,
+              );
+              const ar = (
+                node?.instance as unknown as {
+                  activeRuns?: Map<string, unknown>;
+                }
+              )?.activeRuns;
+              return Promise.resolve(ar?.size ?? 0);
+            },
+            (size) => size > 0,
+            { timeout: 5_000, interval: 100 },
+          );
 
-        const stopKeys = stopMessageNotifications.map(
-          (notification) =>
-            `${notification.threadId}:${notification.data.message.content}`,
-        );
-        const uniqueStopKeys = new Set(stopKeys);
+          await graphsService.destroy(contextDataStorage, graphId);
 
-        expect(stopMessageNotifications).toHaveLength(1);
-        expect(uniqueStopKeys.size).toBe(1);
-        expect(stopMessageNotifications[0]?.data.message.content).toContain(
-          'Graph execution was stopped for agent Test Agent',
-        );
+          await waitForCondition(
+            async () => stopMessages,
+            (msgs) => msgs.length >= 1,
+            { timeout: 5_000, interval: 100 },
+          );
+
+          // Allow any duplicate emits to surface
+          await new Promise((resolve) => setTimeout(resolve, 500));
+
+          const uniqueStopKeys = new Set(
+            stopMessages.map((m) => `${m.threadId ?? ''}:${m.content}`),
+          );
+
+          expect(stopMessages).toHaveLength(1);
+          expect(uniqueStopKeys.size).toBe(1);
+          expect(stopMessages[0]?.content).toContain(
+            'Graph execution was stopped for agent Test Agent',
+          );
+        } finally {
+          emitSpy.mockRestore();
+        }
       },
     );
   });
@@ -625,10 +688,9 @@ describe('Socket Notifications Integration Tests', () => {
         let currentVersion = revisionCurrentVersion;
 
         await restartGraph(graphId);
-        await new Promise((resolve) => setTimeout(resolve, 1500));
 
         socket.emit('subscribe_graph', { graphId });
-        await new Promise((resolve) => setTimeout(resolve, 500));
+        await new Promise((resolve) => setTimeout(resolve, 200));
 
         // Track meaningful events: create and applied for each revision
         // Note: 'applying' is too transient to reliably test via socket notifications
@@ -706,13 +768,12 @@ describe('Socket Notifications Integration Tests', () => {
           },
         );
 
-        // Wait for first revision to be applied
-        await new Promise((resolve) => setTimeout(resolve, 8000));
-
-        // Fetch the graph again to get the actual current version
-        const updatedGraph = await graphsService.findById(
-          contextDataStorage,
-          graphId,
+        // Wait for the first revision to be applied — poll the graph version
+        // rather than sleeping for a fixed window.
+        const updatedGraph = await waitForCondition(
+          () => graphsService.findById(contextDataStorage, graphId),
+          (g) => g.version !== currentVersion,
+          { timeout: 30_000, interval: 200 },
         );
         currentVersion = updatedGraph.version;
         revisionCurrentVersion = updatedGraph.version;
@@ -826,6 +887,25 @@ describe('Socket Notifications Integration Tests', () => {
 
         socket.emit('subscribe_graph', { graphId });
 
+        // Keep the first agent run in-flight long enough to enqueue a second
+        // trigger as a pending message. Higher-specificity matcher wins over
+        // the default catch-all finish reply.
+        mockLlm.onChat(
+          { lastUserMessage: 'Initial socket request', hasTools: ['finish'] },
+          {
+            kind: 'toolCall',
+            toolName: 'finish',
+            args: { purpose: 'done', message: 'OK', needsMoreInfo: false },
+            usage: {
+              inputTokens: 100,
+              outputTokens: 50,
+              totalTokens: 150,
+              totalPrice: 0.0001,
+            },
+            delayMs: 10_000,
+          },
+        );
+
         await restartGraph(graphId);
 
         const threadSubId = uniqueThreadSubId('socket-pending-metadata');
@@ -850,7 +930,7 @@ describe('Socket Notifications Integration Tests', () => {
             snapshots.some(
               (node) => node.id === 'agent-1' && node.status === 'running',
             ),
-          { timeout: 120_000, interval: 1_000 },
+          { timeout: 30_000, interval: 200 },
         );
 
         const metadataNotificationPromise = new Promise<NodeUpdateNotification>(
@@ -914,6 +994,25 @@ describe('Socket Notifications Integration Tests', () => {
       { timeout: 90000 },
       async () => {
         const graphId = baseGraphId;
+
+        // Keep the first agent run in-flight long enough to receive two
+        // follow-up triggers as pending messages before the run completes.
+        mockLlm.onChat(
+          { lastUserMessage: 'Start task', hasTools: ['finish'] },
+          {
+            kind: 'toolCall',
+            toolName: 'finish',
+            args: { purpose: 'done', message: 'OK', needsMoreInfo: false },
+            usage: {
+              inputTokens: 100,
+              outputTokens: 50,
+              totalTokens: 150,
+              totalPrice: 0.0001,
+            },
+            delayMs: 8_000,
+          },
+        );
+
         await restartGraph(graphId);
 
         const socket = createSocketConnection(TEST_USER_ID);
@@ -976,7 +1075,7 @@ describe('Socket Notifications Integration Tests', () => {
                 node.id === 'agent-1' &&
                 node.status === GraphNodeStatus.Running,
             ),
-          { timeout: 120_000, interval: 1_000 },
+          { timeout: 30_000, interval: 200 },
         );
 
         // Send multiple follow-ups
@@ -991,8 +1090,12 @@ describe('Socket Notifications Integration Tests', () => {
           },
         );
 
-        // Wait a bit for the first pending to register
-        await new Promise((resolve) => setTimeout(resolve, 2000));
+        // Wait for the first pending to register
+        await waitForCondition(
+          async () => metadataUpdates,
+          (updates) => updates.some((u) => u.pendingCount > 0),
+          { timeout: 5_000, interval: 100 },
+        );
 
         await graphsService.executeTrigger(
           contextDataStorage,
@@ -1018,11 +1121,15 @@ describe('Socket Notifications Integration Tests', () => {
                 (node.status === GraphNodeStatus.Idle ||
                   node.status === GraphNodeStatus.Stopped),
             ),
-          { timeout: 60_000, interval: 1_000 },
+          { timeout: 30_000, interval: 200 },
         );
 
-        // Give time for final notifications
-        await new Promise((resolve) => setTimeout(resolve, 2000));
+        // Wait for the cleared-pending notification (rather than a fixed delay)
+        await waitForCondition(
+          async () => metadataUpdates,
+          (updates) => updates.some((u) => u.pendingCount === 0),
+          { timeout: 5_000, interval: 100 },
+        );
 
         socket.disconnect();
 
@@ -1062,6 +1169,29 @@ describe('Socket Notifications Integration Tests', () => {
       { timeout: 90000 },
       async () => {
         const graphId = baseGraphId;
+
+        // Keep the agent in an active run while we inject reasoning chunks
+        // and verify state. Without this delay the agent finishes before the
+        // chunks are processed and the run-finally clears reasoning state.
+        mockLlm.onChat(
+          {
+            lastUserMessage: 'Start reasoning metadata test',
+            hasTools: ['finish'],
+          },
+          {
+            kind: 'toolCall',
+            toolName: 'finish',
+            args: { purpose: 'done', message: 'OK', needsMoreInfo: false },
+            usage: {
+              inputTokens: 100,
+              outputTokens: 50,
+              totalTokens: 150,
+              totalPrice: 0.0001,
+            },
+            delayMs: 15_000,
+          },
+        );
+
         await restartGraph(graphId);
 
         const triggerResult = await graphsService.executeTrigger(
@@ -1102,7 +1232,7 @@ describe('Socket Notifications Integration Tests', () => {
                 node.id === 'agent-1' &&
                 node.status === GraphNodeStatus.Running,
             ),
-          { timeout: 120_000, interval: 1_000 },
+          { timeout: 30_000, interval: 200 },
         );
 
         const agentNode = graphRegistry.getNode<SimpleAgent>(
@@ -1296,10 +1426,34 @@ describe('Socket Notifications Integration Tests', () => {
     );
 
     it(
-      'should keep a single reasoningChunks entry when chunk ids change (merging content into the latest id)',
+      'should flush the previous chunk and keep only the new id in working state when chunk ids change',
       { timeout: 90000 },
       async () => {
         const graphId = baseGraphId;
+
+        // Keep the agent run alive while we drive reasoning chunks. Otherwise
+        // `activeRuns` may be cleared before the second chunk is processed,
+        // and the id-change flush branch (which requires `activeRun`) would
+        // be skipped.
+        mockLlm.onChat(
+          {
+            lastUserMessage: 'Start reasoning id merge test',
+            hasTools: ['finish'],
+          },
+          {
+            kind: 'toolCall',
+            toolName: 'finish',
+            args: { purpose: 'done', message: 'OK', needsMoreInfo: false },
+            usage: {
+              inputTokens: 100,
+              outputTokens: 50,
+              totalTokens: 150,
+              totalPrice: 0.0001,
+            },
+            delayMs: 15_000,
+          },
+        );
+
         await restartGraph(graphId);
 
         const triggerResult = await graphsService.executeTrigger(
@@ -1327,7 +1481,7 @@ describe('Socket Notifications Integration Tests', () => {
                 node.id === 'agent-1' &&
                 node.status === GraphNodeStatus.Running,
             ),
-          { timeout: 120_000, interval: 1_000 },
+          { timeout: 30_000, interval: 200 },
         );
 
         const agentNode = graphRegistry.getNode<SimpleAgent>(
@@ -1442,12 +1596,15 @@ describe('Socket Notifications Integration Tests', () => {
           expect(reasoningChunks['reasoning:run-second']?.id).toBe(
             'reasoning:run-second',
           );
-          expect(reasoningChunks['reasoning:run-second']?.content).toContain(
-            'first reasoning',
-          );
+          // Per commit 3cbcdc9f: when a new reasoning id arrives, the previous
+          // chunks are flushed as their own persisted ChatMessages and the
+          // working state holds only the new id's content (not a merged blob).
           expect(reasoningChunks['reasoning:run-second']?.content).toContain(
             'second reasoning',
           );
+          expect(
+            reasoningChunks['reasoning:run-second']?.content,
+          ).not.toContain('first reasoning');
 
           const state = agentInternals.graphThreadState?.getByThread(threadId);
           expect(state?.reasoningChunks.size).toBe(1);
@@ -1465,6 +1622,28 @@ describe('Socket Notifications Integration Tests', () => {
       { timeout: 90000 },
       async () => {
         const graphId = baseGraphId;
+
+        // Keep the agent run alive while we mutate runnableConfig and inject
+        // a reasoning chunk; otherwise the run finishes before we can verify.
+        mockLlm.onChat(
+          {
+            lastUserMessage: 'Start comm-context reasoning test',
+            hasTools: ['finish'],
+          },
+          {
+            kind: 'toolCall',
+            toolName: 'finish',
+            args: { purpose: 'done', message: 'OK', needsMoreInfo: false },
+            usage: {
+              inputTokens: 100,
+              outputTokens: 50,
+              totalTokens: 150,
+              totalPrice: 0.0001,
+            },
+            delayMs: 15_000,
+          },
+        );
+
         await restartGraph(graphId);
 
         const triggerResult = await graphsService.executeTrigger(
@@ -1492,7 +1671,7 @@ describe('Socket Notifications Integration Tests', () => {
                 node.id === 'agent-1' &&
                 node.status === GraphNodeStatus.Running,
             ),
-          { timeout: 120_000, interval: 1_000 },
+          { timeout: 30_000, interval: 200 },
         );
 
         const agentNode = graphRegistry.getNode<SimpleAgent>(
@@ -1671,23 +1850,27 @@ describe('Socket Notifications Integration Tests', () => {
             },
           });
 
-          // Allow time for the message event to propagate through the
-          // notification handler and be written to the database.
-          await new Promise((resolve) => setTimeout(resolve, 2000));
-
-          const storedMessages = await threadsService.getThreadMessages(
-            contextDataStorage,
-            persistedThread.id,
+          // Poll for the persisted reasoning message rather than sleeping
+          // for a fixed window. The message event needs to propagate through
+          // the notification handler and reach the DB.
+          const storedReasoning = await waitForCondition(
+            async () => {
+              const msgs = await threadsService.getThreadMessages(
+                contextDataStorage,
+                persistedThread.id,
+              );
+              return msgs.find(
+                (msg) =>
+                  msg.message.role === 'reasoning' &&
+                  (msg.message.additionalKwargs as Record<string, unknown>)
+                    ?.__toolCallId === 'tc-int-1',
+              ) as
+                | (ThreadMessageDto & { message: ReasoningMessageDto })
+                | undefined;
+            },
+            (entry) => !!entry,
+            { timeout: 5_000, interval: 100 },
           );
-
-          const storedReasoning = storedMessages.find(
-            (msg) =>
-              msg.message.role === 'reasoning' &&
-              (msg.message.additionalKwargs as Record<string, unknown>)
-                ?.__toolCallId === 'tc-int-1',
-          ) as
-            | (ThreadMessageDto & { message: ReasoningMessageDto })
-            | undefined;
 
           expect(storedReasoning).toBeDefined();
           expect(
@@ -1845,7 +2028,6 @@ describe('Socket Notifications Integration Tests', () => {
 
         // Run the graph, then execute trigger, then wait for notification
         await restartGraph(graphId);
-        await new Promise((resolve) => setTimeout(resolve, 2000));
 
         // Execute trigger
         await graphsService.executeTrigger(
@@ -2134,8 +2316,16 @@ describe('Socket Notifications Integration Tests', () => {
           },
         );
 
-        // Wait for messages to arrive
-        await new Promise((resolve) => setTimeout(resolve, 10000));
+        // Wait for messages to settle on both sockets
+        await waitForCondition(
+          async () => ({
+            s1: socket1Messages.length,
+            s2: socket2Messages.length,
+          }),
+          (counts) => counts.s1 >= 2 && counts.s2 >= 2,
+          { timeout: 10_000, interval: 100 },
+        );
+        await new Promise((resolve) => setTimeout(resolve, 500));
 
         // Both sockets should receive messages - expect at least user + assistant
         expect(socket1Messages.length).toBeGreaterThanOrEqual(2);
@@ -2216,7 +2406,7 @@ describe('Socket Notifications Integration Tests', () => {
                 n.data.totalTokens > 0 &&
                 typeof n.data.totalPrice === 'number',
             ),
-          { timeout: 120_000, interval: 1000 },
+          { timeout: 30_000, interval: 200 },
         );
 
         // Wait for thread to complete
@@ -2229,11 +2419,11 @@ describe('Socket Notifications Integration Tests', () => {
             !!thread &&
             (thread.status === ThreadStatus.Done ||
               thread.status === ThreadStatus.Stopped),
-          { timeout: 120_000, interval: 1000 },
+          { timeout: 30_000, interval: 200 },
         );
 
         // Allow final state updates to arrive
-        await new Promise((resolve) => setTimeout(resolve, 1500));
+        await new Promise((resolve) => setTimeout(resolve, 300));
 
         const firstThreadNotifications = agentStateNotifications.filter(
           (n) => n.threadId === externalThreadId,
@@ -2274,7 +2464,7 @@ describe('Socket Notifications Integration Tests', () => {
                 n.data.totalTokens > 0 &&
                 typeof n.data.totalPrice === 'number',
             ),
-          { timeout: 60_000, interval: 500 },
+          { timeout: 20_000, interval: 200 },
         );
 
         // Wait for thread to complete second invocation BEFORE collecting final notification values
@@ -2287,11 +2477,11 @@ describe('Socket Notifications Integration Tests', () => {
             !!thread &&
             (thread.status === ThreadStatus.Done ||
               thread.status === ThreadStatus.Stopped),
-          { timeout: 60_000, interval: 500 },
+          { timeout: 20_000, interval: 200 },
         );
 
         // Get max values from second invocation notifications (after thread is done)
-        await new Promise((resolve) => setTimeout(resolve, 1500));
+        await new Promise((resolve) => setTimeout(resolve, 300));
         const secondThreadNotifications = agentStateNotifications.filter(
           (n) => n.threadId === externalThreadId,
         );

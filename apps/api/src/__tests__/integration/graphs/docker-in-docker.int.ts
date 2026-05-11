@@ -18,7 +18,7 @@ import { ThreadStatus } from '../../../v1/threads/threads.types';
 import { wait } from '../../test-utils';
 import { waitForCondition } from '../helpers/graph-helpers';
 import { createTestProject } from '../helpers/test-context';
-import { createTestModule } from '../setup';
+import { createTestModule, getMockLlm } from '../setup';
 
 const DOCKER_RUNTIME_NODE_ID = 'runtime-1';
 const SHELL_TOOL_NODE_ID = 'shell-tool-1';
@@ -217,7 +217,9 @@ describe('Docker Runtime Integration', () => {
   });
 
   beforeAll(async () => {
-    app = await createTestModule();
+    // Docker-in-docker tests literally exercise nested container behavior;
+    // they require the real runtime.
+    app = await createTestModule(undefined, { mockRuntime: false });
 
     graphsService = app.get<GraphsService>(GraphsService);
     threadsService = app.get<ThreadsService>(ThreadsService);
@@ -297,6 +299,17 @@ describe('Docker Runtime Integration', () => {
       expect(runResponse.status).toBe(GraphStatus.Running);
 
       await waitForGraphToBeRunning(graphId);
+
+      // Drive the mocked agent to call shell(docker ps); applyDefaults handles
+      // the follow-up finish call after the tool result returns.
+      getMockLlm(app).queueChat({
+        kind: 'toolCall',
+        toolName: 'shell',
+        args: {
+          purpose: 'Run docker ps inside the docker-in-docker runtime',
+          command: 'docker ps',
+        },
+      });
 
       const execution = await graphsService.executeTrigger(
         contextDataStorage,

@@ -1,4 +1,4 @@
-import { IExceptionFieldError } from '../exceptions.types';
+import { type IExceptionFieldError } from '../exceptions.types';
 import { BaseException } from './base.exception';
 
 export class ValidationException extends BaseException {

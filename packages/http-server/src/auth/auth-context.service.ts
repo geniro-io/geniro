@@ -2,7 +2,7 @@ import { Inject, Injectable, Optional, Scope } from '@nestjs/common';
 import { REQUEST } from '@nestjs/core';
 import { UnauthorizedException } from '@packages/common';
 import type { FastifyRequest } from 'fastify';
-import { UnknownRecord } from 'type-fest';
+import type { UnknownRecord } from 'type-fest';
 
 import { HttpServerAuthParams } from '../http-server.types';
 import type { IAuthModuleParams, IContextData } from './auth.types';

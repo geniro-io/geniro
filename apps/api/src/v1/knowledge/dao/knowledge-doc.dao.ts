@@ -35,12 +35,18 @@ export class KnowledgeDocDao extends BaseDao<KnowledgeDocEntity> {
     }
 
     if (tags && tags.length > 0) {
+      // Use `EXISTS (... t.elem IN (?, ?, ...))` instead of the `?|` operator:
+      // the driver eats `?` characters as parameter slots, so the operator-form
+      // would require fragile escape sequences. The array shape `ANY(?)` was
+      // also rejected as a "malformed array literal" by the underlying driver.
       const placeholders = tags.map(() => '?').join(',');
-      const taggedIds = await this.em
-        .getConnection()
-        .execute<
-          { id: string }[]
-        >(`SELECT id FROM knowledge_docs WHERE tags ?| array[${placeholders}] AND "deleted_at" IS NULL`, tags);
+      const taggedIds = await this.em.getConnection().execute<{ id: string }[]>(
+        `SELECT id FROM knowledge_docs WHERE EXISTS (
+             SELECT 1 FROM jsonb_array_elements_text(tags) AS t(elem)
+             WHERE t.elem IN (${placeholders})
+           ) AND "deleted_at" IS NULL`,
+        tags,
+      );
       const ids = taggedIds.map((r) => r.id);
       if (ids.length === 0) {
         return [];

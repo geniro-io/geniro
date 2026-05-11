@@ -1,3 +1,4 @@
+import { MikroORM } from '@mikro-orm/postgresql';
 import { DefaultLogger } from '@packages/common';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -5,6 +6,18 @@ import {
   GraphRevisionJobData,
   GraphRevisionQueueService,
 } from './graph-revision-queue.service';
+
+vi.mock('@mikro-orm/postgresql', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@mikro-orm/postgresql')>();
+  return {
+    ...actual,
+    RequestContext: {
+      create: (_em: unknown, cb: () => Promise<void>) => cb(),
+    },
+  };
+});
+
+const mockOrm = { em: {} } as unknown as MikroORM;
 
 const mockQueue = {
   add: vi.fn().mockResolvedValue(undefined),
@@ -61,6 +74,7 @@ describe('GraphRevisionQueueService', () => {
     vi.clearAllMocks();
     service = new GraphRevisionQueueService(
       mockLogger as unknown as DefaultLogger,
+      mockOrm,
     );
     await service.onModuleInit();
   });

@@ -325,6 +325,51 @@ describe('QdrantService', () => {
     });
   });
 
+  describe('ensurePayloadIndex', () => {
+    it('returns silently and invalidates cache when collection vanished mid-call', async () => {
+      // Prime the cache so collectionExists() returns true without hitting Qdrant.
+      await service.ensureCollection('test-collection', 2);
+      mockClient.getCollection.mockClear();
+
+      mockClient.createPayloadIndex.mockRejectedValueOnce(
+        new Error('Not Found'),
+      );
+
+      await expect(
+        service.ensurePayloadIndex('test-collection', 'repo_id', 'keyword'),
+      ).resolves.toBeUndefined();
+
+      // Cache invalidated → next collectionExists call hits getCollection again.
+      mockClient.getCollection.mockResolvedValueOnce({
+        config: { params: { vectors: { size: 2 } } },
+      });
+      await service.ensureCollection('test-collection', 2);
+      expect(mockClient.getCollection).toHaveBeenCalled();
+    });
+
+    it('swallows "already exists" errors', async () => {
+      await service.ensureCollection('test-collection', 2);
+      mockClient.createPayloadIndex.mockRejectedValueOnce(
+        new Error('field index repo_id already exists'),
+      );
+
+      await expect(
+        service.ensurePayloadIndex('test-collection', 'repo_id', 'keyword'),
+      ).resolves.toBeUndefined();
+    });
+
+    it('rethrows unexpected errors', async () => {
+      await service.ensureCollection('test-collection', 2);
+      mockClient.createPayloadIndex.mockRejectedValueOnce(
+        new Error('Unauthorized'),
+      );
+
+      await expect(
+        service.ensurePayloadIndex('test-collection', 'repo_id', 'keyword'),
+      ).rejects.toThrow('Unauthorized');
+    });
+  });
+
   describe('isAlreadyExistsError', () => {
     it('matches "field index already exists" errors', () => {
       expect(

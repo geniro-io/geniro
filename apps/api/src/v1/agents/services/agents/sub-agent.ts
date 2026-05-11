@@ -236,12 +236,9 @@ export class SubAgent extends BaseAgent<SubAgentSchemaType> {
         streaming: supportsStreaming,
       });
 
-      // Subagent enforces the cost limit so the parent is notified mid-execution
-      // rather than only on the parent's next LLM call.  When the limit fires,
-      // CostLimitExceededError propagates up through the graph stream and is
-      // caught below, which converts it to a graceful SubagentRunResult with
-      // stopReason='cost_limit'.  The tool wrapper then surfaces that field so
-      // the parent SimpleAgent can re-throw and trigger its own stop path.
+      // Cost limit is enforced at the parent's tool-executor, not here —
+      // subagent runs unbounded once invoked; overshoot is capped at one
+      // subagent-cost.
       const invokeLlmNode = new InvokeLlmNode(
         this.litellmService,
         llm,
@@ -250,7 +247,7 @@ export class SubAgent extends BaseAgent<SubAgentSchemaType> {
           systemPrompt: config.instructions,
           toolChoice: toolsArray.length > 0 ? 'auto' : undefined,
           parallelToolCalls: useParallelToolCall,
-          enforceCostLimit: true,
+          enforceCostLimit: false,
         },
         this.logger,
       );
@@ -372,6 +369,17 @@ export class SubAgent extends BaseAgent<SubAgentSchemaType> {
               // emitted as its own persisted message (mirrors SimpleAgent's
               // clearReasoningState({ persist: true }) at the invoke_llm boundary).
               this.flushReasoningEntries(reasoningEntries, emitContext);
+
+              // Emit live cost progress to the parent thread's subscriber so the
+              // UI can update the in-flight subagent price header while this
+              // subagent is still running.  Skipped for direct SubAgent runs
+              // (no parent tool call).
+              this.emitInFlightSubagentPrice(
+                reasoningToolCallId,
+                finalState.totalPrice,
+                parentConfigurable.thread_id,
+                emitContext.runnableConfig,
+              );
             }
 
             if (nodeName === 'tools') {
@@ -440,7 +448,7 @@ export class SubAgent extends BaseAgent<SubAgentSchemaType> {
         extractTextFromResponseContent(lastAiMessage?.content) ||
         'Task completed.';
 
-      // Aggregate usage
+      // Aggregate usage — subagent reports only its own spend
       const usage = this.extractUsageFromState(finalState);
       const exploredFiles = extractExploredFilesFromMessages(
         finalState.messages,
@@ -510,45 +518,6 @@ export class SubAgent extends BaseAgent<SubAgentSchemaType> {
       // clearReasoningState({ persist: true }) guarantee in SimpleAgent.
       this.flushReasoningEntries(reasoningEntries, emitContext);
     }
-  }
-
-  /**
-   * Extracts per-block reasoning entries from a streaming AIMessageChunk.
-   * Returns one entry per reasoning content block found in the chunk, using
-   * the block's own stable id (b.id) as the key for accumulation. Falls back
-   * to chunk.id when the block carries no id of its own (older providers).
-   */
-  private extractReasoningFromChunk(
-    chunk: AIMessageChunk,
-  ): { text: string; blockId: string }[] | null {
-    const blocks =
-      chunk?.contentBlocks ?? chunk?.response_metadata?.output ?? [];
-
-    if (!Array.isArray(blocks)) {
-      return null;
-    }
-
-    const entries: { text: string; blockId: string }[] = [];
-    for (const b of blocks as {
-      type?: unknown;
-      reasoning?: unknown;
-      id?: unknown;
-    }[]) {
-      if (!b || b.type !== 'reasoning') {
-        continue;
-      }
-      if (typeof b.reasoning !== 'string' || b.reasoning.length === 0) {
-        continue;
-      }
-      const blockId =
-        typeof b.id === 'string' && b.id.length > 0 ? b.id : (chunk.id ?? '');
-      if (!blockId) {
-        continue;
-      }
-      entries.push({ text: b.reasoning, blockId });
-    }
-
-    return entries.length > 0 ? entries : null;
   }
 
   /**
@@ -792,6 +761,41 @@ export class SubAgent extends BaseAgent<SubAgentSchemaType> {
       stopReason: 'cost_limit',
       stopCostUsd: err.totalPriceUsd,
     };
+  }
+
+  /**
+   * Emits a stateUpdate event carrying the subagent's current cumulative price
+   * keyed by the parent's toolCallId, so the parent's subscriber can show live
+   * cost progress in the UI.
+   *
+   * No-op when `reasoningToolCallId` is undefined (direct SubAgent invocation
+   * without a parent tool call, i.e. no UI entry to key into).
+   * `this.emit()` delegates to Node.js EventEmitter which is a no-op when
+   * there are zero listeners — safe to call unconditionally.
+   */
+  private emitInFlightSubagentPrice(
+    reasoningToolCallId: string | undefined,
+    totalPrice: number,
+    parentThreadIdUnknown: unknown,
+    config: RunnableConfig<BaseAgentConfigurable>,
+  ): void {
+    if (reasoningToolCallId === undefined) {
+      return;
+    }
+    const parentThreadId =
+      typeof parentThreadIdUnknown === 'string' ? parentThreadIdUnknown : '';
+    this.emit({
+      type: 'stateUpdate',
+      data: {
+        threadId: parentThreadId,
+        stateChange: {
+          inFlightSubagentPrice: {
+            [reasoningToolCallId]: totalPrice,
+          },
+        },
+        config,
+      },
+    });
   }
 
   private contextLimitResult(

@@ -1,5 +1,5 @@
 import { Body, Controller, Param, Post } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiCreatedResponse, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { CtxStorage, OnlyForAuthorized } from '@packages/http-server';
 
@@ -25,6 +25,7 @@ export class AiSuggestionsController {
 
   @Throttle({ default: { ttl: 60000, limit: 50 } })
   @Post('graphs/:graphId/nodes/:nodeId/suggest-instructions')
+  @ApiCreatedResponse({ type: SuggestAgentInstructionsResponseDto })
   async suggestAgentInstructions(
     @Param('graphId') graphId: string,
     @Param('nodeId') nodeId: string,
@@ -36,6 +37,7 @@ export class AiSuggestionsController {
 
   @Throttle({ default: { ttl: 60000, limit: 50 } })
   @Post('graphs/:graphId/suggest-instructions')
+  @ApiCreatedResponse({ type: SuggestGraphInstructionsResponseDto })
   async suggestGraphInstructions(
     @Param('graphId') graphId: string,
     @Body() dto: SuggestGraphInstructionsDto,
@@ -50,6 +52,7 @@ export class AiSuggestionsController {
 
   @Throttle({ default: { ttl: 60000, limit: 50 } })
   @Post('threads/:threadId/analyze')
+  @ApiCreatedResponse({ type: ThreadAnalysisResponseDto })
   async analyzeThread(
     @Param('threadId') threadId: string,
     @Body() payload: ThreadAnalysisRequestDto,
@@ -60,6 +63,7 @@ export class AiSuggestionsController {
 
   @Throttle({ default: { ttl: 60000, limit: 50 } })
   @Post('knowledge-docs/suggest')
+  @ApiCreatedResponse({ type: KnowledgeContentSuggestionResponseDto })
   async suggestKnowledgeContent(
     @Body() payload: KnowledgeContentSuggestionRequestDto,
     @CtxStorage() ctx: AppContextStorage,

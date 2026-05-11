@@ -118,6 +118,17 @@ export const ThreadSchema = z.object({
     .optional()
     .nullable()
     .describe('Last LangGraph run_id observed for this thread'),
+  runningStartedAt: z.iso
+    .datetime()
+    .nullable()
+    .describe(
+      'Timestamp when the thread entered Running status; null when not Running',
+    ),
+  totalRunningMs: z
+    .number()
+    .int()
+    .nonnegative()
+    .describe('Cumulative milliseconds the thread has spent in Running status'),
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
   metadata: z

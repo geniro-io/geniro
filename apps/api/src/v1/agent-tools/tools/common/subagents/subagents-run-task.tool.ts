@@ -300,6 +300,36 @@ export class SubagentsRunTaskTool extends BaseTool<
           resolveWaiting();
           resolveWaiting = null;
         }
+      } else if (event.type === 'stateUpdate') {
+        // Forward live cost progress to the parent agent so the parent's
+        // graph-state.manager.handleAgentStateUpdate can update the UI.
+        // Re-key inFlightSubagentPrice with the parent's own __toolCallId
+        // (the id for this subagents_run_task call) rather than any internal key.
+        const rawToolCallId = runnableConfig.configurable?.__toolCallId;
+        const parentToolCallId: string | undefined =
+          typeof rawToolCallId === 'string' ? rawToolCallId : undefined;
+        if (!parentToolCallId) {
+          return Promise.resolve();
+        }
+        const callId: string = parentToolCallId;
+        const subagentPrice = (
+          event.data.stateChange as Record<string, unknown>
+        ).inFlightSubagentPrice as Record<string, number> | undefined;
+        const priceValues = subagentPrice ? Object.values(subagentPrice) : [];
+        const totalPrice = priceValues.length > 0 ? priceValues[0] : undefined;
+        if (totalPrice === undefined) {
+          return Promise.resolve();
+        }
+        runnableConfig.configurable?.caller_agent?.emit({
+          type: 'stateUpdate',
+          data: {
+            ...event.data,
+            stateChange: {
+              ...event.data.stateChange,
+              inFlightSubagentPrice: { [callId]: totalPrice },
+            },
+          },
+        });
       }
       return Promise.resolve();
     });
@@ -314,6 +344,15 @@ export class SubagentsRunTaskTool extends BaseTool<
             resolveWaiting = null;
           }
           return result;
+        })
+        .catch((err) => {
+          // Mirror runDone for the queue waiter so the yield loop unblocks.
+          runDone = true;
+          if (resolveWaiting) {
+            resolveWaiting();
+            resolveWaiting = null;
+          }
+          throw err;
         });
 
       // Yield messages as they arrive until the run completes
@@ -335,6 +374,33 @@ export class SubagentsRunTaskTool extends BaseTool<
       const loopResult = await runPromise;
 
       return this.buildResult(loopResult, title);
+    } catch (err) {
+      // SubAgent.runSubagent has its own catch that returns a SubagentRunResult
+      // with `error: <message>` for known failure modes (cost limit, recursion,
+      // generic LLM/provider errors). If we still reach here, the throw escaped
+      // that catch (e.g. graph-level abort, runtime cancellation, unhandled
+      // rejection inside the LangGraph stream). Without this branch the
+      // generator would unwind without a return value, leaving the upstream
+      // tool message empty so the UI shows status=stopped with no errorText.
+      const message = err instanceof Error ? err.message : String(err);
+      const isAbort =
+        (err instanceof Error && err.name === 'AbortError') ||
+        message.toLowerCase().includes('abort');
+      if (!isAbort) {
+        this.logger.error(
+          err instanceof Error ? err : new Error(message),
+          `SubagentsRunTaskTool.streamingInvoke: ${message}`,
+        );
+      }
+      return {
+        output: isAbort
+          ? { result: 'Subagent was aborted.' }
+          : {
+              result: `Subagent execution failed: ${message}`,
+              error: message,
+            },
+        messageMetadata: { __title: title },
+      };
     } finally {
       unsubscribe();
     }

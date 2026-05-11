@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components -- intentional: context + provider + hook live together */
 import React, {
   createContext,
   useCallback,
@@ -79,6 +80,7 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({
   }, []);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- initial fetch on mount
     void loadProjects();
   }, [loadProjects]);
 
@@ -90,6 +92,7 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({
     }
     if (currentProjectId && !projects.some((p) => p.id === currentProjectId)) {
       // Stored project no longer exists — pick the first one
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- reconcile selection with refreshed project list
       setCurrentProjectId(projects[0].id);
     } else if (!currentProjectId) {
       // No project selected — auto-select the first one

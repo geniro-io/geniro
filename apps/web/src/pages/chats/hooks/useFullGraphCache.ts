@@ -83,6 +83,7 @@ export const useFullGraphCache = (deps: UseFullGraphCacheDeps) => {
     // Read cache inside setState updater to avoid adding 'cache' to deps
     // (which would cause re-triggering on every cache update).
     // The updater never modifies state — it only checks freshness and kicks off a fetch.
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- using setState as a read primitive (returns prev unchanged)
     setCache((prev) => {
       const entry = prev[graphId];
       const isValid = entry && Date.now() - entry.fetchedAt < FULL_GRAPH_TTL_MS;

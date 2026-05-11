@@ -148,6 +148,7 @@ export const ChatsPage = () => {
 
     selectedThreadContextMaxTokens,
     selectedThreadHeaderUsage,
+    selectedThreadHeaderInFlightSum,
     selectedThreadHeaderContextPercent,
     selectedThreadHeaderContextMaxTokens,
     handleOpenUsageStatsModal,
@@ -1129,10 +1130,26 @@ export const ChatsPage = () => {
                         </div>
                         <ThreadTokenUsageLine
                           usage={selectedThreadHeaderUsage}
+                          inFlightSum={selectedThreadHeaderInFlightSum}
                           withPopover
                           contextPercent={selectedThreadHeaderContextPercent}
                           contextMaxTokens={
                             selectedThreadHeaderContextMaxTokens
+                          }
+                          runningStartedAt={
+                            'isDraft' in selectedThread
+                              ? undefined
+                              : selectedThread.runningStartedAt
+                          }
+                          totalRunningMs={
+                            'isDraft' in selectedThread
+                              ? undefined
+                              : selectedThread.totalRunningMs
+                          }
+                          threadStatus={
+                            'isDraft' in selectedThread
+                              ? undefined
+                              : selectedThread.status
                           }
                         />
                       </div>

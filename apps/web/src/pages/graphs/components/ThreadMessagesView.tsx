@@ -1,4 +1,5 @@
 // ThreadMessagesView.tsx
+/* eslint-disable react-refresh/only-export-components -- intentional: helper renderers and message-block components are co-located */
 import isPlainObject from 'lodash/isPlainObject';
 import {
   AlertTriangle,
@@ -1019,8 +1020,6 @@ const ThreadMessagesView: React.FC<ThreadMessagesViewProps> = React.memo(
               resultText={it.resultText}
               statistics={it.statistics}
               popoverContent={subPopover}
-              usageIn={it.requestTokenUsageIn as RawTokenUsage | undefined}
-              usageOut={it.requestTokenUsageOut as RawTokenUsage | undefined}
               showThinkingIndicator={isCalling && filteredInner.length > 0}>
               {(filteredInner.length > 0 || isCalling) && (
                 <CollapsibleInnerArea
@@ -1103,8 +1102,6 @@ const ThreadMessagesView: React.FC<ThreadMessagesViewProps> = React.memo(
               model={it.model}
               statistics={it.statistics}
               popoverContent={commPopover}
-              usageIn={it.requestTokenUsageIn as RawTokenUsage | undefined}
-              usageOut={it.requestTokenUsageOut as RawTokenUsage | undefined}
               showThinkingIndicator={isCalling && filteredInner.length > 0}
               thinkingText={
                 commTargetName
@@ -1183,7 +1180,9 @@ const ThreadMessagesView: React.FC<ThreadMessagesViewProps> = React.memo(
             workingTokens.input += raw.inputTokens ?? 0;
             workingTokens.output += raw.outputTokens ?? 0;
             workingTokens.total += raw.totalTokens ?? 0;
-            workingTokens.cost += raw.totalPrice ?? 0;
+            if (typeof raw.totalPrice === 'number') {
+              workingTokens.cost += raw.totalPrice;
+            }
             workingTokens.durationMs += it.durationMs ?? 0;
           }
         }
@@ -1195,7 +1194,7 @@ const ThreadMessagesView: React.FC<ThreadMessagesViewProps> = React.memo(
                 outputTokens: workingTokens.output,
                 totalTokens: workingTokens.total,
                 totalPrice: workingTokens.cost,
-              } as RawTokenUsage,
+              },
               workingTokens.durationMs || undefined,
             )
           : undefined;
@@ -1310,8 +1309,6 @@ const ThreadMessagesView: React.FC<ThreadMessagesViewProps> = React.memo(
               resultText={item.resultText}
               statistics={item.statistics}
               popoverContent={topSubPopover}
-              usageIn={item.requestTokenUsageIn as RawTokenUsage | undefined}
-              usageOut={item.requestTokenUsageOut as RawTokenUsage | undefined}
               showThinkingIndicator={isCalling && filteredInner.length > 0}>
               {(filteredInner.length > 0 || isCalling) && (
                 <CollapsibleInnerArea
@@ -1400,8 +1397,6 @@ const ThreadMessagesView: React.FC<ThreadMessagesViewProps> = React.memo(
               model={item.model}
               statistics={item.statistics}
               popoverContent={topCommPopover}
-              usageIn={item.requestTokenUsageIn as RawTokenUsage | undefined}
-              usageOut={item.requestTokenUsageOut as RawTokenUsage | undefined}
               showThinkingIndicator={isCalling && filteredInner.length > 0}
               thinkingText={
                 commTargetName
@@ -1604,7 +1599,7 @@ const ThreadMessagesView: React.FC<ThreadMessagesViewProps> = React.memo(
               </div>
             </div>
           )}
-          {stopReason === 'cost_limit' && (
+          {shouldShowCostLimitBanner(stopReason, isThreadStopped) && (
             <div className="px-4 pt-2 pb-4">
               <Alert variant="destructive">
                 <AlertTriangle aria-hidden="true" />
@@ -1719,6 +1714,59 @@ function filterTrailingMessages(
 
 const COLLAPSED_MESSAGE_COUNT = 3;
 
+/**
+ * Computes visible messages for a collapsible inner area.
+ *
+ * Walks backward through items and includes:
+ * - ALL subagent and communication blocks (never collapsed — they contain cost-accounting children)
+ * - Up to `collapsedLimit` non-reasoning narrative items (chat, tool, system)
+ * - ALL reasoning items (they don't count toward the limit)
+ *
+ * Returns items in forward order.
+ */
+export function computeVisibleCollapsibleItems(
+  items: PreparedMessage[],
+  collapsedLimit: number,
+): PreparedMessage[] {
+  const result: PreparedMessage[] = [];
+  let collapsibleCount = 0;
+  for (let i = items.length - 1; i >= 0; i--) {
+    const m = items[i];
+    if (m.type === 'subagent' || m.type === 'communication') {
+      result.unshift(m);
+      continue;
+    }
+    if (collapsibleCount >= collapsedLimit && m.type !== 'reasoning') {
+      continue;
+    }
+    result.unshift(m);
+    if (m.type !== 'reasoning') {
+      collapsibleCount++;
+    }
+  }
+  return result;
+}
+
+/**
+ * Computes the count of narrative items hidden by collapse.
+ *
+ * Returns the number of non-reasoning, non-subagent, non-communication items
+ * that exceed the collapsed limit. Subagent and communication blocks are never
+ * hidden, so they don't contribute to the hidden count.
+ */
+export function computeCollapsedHiddenCount(
+  items: PreparedMessage[],
+  collapsedLimit: number,
+): number {
+  const narrativeCount = items.filter(
+    (m) =>
+      m.type !== 'reasoning' &&
+      m.type !== 'subagent' &&
+      m.type !== 'communication',
+  ).length;
+  return Math.max(0, narrativeCount - collapsedLimit);
+}
+
 function CollapsibleInnerArea({
   items,
   renderItem,
@@ -1732,30 +1780,21 @@ function CollapsibleInnerArea({
 }) {
   const [expanded, setExpanded] = React.useState(false);
 
-  const nonReasoningCount = items.filter((m) => m.type !== 'reasoning').length;
   const isCollapsible =
-    !isCalling && nonReasoningCount > COLLAPSED_MESSAGE_COUNT;
+    !isCalling &&
+    computeCollapsedHiddenCount(items, COLLAPSED_MESSAGE_COUNT) > 0;
 
   const visibleMessages = React.useMemo(() => {
     if (!isCollapsible || expanded) {
       return items;
     }
-    const result: PreparedMessage[] = [];
-    let count = 0;
-    for (let i = items.length - 1; i >= 0; i--) {
-      const m = items[i];
-      result.unshift(m);
-      if (m.type !== 'reasoning') {
-        count++;
-      }
-      if (count >= COLLAPSED_MESSAGE_COUNT) {
-        break;
-      }
-    }
-    return result;
+    return computeVisibleCollapsibleItems(items, COLLAPSED_MESSAGE_COUNT);
   }, [items, isCollapsible, expanded]);
 
-  const hiddenCount = nonReasoningCount - COLLAPSED_MESSAGE_COUNT;
+  const hiddenCount = computeCollapsedHiddenCount(
+    items,
+    COLLAPSED_MESSAGE_COUNT,
+  );
 
   return (
     <div className="space-y-2 overflow-x-hidden">
@@ -1797,6 +1836,7 @@ function CollapsibleInnerArea({
  */
 export function shouldShowCostLimitBanner(
   stopReason: string | null | undefined,
+  isThreadStopped: boolean,
 ): boolean {
-  return stopReason === 'cost_limit';
+  return stopReason === 'cost_limit' && isThreadStopped;
 }

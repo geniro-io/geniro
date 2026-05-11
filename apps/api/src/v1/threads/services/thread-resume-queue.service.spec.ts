@@ -1,3 +1,4 @@
+import { MikroORM } from '@mikro-orm/postgresql';
 import { DefaultLogger } from '@packages/common';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -6,6 +7,18 @@ import {
   ThreadResumeQueueCallbacks,
   ThreadResumeQueueService,
 } from './thread-resume-queue.service';
+
+vi.mock('@mikro-orm/postgresql', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@mikro-orm/postgresql')>();
+  return {
+    ...actual,
+    RequestContext: {
+      create: (_em: unknown, cb: () => Promise<void>) => cb(),
+    },
+  };
+});
+
+const mockOrm = { em: {} } as unknown as MikroORM;
 
 const mockQueue = {
   add: vi.fn().mockResolvedValue(undefined),
@@ -69,6 +82,7 @@ describe('ThreadResumeQueueService', () => {
     vi.clearAllMocks();
     service = new ThreadResumeQueueService(
       mockLogger as unknown as DefaultLogger,
+      mockOrm,
     );
     await service.onModuleInit();
   });

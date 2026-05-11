@@ -1,6 +1,6 @@
-import { Inject, Injectable, NestMiddleware } from '@nestjs/common';
+import { Inject, Injectable, type NestMiddleware } from '@nestjs/common';
 import { BaseLogger, Logger } from '@packages/common';
-import { FastifyReply, FastifyRequest } from 'fastify';
+import type { FastifyReply, FastifyRequest } from 'fastify';
 
 import { AuthContextService } from '../auth-context.service';
 

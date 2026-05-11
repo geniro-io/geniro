@@ -1,6 +1,6 @@
 import { INestApplication } from '@nestjs/common';
 import { BaseException } from '@packages/common';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { AppContextStorage } from '../../../auth/app-context-storage';
 import { ReasoningEffort } from '../../../v1/agents/agents.types';
@@ -8,13 +8,19 @@ import { SimpleAgentSchemaType } from '../../../v1/agents/services/agents/simple
 import { CreateGraphDto } from '../../../v1/graphs/dto/graphs.dto';
 import { GraphStatus } from '../../../v1/graphs/graphs.types';
 import { GraphsService } from '../../../v1/graphs/services/graphs.service';
+import { LiteLlmClient } from '../../../v1/litellm/services/litellm.client';
 import { ProjectsDao } from '../../../v1/projects/dao/projects.dao';
 import { ThreadMessageDto } from '../../../v1/threads/dto/threads.dto';
+import { ThreadNameGeneratorService } from '../../../v1/threads/services/thread-name-generator.service';
 import { ThreadsService } from '../../../v1/threads/services/threads.service';
 import { ThreadStatus } from '../../../v1/threads/threads.types';
-import { wait } from '../../test-utils';
 import { waitForCondition } from '../helpers/graph-helpers';
 import { createTestProject } from '../helpers/test-context';
+import {
+  mockLiteLlmClient,
+  mockThreadNameGenerator,
+} from '../helpers/test-stubs';
+import { getMockLlm } from '../mocks/mock-llm';
 import { createTestModule } from '../setup';
 
 const TRIGGER_NODE_ID = 'trigger-1';
@@ -44,23 +50,11 @@ describe('Deferred Tool Loading Integration Tests', () => {
     graphId: string,
     timeoutMs = 120_000,
   ) => {
-    const startedAt = Date.now();
-
-    while (true) {
-      const graph = await graphsService.findById(contextDataStorage, graphId);
-
-      if (graph.status === GraphStatus.Running) {
-        return graph;
-      }
-
-      if (Date.now() - startedAt > timeoutMs) {
-        throw new Error(
-          `Graph ${graphId} did not reach running status within ${timeoutMs}ms (current status: ${graph.status})`,
-        );
-      }
-
-      await wait(1_000);
-    }
+    return waitForCondition(
+      () => graphsService.findById(contextDataStorage, graphId),
+      (graph) => graph.status === GraphStatus.Running,
+      { timeout: timeoutMs, interval: 1_000 },
+    );
   };
 
   const waitForThreadCompletion = async (
@@ -242,7 +236,14 @@ describe('Deferred Tool Loading Integration Tests', () => {
     `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
   beforeAll(async () => {
-    app = await createTestModule();
+    app = await createTestModule(async (m) =>
+      m
+        .overrideProvider(LiteLlmClient)
+        .useValue(mockLiteLlmClient)
+        .overrideProvider(ThreadNameGeneratorService)
+        .useValue(mockThreadNameGenerator)
+        .compile(),
+    );
     graphsService = app.get<GraphsService>(GraphsService);
     threadsService = app.get<ThreadsService>(ThreadsService);
 
@@ -282,10 +283,47 @@ describe('Deferred Tool Loading Integration Tests', () => {
     await app.close();
   }, 180_000);
 
+  beforeEach(() => {
+    getMockLlm(app).reset();
+  });
+
   it(
     'agent uses tool_search to find and load a tool',
     { timeout: 120_000 },
     async () => {
+      const mockLlm = getMockLlm(app);
+
+      // Turn 1: agent does not have shell bound yet — calls tool_search to discover it.
+      mockLlm.onChat(
+        { callIndex: 0 },
+        { kind: 'toolCall', toolName: 'tool_search', args: { query: 'shell' } },
+      );
+
+      // Turn 2: shell is now bound — agent calls it with the requested command.
+      mockLlm.onChat(
+        { hasTools: ['shell'] },
+        {
+          kind: 'toolCall',
+          toolName: 'shell',
+          args: { purpose: 'run echo', command: 'echo hello world' },
+        },
+      );
+
+      // Turn 3: after the shell result arrives, the agent finishes.
+      // Combined matcher (specificity 2) beats the hasTools-only shell fixture (specificity 1).
+      mockLlm.onChat(
+        { hasToolResult: 'shell', hasTools: ['finish'] },
+        {
+          kind: 'toolCall',
+          toolName: 'finish',
+          args: {
+            purpose: 'done',
+            message: 'Shell executed.',
+            needsMoreInfo: false,
+          },
+        },
+      );
+
       await ensureGraphRunning(shellOnlyGraphId);
 
       const execution = await graphsService.executeTrigger(
@@ -336,6 +374,29 @@ describe('Deferred Tool Loading Integration Tests', () => {
     'tool_search results include deferred tools',
     { timeout: 120_000 },
     async () => {
+      const mockLlm = getMockLlm(app);
+
+      // Turn 1: agent calls tool_search to discover file-related tools.
+      mockLlm.onChat(
+        { callIndex: 0 },
+        { kind: 'toolCall', toolName: 'tool_search', args: { query: 'file' } },
+      );
+
+      // Turn 2: after the tool_search result arrives, the agent reports and finishes.
+      // Combined matcher (specificity 2) is unambiguous.
+      mockLlm.onChat(
+        { hasToolResult: 'tool_search', hasTools: ['finish'] },
+        {
+          kind: 'toolCall',
+          toolName: 'finish',
+          args: {
+            purpose: 'done',
+            message: 'Found file tools via tool_search.',
+            needsMoreInfo: false,
+          },
+        },
+      );
+
       await ensureGraphRunning(multiToolGraphId);
 
       const execution = await graphsService.executeTrigger(
@@ -398,6 +459,34 @@ describe('Deferred Tool Loading Integration Tests', () => {
     'auto-search fallback loads deferred tool when called directly',
     { timeout: 120_000 },
     async () => {
+      const mockLlm = getMockLlm(app);
+
+      // Turn 1: agent calls shell directly without tool_search — the runtime's
+      // auto-search fallback should bind the tool transparently.
+      mockLlm.onChat(
+        { callIndex: 0 },
+        {
+          kind: 'toolCall',
+          toolName: 'shell',
+          args: { purpose: 'run echo', command: 'echo auto-fallback test' },
+        },
+      );
+
+      // Turn 2: after the shell result arrives, the agent finishes.
+      // Combined matcher (specificity 2) beats any single-field matcher.
+      mockLlm.onChat(
+        { hasToolResult: 'shell', hasTools: ['finish'] },
+        {
+          kind: 'toolCall',
+          toolName: 'finish',
+          args: {
+            purpose: 'done',
+            message: 'Auto-fallback executed.',
+            needsMoreInfo: false,
+          },
+        },
+      );
+
       await ensureGraphRunning(shellOnlyGraphId);
 
       const execution = await graphsService.executeTrigger(

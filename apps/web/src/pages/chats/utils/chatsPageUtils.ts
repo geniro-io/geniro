@@ -110,40 +110,29 @@ const safeNumber = (value: unknown): number | undefined => {
     : undefined;
 };
 
+/**
+ * Extracts fields from an `agent.state.update` checkpoint that should flow
+ * into `threadTokenUsageByNode`.
+ *
+ * Single-source policy (mirrors ThreadsService.getThreadUsageStatistics:709-735):
+ * - `agent.message` events are authoritative for all additive fields
+ *   (inputTokens, cachedInputTokens, outputTokens, reasoningTokens,
+ *   totalTokens, totalPrice).
+ * - `agent.state.update` is authoritative ONLY for `currentContext` — a
+ *   point-in-time context-window reading that cannot be reconstructed
+ *   from messages — and for `effectiveCostLimitUsd` (configured limit).
+ * - `inFlightSubagentPrice` is a live delta map emitted per subagent iteration.
+ *   It is passed through here so the `agent.state.update` handler can merge it
+ *   into node state using delete-on-zero + replace semantics (see handler below).
+ *
+ * Previously this function also emitted the additive fields, which collided
+ * with `agent.message` accumulation and caused visible downward jumps when
+ * a checkpoint snapshot arrived before the additive path caught up.
+ */
 export const compactUsageUpdate = (
   source: AgentStateUpdateNotification['data'],
 ): Partial<ThreadTokenUsageSnapshot> => {
   const next: Partial<ThreadTokenUsageSnapshot> = {};
-
-  const inputTokens = safeNumber(source?.inputTokens);
-  if (inputTokens !== undefined) {
-    next.inputTokens = inputTokens;
-  }
-
-  const cachedInputTokens = safeNumber(source?.cachedInputTokens);
-  if (cachedInputTokens !== undefined) {
-    next.cachedInputTokens = cachedInputTokens;
-  }
-
-  const outputTokens = safeNumber(source?.outputTokens);
-  if (outputTokens !== undefined) {
-    next.outputTokens = outputTokens;
-  }
-
-  const reasoningTokens = safeNumber(source?.reasoningTokens);
-  if (reasoningTokens !== undefined) {
-    next.reasoningTokens = reasoningTokens;
-  }
-
-  const totalTokens = safeNumber(source?.totalTokens);
-  if (totalTokens !== undefined) {
-    next.totalTokens = totalTokens;
-  }
-
-  const totalPrice = safeNumber(source?.totalPrice);
-  if (totalPrice !== undefined) {
-    next.totalPrice = totalPrice;
-  }
 
   const currentContext = safeNumber(source?.currentContext);
   if (currentContext !== undefined) {
@@ -159,6 +148,16 @@ export const compactUsageUpdate = (
     }
   }
 
+  // Pass through inFlightSubagentPrice when present. The handler merges this
+  // with delete-on-zero + replace semantics rather than spreading it directly.
+  if (
+    source?.inFlightSubagentPrice !== undefined &&
+    source.inFlightSubagentPrice !== null &&
+    typeof source.inFlightSubagentPrice === 'object'
+  ) {
+    next.inFlightSubagentPrice = source.inFlightSubagentPrice;
+  }
+
   return next;
 };
 
@@ -166,7 +165,10 @@ export const sumUsage = (
   usages: ThreadTokenUsageSnapshot[],
 ): ThreadTokenUsageSnapshot => {
   const sumField = (
-    key: keyof ThreadTokenUsageSnapshot,
+    key: Exclude<
+      keyof ThreadTokenUsageSnapshot,
+      'totalPrice' | 'effectiveCostLimitUsd'
+    >,
   ): number | undefined => {
     let hasAny = false;
     const total = usages.reduce((acc, usage) => {
@@ -181,7 +183,10 @@ export const sumUsage = (
   };
 
   const maxField = (
-    key: keyof ThreadTokenUsageSnapshot,
+    key: Exclude<
+      keyof ThreadTokenUsageSnapshot,
+      'totalPrice' | 'effectiveCostLimitUsd'
+    >,
   ): number | undefined => {
     let hasAny = false;
     const max = usages.reduce(
@@ -198,13 +203,24 @@ export const sumUsage = (
     return hasAny ? max : undefined;
   };
 
+  // Sum totalPrice — skip undefined contributors.
+  let hasNumericPrice = false;
+  const priceSum = usages.reduce((acc, usage) => {
+    const value = usage.totalPrice;
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      hasNumericPrice = true;
+      return acc + value;
+    }
+    return acc;
+  }, 0);
+
   return {
     inputTokens: sumField('inputTokens'),
     cachedInputTokens: sumField('cachedInputTokens'),
     outputTokens: sumField('outputTokens'),
     reasoningTokens: sumField('reasoningTokens'),
     totalTokens: sumField('totalTokens'),
-    totalPrice: sumField('totalPrice'),
+    totalPrice: hasNumericPrice ? priceSum : undefined,
     currentContext: maxField('currentContext'),
   };
 };

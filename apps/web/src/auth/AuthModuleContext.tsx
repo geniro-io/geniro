@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components -- intentional: context + provider + hook live together */
 import { createContext, useContext } from 'react';
 
 import type { AuthModule } from './types';

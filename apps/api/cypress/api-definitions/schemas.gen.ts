@@ -92,6 +92,81 @@ export const RuntimeInstanceDtoSchema = {
   ],
 } as const;
 
+export const RuntimeInstanceStateDtoSchema = {
+  type: 'object',
+  properties: {
+    id: {
+      type: 'string',
+      format: 'uuid',
+      pattern:
+        '^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$',
+    },
+    status: {
+      type: 'string',
+      enum: ['Starting', 'Running', 'Stopping', 'Stopped', 'Failed'],
+    },
+    startingPhase: {
+      anyOf: [
+        {
+          type: 'string',
+          enum: ['PullingImage', 'ContainerCreated', 'InitScript', 'Ready'],
+        },
+        {
+          type: 'null',
+        },
+      ],
+    },
+    errorCode: {
+      anyOf: [
+        {
+          type: 'string',
+          enum: [
+            'ProviderAuth',
+            'RuntimeIo',
+            'ImagePull',
+            'Timeout',
+            'Unknown',
+          ],
+        },
+        {
+          type: 'null',
+        },
+      ],
+    },
+    lastError: {
+      anyOf: [
+        {
+          type: 'string',
+        },
+        {
+          type: 'null',
+        },
+      ],
+    },
+    lastUsedAt: {
+      type: 'string',
+      format: 'date-time',
+      pattern:
+        '^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$',
+    },
+    updatedAt: {
+      type: 'string',
+      format: 'date-time',
+      pattern:
+        '^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$',
+    },
+  },
+  required: [
+    'id',
+    'status',
+    'startingPhase',
+    'errorCode',
+    'lastError',
+    'lastUsedAt',
+    'updatedAt',
+  ],
+} as const;
+
 export const CreateRepositoryDtoSchema = {
   type: 'object',
   properties: {
@@ -106,13 +181,13 @@ export const CreateRepositoryDtoSchema = {
       format: 'uri',
     },
     provider: {
-      type: 'string',
       default: 'GITHUB',
+      type: 'string',
       enum: ['GITHUB'],
     },
     defaultBranch: {
-      type: 'string',
       default: 'main',
+      type: 'string',
     },
   },
   required: ['owner', 'repo', 'url'],
@@ -1101,8 +1176,8 @@ export const CreateProjectDtoSchema = {
       ],
     },
     settings: {
-      type: 'object',
       default: {},
+      type: 'object',
       propertyNames: {
         type: 'string',
       },
@@ -1263,8 +1338,8 @@ export const UpdateProjectDtoSchema = {
       ],
     },
     settings: {
-      type: 'object',
       default: {},
+      type: 'object',
       propertyNames: {
         type: 'string',
       },
@@ -1574,1941 +1649,112 @@ export const KnowledgeDocUpdateDtoSchema = {
   },
 } as const;
 
-export const SuggestAgentInstructionsDtoSchema = {
+export const KnowledgeDocListResultDtoSchema = {
   type: 'object',
   properties: {
-    userRequest: {
-      type: 'string',
-      minLength: 1,
-    },
-    threadId: {
-      type: 'string',
-    },
-    model: {
-      type: 'string',
-      minLength: 1,
-    },
-  },
-  required: ['userRequest'],
-} as const;
-
-export const SuggestAgentInstructionsResponseDtoSchema = {
-  type: 'object',
-  properties: {
-    instructions: {
-      type: 'string',
-    },
-    threadId: {
-      type: 'string',
-    },
-  },
-  required: ['instructions', 'threadId'],
-} as const;
-
-export const SuggestGraphInstructionsDtoSchema = {
-  type: 'object',
-  properties: {
-    userRequest: {
-      type: 'string',
-      minLength: 1,
-    },
-    model: {
-      type: 'string',
-      minLength: 1,
-    },
-  },
-  required: ['userRequest'],
-} as const;
-
-export const SuggestGraphInstructionsResponseDtoSchema = {
-  type: 'object',
-  properties: {
-    updates: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          nodeId: {
-            type: 'string',
-            minLength: 1,
-          },
-          name: {
-            type: 'string',
-            minLength: 1,
-          },
-          instructions: {
-            type: 'string',
-            minLength: 1,
-          },
-        },
-        required: ['nodeId', 'instructions'],
-      },
-    },
-  },
-  required: ['updates'],
-} as const;
-
-export const ThreadAnalysisRequestDtoSchema = {
-  type: 'object',
-  properties: {
-    userInput: {
-      type: 'string',
-      minLength: 1,
-      maxLength: 5000,
-    },
-    threadId: {
-      type: 'string',
-    },
-    model: {
-      type: 'string',
-      minLength: 1,
-    },
-  },
-} as const;
-
-export const ThreadAnalysisResponseDtoSchema = {
-  type: 'object',
-  properties: {
-    analysis: {
-      type: 'string',
-    },
-    conversationId: {
-      type: 'string',
-    },
-  },
-  required: ['analysis', 'conversationId'],
-} as const;
-
-export const KnowledgeContentSuggestionRequestDtoSchema = {
-  type: 'object',
-  properties: {
-    userRequest: {
-      type: 'string',
-      minLength: 1,
-    },
-    currentTitle: {
-      type: 'string',
-    },
-    currentContent: {
-      type: 'string',
-    },
-    currentTags: {
-      type: 'array',
-      items: {
-        type: 'string',
-        minLength: 1,
-      },
-    },
-    threadId: {
-      type: 'string',
-    },
-    model: {
-      type: 'string',
-      minLength: 1,
-    },
-  },
-  required: ['userRequest'],
-} as const;
-
-export const KnowledgeContentSuggestionResponseDtoSchema = {
-  type: 'object',
-  properties: {
-    title: {
-      type: 'string',
-      minLength: 1,
-    },
-    content: {
-      type: 'string',
-      minLength: 1,
-    },
-    tags: {
-      type: 'array',
-      items: {
-        type: 'string',
-        minLength: 1,
-      },
-    },
-    threadId: {
-      type: 'string',
-    },
-  },
-  required: ['title', 'content', 'threadId'],
-} as const;
-
-export const CreateGraphDtoSchema = {
-  type: 'object',
-  properties: {
-    name: {
-      type: 'string',
-    },
-    description: {
-      anyOf: [
-        {
-          type: 'string',
-        },
-        {
-          type: 'null',
-        },
-      ],
-    },
-    schema: {
-      type: 'object',
-      properties: {
-        nodes: {
-          type: 'array',
-          items: {
-            type: 'object',
-            properties: {
-              id: {
-                type: 'string',
-              },
-              template: {
-                type: 'string',
-              },
-              config: {
-                type: 'object',
-                propertyNames: {
-                  type: 'string',
-                },
-                additionalProperties: {},
-              },
-            },
-            required: ['id', 'template', 'config'],
-          },
-        },
-        edges: {
-          type: 'array',
-          items: {
-            type: 'object',
-            properties: {
-              from: {
-                type: 'string',
-              },
-              to: {
-                type: 'string',
-              },
-              label: {
-                type: 'string',
-              },
-            },
-            required: ['from', 'to'],
-          },
-        },
-      },
-      required: ['nodes'],
-    },
-    metadata: {
-      anyOf: [
-        {
-          type: 'object',
-          properties: {
-            nodes: {
-              type: 'array',
-              items: {
-                type: 'object',
-                properties: {
-                  id: {
-                    type: 'string',
-                  },
-                  x: {
-                    type: 'number',
-                  },
-                  y: {
-                    type: 'number',
-                  },
-                  name: {
-                    type: 'string',
-                  },
-                },
-                required: ['id'],
-              },
-            },
-            zoom: {
-              type: 'number',
-            },
-            x: {
-              type: 'number',
-            },
-            y: {
-              type: 'number',
-            },
-          },
-          additionalProperties: {},
-        },
-        {
-          type: 'null',
-        },
-      ],
-    },
-    temporary: {
-      anyOf: [
-        {
-          default: false,
-          type: 'boolean',
-        },
-        {
-          type: 'null',
-        },
-      ],
-    },
-    settings: {
-      type: 'object',
-      propertyNames: {
-        type: 'string',
-      },
-      additionalProperties: {},
-    },
-    costLimitUsd: {
-      anyOf: [
-        {
-          type: 'number',
-          minimum: 0,
-        },
-        {
-          type: 'null',
-        },
-      ],
-    },
-  },
-  required: ['name', 'schema'],
-} as const;
-
-export const GraphDtoSchema = {
-  type: 'object',
-  properties: {
-    id: {
-      type: 'string',
-      format: 'uuid',
-      pattern:
-        '^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$',
-    },
-    name: {
-      type: 'string',
-    },
-    description: {
-      anyOf: [
-        {
-          type: 'string',
-        },
-        {
-          type: 'null',
-        },
-      ],
-    },
-    error: {
-      anyOf: [
-        {
-          type: 'string',
-        },
-        {
-          type: 'null',
-        },
-      ],
-    },
-    version: {
-      type: 'string',
-    },
-    targetVersion: {
-      type: 'string',
-    },
-    schema: {
-      type: 'object',
-      properties: {
-        nodes: {
-          type: 'array',
-          items: {
-            type: 'object',
-            properties: {
-              id: {
-                type: 'string',
-              },
-              template: {
-                type: 'string',
-              },
-              config: {
-                type: 'object',
-                propertyNames: {
-                  type: 'string',
-                },
-                additionalProperties: {},
-              },
-            },
-            required: ['id', 'template', 'config'],
-          },
-        },
-        edges: {
-          type: 'array',
-          items: {
-            type: 'object',
-            properties: {
-              from: {
-                type: 'string',
-              },
-              to: {
-                type: 'string',
-              },
-              label: {
-                type: 'string',
-              },
-            },
-            required: ['from', 'to'],
-          },
-        },
-      },
-      required: ['nodes'],
-    },
-    status: {
-      type: 'string',
-      enum: ['created', 'compiling', 'running', 'stopped', 'error'],
-    },
-    metadata: {
-      anyOf: [
-        {
-          type: 'object',
-          properties: {
-            nodes: {
-              type: 'array',
-              items: {
-                type: 'object',
-                properties: {
-                  id: {
-                    type: 'string',
-                  },
-                  x: {
-                    type: 'number',
-                  },
-                  y: {
-                    type: 'number',
-                  },
-                  name: {
-                    type: 'string',
-                  },
-                },
-                required: ['id'],
-              },
-            },
-            zoom: {
-              type: 'number',
-            },
-            x: {
-              type: 'number',
-            },
-            y: {
-              type: 'number',
-            },
-          },
-          additionalProperties: {},
-        },
-        {
-          type: 'null',
-        },
-      ],
-    },
-    runningThreads: {
-      default: 0,
-      type: 'integer',
-      minimum: 0,
-      maximum: 9007199254740991,
-    },
-    totalThreads: {
-      default: 0,
-      type: 'integer',
-      minimum: 0,
-      maximum: 9007199254740991,
-    },
-    createdAt: {
-      type: 'string',
-      format: 'date-time',
-      pattern:
-        '^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$',
-    },
-    updatedAt: {
-      type: 'string',
-      format: 'date-time',
-      pattern:
-        '^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$',
-    },
-    temporary: {
-      anyOf: [
-        {
-          default: false,
-          type: 'boolean',
-        },
-        {
-          type: 'null',
-        },
-      ],
-    },
-    projectId: {
-      anyOf: [
-        {
-          type: 'string',
-          format: 'uuid',
-          pattern:
-            '^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$',
-        },
-        {
-          type: 'null',
-        },
-      ],
-    },
-    settings: {
-      type: 'object',
-      propertyNames: {
-        type: 'string',
-      },
-      additionalProperties: {},
-    },
-    costLimitUsd: {
-      anyOf: [
-        {
-          type: 'number',
-          minimum: 0,
-        },
-        {
-          type: 'null',
-        },
-      ],
-    },
-  },
-  required: [
-    'id',
-    'name',
-    'version',
-    'targetVersion',
-    'schema',
-    'status',
-    'createdAt',
-    'updatedAt',
-  ],
-} as const;
-
-export const GraphPreviewDtoSchema = {
-  type: 'object',
-  properties: {
-    id: {
-      type: 'string',
-      format: 'uuid',
-      pattern:
-        '^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$',
-    },
-    name: {
-      type: 'string',
-    },
-    description: {
-      anyOf: [
-        {
-          type: 'string',
-        },
-        {
-          type: 'null',
-        },
-      ],
-    },
-    error: {
-      anyOf: [
-        {
-          type: 'string',
-        },
-        {
-          type: 'null',
-        },
-      ],
-    },
-    version: {
-      type: 'string',
-    },
-    targetVersion: {
-      type: 'string',
-    },
-    status: {
-      type: 'string',
-      enum: ['created', 'compiling', 'running', 'stopped', 'error'],
-    },
-    runningThreads: {
-      type: 'integer',
-      default: 0,
-      minimum: 0,
-      maximum: 9007199254740991,
-    },
-    totalThreads: {
-      type: 'integer',
-      default: 0,
-      minimum: 0,
-      maximum: 9007199254740991,
-    },
-    nodeCount: {
-      type: 'integer',
-      default: 0,
-      minimum: 0,
-      maximum: 9007199254740991,
-    },
-    edgeCount: {
-      type: 'integer',
-      default: 0,
-      minimum: 0,
-      maximum: 9007199254740991,
-    },
-    agents: {
-      type: 'array',
-      default: [],
-      items: {
-        type: 'object',
-        properties: {
-          nodeId: {
-            type: 'string',
-          },
-          name: {
-            type: 'string',
-          },
-          description: {
-            type: 'string',
-          },
-        },
-        required: ['nodeId', 'name'],
-      },
-    },
-    triggerNodes: {
+    items: {
       type: 'array',
       items: {
         type: 'object',
         properties: {
           id: {
             type: 'string',
+            format: 'uuid',
+            pattern:
+              '^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$',
           },
-          name: {
+          publicId: {
+            type: 'integer',
+            minimum: -9007199254740991,
+            maximum: 9007199254740991,
+          },
+          content: {
             type: 'string',
           },
-          template: {
+          title: {
             type: 'string',
           },
-        },
-        required: ['id', 'name', 'template'],
-      },
-    },
-    nodeDisplayNames: {
-      type: 'object',
-      propertyNames: {
-        type: 'string',
-      },
-      additionalProperties: {
-        type: 'string',
-      },
-    },
-    createdAt: {
-      type: 'string',
-      format: 'date-time',
-      pattern:
-        '^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$',
-    },
-    updatedAt: {
-      type: 'string',
-      format: 'date-time',
-      pattern:
-        '^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$',
-    },
-    temporary: {
-      anyOf: [
-        {
-          default: false,
-          type: 'boolean',
-        },
-        {
-          type: 'null',
-        },
-      ],
-    },
-    projectId: {
-      anyOf: [
-        {
-          type: 'string',
-          format: 'uuid',
-          pattern:
-            '^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$',
-        },
-        {
-          type: 'null',
-        },
-      ],
-    },
-    costLimitUsd: {
-      anyOf: [
-        {
-          type: 'number',
-          minimum: 0,
-        },
-        {
-          type: 'null',
-        },
-      ],
-    },
-  },
-  required: [
-    'id',
-    'name',
-    'version',
-    'targetVersion',
-    'status',
-    'triggerNodes',
-    'nodeDisplayNames',
-    'createdAt',
-    'updatedAt',
-  ],
-} as const;
-
-export const GraphNodeWithStatusDtoSchema = {
-  type: 'object',
-  properties: {
-    id: {
-      type: 'string',
-    },
-    name: {
-      type: 'string',
-    },
-    template: {
-      type: 'string',
-    },
-    type: {
-      type: 'string',
-      enum: [
-        'runtime',
-        'tool',
-        'simpleAgent',
-        'trigger',
-        'resource',
-        'mcp',
-        'instruction',
-      ],
-    },
-    status: {
-      type: 'string',
-      enum: ['stopped', 'starting', 'running', 'idle'],
-    },
-    config: {},
-    error: {
-      anyOf: [
-        {
-          type: 'string',
-        },
-        {
-          type: 'null',
-        },
-      ],
-    },
-    metadata: {
-      type: 'object',
-      properties: {
-        threadId: {
-          type: 'string',
-        },
-        runId: {
-          type: 'string',
-        },
-        parentThreadId: {
-          type: 'string',
-        },
-      },
-    },
-    additionalNodeMetadata: {
-      type: 'object',
-      propertyNames: {
-        type: 'string',
-      },
-      additionalProperties: {},
-    },
-  },
-  required: ['id', 'name', 'template', 'type', 'status', 'config'],
-} as const;
-
-export const UpdateGraphDtoSchema = {
-  type: 'object',
-  properties: {
-    name: {
-      type: 'string',
-    },
-    description: {
-      anyOf: [
-        {
-          type: 'string',
-        },
-        {
-          type: 'null',
-        },
-      ],
-    },
-    schema: {
-      type: 'object',
-      properties: {
-        nodes: {
-          type: 'array',
-          items: {
-            type: 'object',
-            properties: {
-              id: {
+          summary: {
+            anyOf: [
+              {
                 type: 'string',
               },
-              template: {
-                type: 'string',
+              {
+                type: 'null',
               },
-              config: {
-                type: 'object',
-                propertyNames: {
-                  type: 'string',
-                },
-                additionalProperties: {},
-              },
-            },
-            required: ['id', 'template', 'config'],
+            ],
           },
-        },
-        edges: {
-          type: 'array',
-          items: {
-            type: 'object',
-            properties: {
-              from: {
+          politic: {
+            anyOf: [
+              {
                 type: 'string',
               },
-              to: {
-                type: 'string',
+              {
+                type: 'null',
               },
-              label: {
-                type: 'string',
-              },
-            },
-            required: ['from', 'to'],
+            ],
           },
-        },
-      },
-      required: ['nodes'],
-    },
-    metadata: {
-      anyOf: [
-        {
-          type: 'object',
-          properties: {
-            nodes: {
-              type: 'array',
-              items: {
-                type: 'object',
-                properties: {
-                  id: {
-                    type: 'string',
-                  },
-                  x: {
-                    type: 'number',
-                  },
-                  y: {
-                    type: 'number',
-                  },
-                  name: {
-                    type: 'string',
-                  },
-                },
-                required: ['id'],
+          embeddingModel: {
+            anyOf: [
+              {
+                type: 'string',
               },
-            },
-            zoom: {
-              type: 'number',
-            },
-            x: {
-              type: 'number',
-            },
-            y: {
-              type: 'number',
-            },
+              {
+                type: 'null',
+              },
+            ],
           },
-          additionalProperties: {},
-        },
-        {
-          type: 'null',
-        },
-      ],
-    },
-    temporary: {
-      anyOf: [
-        {
-          default: false,
-          type: 'boolean',
-        },
-        {
-          type: 'null',
-        },
-      ],
-    },
-    settings: {
-      type: 'object',
-      propertyNames: {
-        type: 'string',
-      },
-      additionalProperties: {},
-    },
-    costLimitUsd: {
-      anyOf: [
-        {
-          type: 'number',
-          minimum: 0,
-        },
-        {
-          type: 'null',
-        },
-      ],
-    },
-    currentVersion: {
-      type: 'string',
-    },
-  },
-  required: ['currentVersion'],
-  additionalProperties: false,
-} as const;
-
-export const UpdateGraphResponseDtoSchema = {
-  type: 'object',
-  properties: {
-    graph: {
-      type: 'object',
-      properties: {
-        id: {
-          type: 'string',
-          format: 'uuid',
-          pattern:
-            '^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$',
-        },
-        name: {
-          type: 'string',
-        },
-        description: {
-          anyOf: [
-            {
+          tags: {
+            type: 'array',
+            items: {
               type: 'string',
             },
-            {
-              type: 'null',
-            },
-          ],
-        },
-        error: {
-          anyOf: [
-            {
-              type: 'string',
-            },
-            {
-              type: 'null',
-            },
-          ],
-        },
-        version: {
-          type: 'string',
-        },
-        targetVersion: {
-          type: 'string',
-        },
-        schema: {
-          type: 'object',
-          properties: {
-            nodes: {
-              type: 'array',
-              items: {
-                type: 'object',
-                properties: {
-                  id: {
-                    type: 'string',
-                  },
-                  template: {
-                    type: 'string',
-                  },
-                  config: {
-                    type: 'object',
-                    propertyNames: {
-                      type: 'string',
-                    },
-                    additionalProperties: {},
-                  },
-                },
-                required: ['id', 'template', 'config'],
-              },
-            },
-            edges: {
-              type: 'array',
-              items: {
-                type: 'object',
-                properties: {
-                  from: {
-                    type: 'string',
-                  },
-                  to: {
-                    type: 'string',
-                  },
-                  label: {
-                    type: 'string',
-                  },
-                },
-                required: ['from', 'to'],
-              },
-            },
           },
-          required: ['nodes'],
-        },
-        status: {
-          type: 'string',
-          enum: ['created', 'compiling', 'running', 'stopped', 'error'],
-        },
-        metadata: {
-          anyOf: [
-            {
-              type: 'object',
-              properties: {
-                nodes: {
-                  type: 'array',
-                  items: {
-                    type: 'object',
-                    properties: {
-                      id: {
-                        type: 'string',
-                      },
-                      x: {
-                        type: 'number',
-                      },
-                      y: {
-                        type: 'number',
-                      },
-                      name: {
-                        type: 'string',
-                      },
-                    },
-                    required: ['id'],
-                  },
-                },
-                zoom: {
-                  type: 'number',
-                },
-                x: {
-                  type: 'number',
-                },
-                y: {
-                  type: 'number',
-                },
+          projectId: {
+            anyOf: [
+              {
+                type: 'string',
+                format: 'uuid',
+                pattern:
+                  '^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$',
               },
-              additionalProperties: {},
-            },
-            {
-              type: 'null',
-            },
-          ],
-        },
-        runningThreads: {
-          default: 0,
-          type: 'integer',
-          minimum: 0,
-          maximum: 9007199254740991,
-        },
-        totalThreads: {
-          default: 0,
-          type: 'integer',
-          minimum: 0,
-          maximum: 9007199254740991,
-        },
-        createdAt: {
-          type: 'string',
-          format: 'date-time',
-          pattern:
-            '^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$',
-        },
-        updatedAt: {
-          type: 'string',
-          format: 'date-time',
-          pattern:
-            '^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$',
-        },
-        temporary: {
-          anyOf: [
-            {
-              default: false,
-              type: 'boolean',
-            },
-            {
-              type: 'null',
-            },
-          ],
-        },
-        projectId: {
-          anyOf: [
-            {
-              type: 'string',
-              format: 'uuid',
-              pattern:
-                '^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$',
-            },
-            {
-              type: 'null',
-            },
-          ],
-        },
-        settings: {
-          type: 'object',
-          propertyNames: {
+              {
+                type: 'null',
+              },
+            ],
+          },
+          createdAt: {
             type: 'string',
+            format: 'date-time',
+            pattern:
+              '^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$',
           },
-          additionalProperties: {},
-        },
-        costLimitUsd: {
-          anyOf: [
-            {
-              type: 'number',
-              minimum: 0,
-            },
-            {
-              type: 'null',
-            },
-          ],
-        },
-      },
-      required: [
-        'id',
-        'name',
-        'version',
-        'targetVersion',
-        'schema',
-        'status',
-        'createdAt',
-        'updatedAt',
-      ],
-    },
-    revision: {
-      anyOf: [
-        {
-          type: 'object',
-          properties: {
-            id: {
-              type: 'string',
-              format: 'uuid',
-              pattern:
-                '^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$',
-            },
-            graphId: {
-              type: 'string',
-              format: 'uuid',
-              pattern:
-                '^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$',
-            },
-            baseVersion: {
-              type: 'string',
-            },
-            toVersion: {
-              type: 'string',
-            },
-            configDiff: {
-              type: 'array',
-              items: {
-                oneOf: [
-                  {
-                    type: 'object',
-                    properties: {
-                      op: {
-                        type: 'string',
-                        const: 'add',
-                      },
-                      path: {
-                        type: 'string',
-                      },
-                      value: {},
-                    },
-                    required: ['op', 'path', 'value'],
-                  },
-                  {
-                    type: 'object',
-                    properties: {
-                      op: {
-                        type: 'string',
-                        const: 'remove',
-                      },
-                      path: {
-                        type: 'string',
-                      },
-                    },
-                    required: ['op', 'path'],
-                  },
-                  {
-                    type: 'object',
-                    properties: {
-                      op: {
-                        type: 'string',
-                        const: 'replace',
-                      },
-                      path: {
-                        type: 'string',
-                      },
-                      value: {},
-                    },
-                    required: ['op', 'path', 'value'],
-                  },
-                  {
-                    type: 'object',
-                    properties: {
-                      op: {
-                        type: 'string',
-                        const: 'move',
-                      },
-                      from: {
-                        type: 'string',
-                      },
-                      path: {
-                        type: 'string',
-                      },
-                    },
-                    required: ['op', 'from', 'path'],
-                  },
-                  {
-                    type: 'object',
-                    properties: {
-                      op: {
-                        type: 'string',
-                        const: 'copy',
-                      },
-                      from: {
-                        type: 'string',
-                      },
-                      path: {
-                        type: 'string',
-                      },
-                    },
-                    required: ['op', 'from', 'path'],
-                  },
-                  {
-                    type: 'object',
-                    properties: {
-                      op: {
-                        type: 'string',
-                        const: 'test',
-                      },
-                      path: {
-                        type: 'string',
-                      },
-                      value: {},
-                    },
-                    required: ['op', 'path', 'value'],
-                  },
-                ],
-              },
-            },
-            clientConfig: {
-              type: 'object',
-              properties: {
-                schema: {
-                  type: 'object',
-                  properties: {
-                    nodes: {
-                      type: 'array',
-                      items: {
-                        type: 'object',
-                        properties: {
-                          id: {
-                            type: 'string',
-                          },
-                          template: {
-                            type: 'string',
-                          },
-                          config: {
-                            type: 'object',
-                            propertyNames: {
-                              type: 'string',
-                            },
-                            additionalProperties: {},
-                          },
-                        },
-                        required: ['id', 'template', 'config'],
-                      },
-                    },
-                    edges: {
-                      type: 'array',
-                      items: {
-                        type: 'object',
-                        properties: {
-                          from: {
-                            type: 'string',
-                          },
-                          to: {
-                            type: 'string',
-                          },
-                          label: {
-                            type: 'string',
-                          },
-                        },
-                        required: ['from', 'to'],
-                      },
-                    },
-                  },
-                  required: ['nodes'],
-                },
-                name: {
-                  type: 'string',
-                },
-                description: {
-                  anyOf: [
-                    {
-                      type: 'string',
-                    },
-                    {
-                      type: 'null',
-                    },
-                  ],
-                },
-                temporary: {
-                  type: 'boolean',
-                },
-              },
-              required: ['schema', 'name', 'description', 'temporary'],
-            },
-            newConfig: {
-              type: 'object',
-              properties: {
-                schema: {
-                  type: 'object',
-                  properties: {
-                    nodes: {
-                      type: 'array',
-                      items: {
-                        type: 'object',
-                        properties: {
-                          id: {
-                            type: 'string',
-                          },
-                          template: {
-                            type: 'string',
-                          },
-                          config: {
-                            type: 'object',
-                            propertyNames: {
-                              type: 'string',
-                            },
-                            additionalProperties: {},
-                          },
-                        },
-                        required: ['id', 'template', 'config'],
-                      },
-                    },
-                    edges: {
-                      type: 'array',
-                      items: {
-                        type: 'object',
-                        properties: {
-                          from: {
-                            type: 'string',
-                          },
-                          to: {
-                            type: 'string',
-                          },
-                          label: {
-                            type: 'string',
-                          },
-                        },
-                        required: ['from', 'to'],
-                      },
-                    },
-                  },
-                  required: ['nodes'],
-                },
-                name: {
-                  type: 'string',
-                },
-                description: {
-                  anyOf: [
-                    {
-                      type: 'string',
-                    },
-                    {
-                      type: 'null',
-                    },
-                  ],
-                },
-                temporary: {
-                  type: 'boolean',
-                },
-              },
-              required: ['schema', 'name', 'description', 'temporary'],
-            },
-            status: {
-              type: 'string',
-              enum: ['pending', 'applying', 'applied', 'failed'],
-            },
-            error: {
-              type: 'string',
-            },
-            createdAt: {
-              type: 'string',
-              format: 'date-time',
-              pattern:
-                '^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$',
-            },
-            updatedAt: {
-              type: 'string',
-              format: 'date-time',
-              pattern:
-                '^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$',
-            },
-          },
-          required: [
-            'id',
-            'graphId',
-            'baseVersion',
-            'toVersion',
-            'configDiff',
-            'clientConfig',
-            'newConfig',
-            'status',
-            'createdAt',
-            'updatedAt',
-          ],
-        },
-        {
-          type: 'null',
-        },
-      ],
-    },
-  },
-  required: ['graph'],
-} as const;
-
-export const ExecuteTriggerDtoSchema = {
-  type: 'object',
-  properties: {
-    messages: {
-      type: 'array',
-      minItems: 1,
-      items: {
-        anyOf: [
-          {
+          updatedAt: {
             type: 'string',
+            format: 'date-time',
+            pattern:
+              '^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$',
           },
-          {
-            type: 'object',
-            properties: {
-              content: {
-                minItems: 1,
-                type: 'array',
-                items: {
-                  oneOf: [
-                    {
-                      type: 'object',
-                      properties: {
-                        type: {
-                          type: 'string',
-                          const: 'text',
-                        },
-                        text: {
-                          type: 'string',
-                          minLength: 1,
-                        },
-                      },
-                      required: ['type', 'text'],
-                    },
-                    {
-                      type: 'object',
-                      properties: {
-                        type: {
-                          type: 'string',
-                          const: 'image_url',
-                        },
-                        image_url: {
-                          type: 'object',
-                          properties: {
-                            url: {
-                              type: 'string',
-                            },
-                            detail: {
-                              default: 'auto',
-                              type: 'string',
-                              enum: ['auto', 'low', 'high'],
-                            },
-                          },
-                          required: ['url'],
-                        },
-                      },
-                      required: ['type', 'image_url'],
-                    },
-                  ],
-                },
-              },
-            },
-            required: ['content'],
-          },
+        },
+        required: [
+          'id',
+          'publicId',
+          'content',
+          'title',
+          'tags',
+          'projectId',
+          'createdAt',
+          'updatedAt',
         ],
       },
     },
-    threadSubId: {
-      type: 'string',
-    },
-    async: {
-      type: 'boolean',
-    },
-    metadata: {
-      type: 'object',
-      propertyNames: {
-        type: 'string',
-      },
-      additionalProperties: {},
+    total: {
+      type: 'integer',
+      minimum: 0,
+      maximum: 9007199254740991,
     },
   },
-  required: ['messages'],
-} as const;
-
-export const ExecuteTriggerResponseDtoSchema = {
-  type: 'object',
-  properties: {
-    externalThreadId: {
-      type: 'string',
-    },
-    checkpointNs: {
-      type: 'string',
-    },
-  },
-  required: ['externalThreadId'],
-} as const;
-
-export const GraphRevisionDtoSchema = {
-  type: 'object',
-  properties: {
-    id: {
-      type: 'string',
-      format: 'uuid',
-      pattern:
-        '^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$',
-    },
-    graphId: {
-      type: 'string',
-      format: 'uuid',
-      pattern:
-        '^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$',
-    },
-    baseVersion: {
-      type: 'string',
-    },
-    toVersion: {
-      type: 'string',
-    },
-    configDiff: {
-      type: 'array',
-      items: {
-        oneOf: [
-          {
-            type: 'object',
-            properties: {
-              op: {
-                type: 'string',
-                const: 'add',
-              },
-              path: {
-                type: 'string',
-              },
-              value: {},
-            },
-            required: ['op', 'path', 'value'],
-          },
-          {
-            type: 'object',
-            properties: {
-              op: {
-                type: 'string',
-                const: 'remove',
-              },
-              path: {
-                type: 'string',
-              },
-            },
-            required: ['op', 'path'],
-          },
-          {
-            type: 'object',
-            properties: {
-              op: {
-                type: 'string',
-                const: 'replace',
-              },
-              path: {
-                type: 'string',
-              },
-              value: {},
-            },
-            required: ['op', 'path', 'value'],
-          },
-          {
-            type: 'object',
-            properties: {
-              op: {
-                type: 'string',
-                const: 'move',
-              },
-              from: {
-                type: 'string',
-              },
-              path: {
-                type: 'string',
-              },
-            },
-            required: ['op', 'from', 'path'],
-          },
-          {
-            type: 'object',
-            properties: {
-              op: {
-                type: 'string',
-                const: 'copy',
-              },
-              from: {
-                type: 'string',
-              },
-              path: {
-                type: 'string',
-              },
-            },
-            required: ['op', 'from', 'path'],
-          },
-          {
-            type: 'object',
-            properties: {
-              op: {
-                type: 'string',
-                const: 'test',
-              },
-              path: {
-                type: 'string',
-              },
-              value: {},
-            },
-            required: ['op', 'path', 'value'],
-          },
-        ],
-      },
-    },
-    clientConfig: {
-      type: 'object',
-      properties: {
-        schema: {
-          type: 'object',
-          properties: {
-            nodes: {
-              type: 'array',
-              items: {
-                type: 'object',
-                properties: {
-                  id: {
-                    type: 'string',
-                  },
-                  template: {
-                    type: 'string',
-                  },
-                  config: {
-                    type: 'object',
-                    propertyNames: {
-                      type: 'string',
-                    },
-                    additionalProperties: {},
-                  },
-                },
-                required: ['id', 'template', 'config'],
-              },
-            },
-            edges: {
-              type: 'array',
-              items: {
-                type: 'object',
-                properties: {
-                  from: {
-                    type: 'string',
-                  },
-                  to: {
-                    type: 'string',
-                  },
-                  label: {
-                    type: 'string',
-                  },
-                },
-                required: ['from', 'to'],
-              },
-            },
-          },
-          required: ['nodes'],
-        },
-        name: {
-          type: 'string',
-        },
-        description: {
-          anyOf: [
-            {
-              type: 'string',
-            },
-            {
-              type: 'null',
-            },
-          ],
-        },
-        temporary: {
-          type: 'boolean',
-        },
-      },
-      required: ['schema', 'name', 'description', 'temporary'],
-    },
-    newConfig: {
-      type: 'object',
-      properties: {
-        schema: {
-          type: 'object',
-          properties: {
-            nodes: {
-              type: 'array',
-              items: {
-                type: 'object',
-                properties: {
-                  id: {
-                    type: 'string',
-                  },
-                  template: {
-                    type: 'string',
-                  },
-                  config: {
-                    type: 'object',
-                    propertyNames: {
-                      type: 'string',
-                    },
-                    additionalProperties: {},
-                  },
-                },
-                required: ['id', 'template', 'config'],
-              },
-            },
-            edges: {
-              type: 'array',
-              items: {
-                type: 'object',
-                properties: {
-                  from: {
-                    type: 'string',
-                  },
-                  to: {
-                    type: 'string',
-                  },
-                  label: {
-                    type: 'string',
-                  },
-                },
-                required: ['from', 'to'],
-              },
-            },
-          },
-          required: ['nodes'],
-        },
-        name: {
-          type: 'string',
-        },
-        description: {
-          anyOf: [
-            {
-              type: 'string',
-            },
-            {
-              type: 'null',
-            },
-          ],
-        },
-        temporary: {
-          type: 'boolean',
-        },
-      },
-      required: ['schema', 'name', 'description', 'temporary'],
-    },
-    status: {
-      type: 'string',
-      enum: ['pending', 'applying', 'applied', 'failed'],
-    },
-    error: {
-      type: 'string',
-    },
-    createdAt: {
-      type: 'string',
-      format: 'date-time',
-      pattern:
-        '^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$',
-    },
-    updatedAt: {
-      type: 'string',
-      format: 'date-time',
-      pattern:
-        '^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$',
-    },
-  },
-  required: [
-    'id',
-    'graphId',
-    'baseVersion',
-    'toVersion',
-    'configDiff',
-    'clientConfig',
-    'newConfig',
-    'status',
-    'createdAt',
-    'updatedAt',
-  ],
-} as const;
-
-export const TemplateDtoSchema = {
-  type: 'object',
-  properties: {
-    id: {
-      type: 'string',
-    },
-    name: {
-      type: 'string',
-    },
-    description: {
-      type: 'string',
-    },
-    kind: {
-      type: 'string',
-      enum: [
-        'runtime',
-        'tool',
-        'simpleAgent',
-        'trigger',
-        'resource',
-        'mcp',
-        'instruction',
-      ],
-    },
-    schema: {
-      type: 'object',
-      propertyNames: {
-        type: 'string',
-      },
-      additionalProperties: {},
-    },
-    inputs: {
-      type: 'array',
-      items: {
-        oneOf: [
-          {
-            type: 'object',
-            properties: {
-              type: {
-                type: 'string',
-                const: 'kind',
-              },
-              value: {
-                type: 'string',
-                enum: [
-                  'runtime',
-                  'tool',
-                  'simpleAgent',
-                  'trigger',
-                  'resource',
-                  'mcp',
-                  'instruction',
-                ],
-              },
-              required: {
-                type: 'boolean',
-              },
-              multiple: {
-                type: 'boolean',
-              },
-            },
-            required: ['type', 'value', 'multiple'],
-          },
-          {
-            type: 'object',
-            properties: {
-              type: {
-                type: 'string',
-                const: 'template',
-              },
-              value: {
-                type: 'string',
-              },
-              required: {
-                type: 'boolean',
-              },
-              multiple: {
-                type: 'boolean',
-              },
-            },
-            required: ['type', 'value', 'multiple'],
-          },
-        ],
-      },
-    },
-    outputs: {
-      type: 'array',
-      items: {
-        oneOf: [
-          {
-            type: 'object',
-            properties: {
-              type: {
-                type: 'string',
-                const: 'kind',
-              },
-              value: {
-                type: 'string',
-                enum: [
-                  'runtime',
-                  'tool',
-                  'simpleAgent',
-                  'trigger',
-                  'resource',
-                  'mcp',
-                  'instruction',
-                ],
-              },
-              required: {
-                type: 'boolean',
-              },
-              multiple: {
-                type: 'boolean',
-              },
-            },
-            required: ['type', 'value', 'multiple'],
-          },
-          {
-            type: 'object',
-            properties: {
-              type: {
-                type: 'string',
-                const: 'template',
-              },
-              value: {
-                type: 'string',
-              },
-              required: {
-                type: 'boolean',
-              },
-              multiple: {
-                type: 'boolean',
-              },
-            },
-            required: ['type', 'value', 'multiple'],
-          },
-        ],
-      },
-    },
-    systemAgentId: {
-      type: 'string',
-    },
-    systemAgentContentHash: {
-      type: 'string',
-    },
-    systemAgentPredefinedTools: {
-      type: 'array',
-      items: {
-        type: 'string',
-      },
-    },
-    instructionBlockId: {
-      type: 'string',
-    },
-    instructionBlockContentHash: {
-      type: 'string',
-    },
-  },
-  required: ['id', 'name', 'description', 'kind', 'schema'],
+  required: ['items', 'total'],
 } as const;
 
 export const ThreadDtoSchema = {
@@ -4189,6 +2435,1768 @@ export const ResumeThreadDtoSchema = {
   },
 } as const;
 
+export const CreateGraphDtoSchema = {
+  type: 'object',
+  properties: {
+    name: {
+      type: 'string',
+    },
+    description: {
+      anyOf: [
+        {
+          type: 'string',
+        },
+        {
+          type: 'null',
+        },
+      ],
+    },
+    schema: {
+      type: 'object',
+      properties: {
+        nodes: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              id: {
+                type: 'string',
+              },
+              template: {
+                type: 'string',
+              },
+              config: {
+                type: 'object',
+                propertyNames: {
+                  type: 'string',
+                },
+                additionalProperties: {},
+              },
+            },
+            required: ['id', 'template', 'config'],
+          },
+        },
+        edges: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              from: {
+                type: 'string',
+              },
+              to: {
+                type: 'string',
+              },
+              label: {
+                type: 'string',
+              },
+            },
+            required: ['from', 'to'],
+          },
+        },
+      },
+      required: ['nodes'],
+    },
+    metadata: {
+      anyOf: [
+        {
+          type: 'object',
+          properties: {
+            nodes: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  id: {
+                    type: 'string',
+                  },
+                  x: {
+                    type: 'number',
+                  },
+                  y: {
+                    type: 'number',
+                  },
+                  name: {
+                    type: 'string',
+                  },
+                },
+                required: ['id'],
+              },
+            },
+            zoom: {
+              type: 'number',
+            },
+            x: {
+              type: 'number',
+            },
+            y: {
+              type: 'number',
+            },
+          },
+          additionalProperties: {},
+        },
+        {
+          type: 'null',
+        },
+      ],
+    },
+    temporary: {
+      anyOf: [
+        {
+          default: false,
+          type: 'boolean',
+        },
+        {
+          type: 'null',
+        },
+      ],
+    },
+    costLimitUsd: {
+      anyOf: [
+        {
+          type: 'number',
+          minimum: 0,
+        },
+        {
+          type: 'null',
+        },
+      ],
+    },
+  },
+  required: ['name', 'schema'],
+} as const;
+
+export const GraphDtoSchema = {
+  type: 'object',
+  properties: {
+    id: {
+      type: 'string',
+      format: 'uuid',
+      pattern:
+        '^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$',
+    },
+    name: {
+      type: 'string',
+    },
+    description: {
+      anyOf: [
+        {
+          type: 'string',
+        },
+        {
+          type: 'null',
+        },
+      ],
+    },
+    error: {
+      anyOf: [
+        {
+          type: 'string',
+        },
+        {
+          type: 'null',
+        },
+      ],
+    },
+    version: {
+      type: 'string',
+    },
+    targetVersion: {
+      type: 'string',
+    },
+    schema: {
+      type: 'object',
+      properties: {
+        nodes: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              id: {
+                type: 'string',
+              },
+              template: {
+                type: 'string',
+              },
+              config: {
+                type: 'object',
+                propertyNames: {
+                  type: 'string',
+                },
+                additionalProperties: {},
+              },
+            },
+            required: ['id', 'template', 'config'],
+          },
+        },
+        edges: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              from: {
+                type: 'string',
+              },
+              to: {
+                type: 'string',
+              },
+              label: {
+                type: 'string',
+              },
+            },
+            required: ['from', 'to'],
+          },
+        },
+      },
+      required: ['nodes'],
+    },
+    status: {
+      type: 'string',
+      enum: ['created', 'compiling', 'running', 'stopped', 'error'],
+    },
+    metadata: {
+      anyOf: [
+        {
+          type: 'object',
+          properties: {
+            nodes: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  id: {
+                    type: 'string',
+                  },
+                  x: {
+                    type: 'number',
+                  },
+                  y: {
+                    type: 'number',
+                  },
+                  name: {
+                    type: 'string',
+                  },
+                },
+                required: ['id'],
+              },
+            },
+            zoom: {
+              type: 'number',
+            },
+            x: {
+              type: 'number',
+            },
+            y: {
+              type: 'number',
+            },
+          },
+          additionalProperties: {},
+        },
+        {
+          type: 'null',
+        },
+      ],
+    },
+    runningThreads: {
+      default: 0,
+      type: 'integer',
+      minimum: 0,
+      maximum: 9007199254740991,
+    },
+    totalThreads: {
+      default: 0,
+      type: 'integer',
+      minimum: 0,
+      maximum: 9007199254740991,
+    },
+    createdAt: {
+      type: 'string',
+      format: 'date-time',
+      pattern:
+        '^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$',
+    },
+    updatedAt: {
+      type: 'string',
+      format: 'date-time',
+      pattern:
+        '^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$',
+    },
+    temporary: {
+      anyOf: [
+        {
+          default: false,
+          type: 'boolean',
+        },
+        {
+          type: 'null',
+        },
+      ],
+    },
+    projectId: {
+      anyOf: [
+        {
+          type: 'string',
+          format: 'uuid',
+          pattern:
+            '^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$',
+        },
+        {
+          type: 'null',
+        },
+      ],
+    },
+    settings: {
+      type: 'object',
+      propertyNames: {
+        type: 'string',
+      },
+      additionalProperties: {},
+    },
+    costLimitUsd: {
+      anyOf: [
+        {
+          type: 'number',
+          minimum: 0,
+        },
+        {
+          type: 'null',
+        },
+      ],
+    },
+  },
+  required: [
+    'id',
+    'name',
+    'version',
+    'targetVersion',
+    'schema',
+    'status',
+    'createdAt',
+    'updatedAt',
+  ],
+} as const;
+
+export const GraphPreviewDtoSchema = {
+  type: 'object',
+  properties: {
+    id: {
+      type: 'string',
+      format: 'uuid',
+      pattern:
+        '^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$',
+    },
+    name: {
+      type: 'string',
+    },
+    description: {
+      anyOf: [
+        {
+          type: 'string',
+        },
+        {
+          type: 'null',
+        },
+      ],
+    },
+    error: {
+      anyOf: [
+        {
+          type: 'string',
+        },
+        {
+          type: 'null',
+        },
+      ],
+    },
+    version: {
+      type: 'string',
+    },
+    targetVersion: {
+      type: 'string',
+    },
+    status: {
+      type: 'string',
+      enum: ['created', 'compiling', 'running', 'stopped', 'error'],
+    },
+    runningThreads: {
+      default: 0,
+      type: 'integer',
+      minimum: 0,
+      maximum: 9007199254740991,
+    },
+    totalThreads: {
+      default: 0,
+      type: 'integer',
+      minimum: 0,
+      maximum: 9007199254740991,
+    },
+    nodeCount: {
+      default: 0,
+      type: 'integer',
+      minimum: 0,
+      maximum: 9007199254740991,
+    },
+    edgeCount: {
+      default: 0,
+      type: 'integer',
+      minimum: 0,
+      maximum: 9007199254740991,
+    },
+    agents: {
+      default: [],
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          nodeId: {
+            type: 'string',
+          },
+          name: {
+            type: 'string',
+          },
+          description: {
+            type: 'string',
+          },
+        },
+        required: ['nodeId', 'name'],
+      },
+    },
+    triggerNodes: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          id: {
+            type: 'string',
+          },
+          name: {
+            type: 'string',
+          },
+          template: {
+            type: 'string',
+          },
+        },
+        required: ['id', 'name', 'template'],
+      },
+    },
+    nodeDisplayNames: {
+      type: 'object',
+      propertyNames: {
+        type: 'string',
+      },
+      additionalProperties: {
+        type: 'string',
+      },
+    },
+    createdAt: {
+      type: 'string',
+      format: 'date-time',
+      pattern:
+        '^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$',
+    },
+    updatedAt: {
+      type: 'string',
+      format: 'date-time',
+      pattern:
+        '^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$',
+    },
+    temporary: {
+      anyOf: [
+        {
+          default: false,
+          type: 'boolean',
+        },
+        {
+          type: 'null',
+        },
+      ],
+    },
+    projectId: {
+      anyOf: [
+        {
+          type: 'string',
+          format: 'uuid',
+          pattern:
+            '^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$',
+        },
+        {
+          type: 'null',
+        },
+      ],
+    },
+    costLimitUsd: {
+      anyOf: [
+        {
+          type: 'number',
+          minimum: 0,
+        },
+        {
+          type: 'null',
+        },
+      ],
+    },
+  },
+  required: [
+    'id',
+    'name',
+    'version',
+    'targetVersion',
+    'status',
+    'triggerNodes',
+    'nodeDisplayNames',
+    'createdAt',
+    'updatedAt',
+  ],
+} as const;
+
+export const GraphNodeWithStatusDtoSchema = {
+  type: 'object',
+  properties: {
+    id: {
+      type: 'string',
+    },
+    name: {
+      type: 'string',
+    },
+    template: {
+      type: 'string',
+    },
+    type: {
+      type: 'string',
+      enum: [
+        'runtime',
+        'tool',
+        'simpleAgent',
+        'trigger',
+        'resource',
+        'mcp',
+        'instruction',
+      ],
+    },
+    status: {
+      type: 'string',
+      enum: ['stopped', 'starting', 'running', 'idle'],
+    },
+    config: {},
+    error: {
+      anyOf: [
+        {
+          type: 'string',
+        },
+        {
+          type: 'null',
+        },
+      ],
+    },
+    metadata: {
+      type: 'object',
+      properties: {
+        threadId: {
+          type: 'string',
+        },
+        runId: {
+          type: 'string',
+        },
+        parentThreadId: {
+          type: 'string',
+        },
+      },
+    },
+    additionalNodeMetadata: {
+      type: 'object',
+      propertyNames: {
+        type: 'string',
+      },
+      additionalProperties: {},
+    },
+  },
+  required: ['id', 'name', 'template', 'type', 'status', 'config'],
+} as const;
+
+export const UpdateGraphDtoSchema = {
+  type: 'object',
+  properties: {
+    name: {
+      type: 'string',
+    },
+    description: {
+      anyOf: [
+        {
+          type: 'string',
+        },
+        {
+          type: 'null',
+        },
+      ],
+    },
+    schema: {
+      type: 'object',
+      properties: {
+        nodes: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              id: {
+                type: 'string',
+              },
+              template: {
+                type: 'string',
+              },
+              config: {
+                type: 'object',
+                propertyNames: {
+                  type: 'string',
+                },
+                additionalProperties: {},
+              },
+            },
+            required: ['id', 'template', 'config'],
+          },
+        },
+        edges: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              from: {
+                type: 'string',
+              },
+              to: {
+                type: 'string',
+              },
+              label: {
+                type: 'string',
+              },
+            },
+            required: ['from', 'to'],
+          },
+        },
+      },
+      required: ['nodes'],
+    },
+    metadata: {
+      anyOf: [
+        {
+          type: 'object',
+          properties: {
+            nodes: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  id: {
+                    type: 'string',
+                  },
+                  x: {
+                    type: 'number',
+                  },
+                  y: {
+                    type: 'number',
+                  },
+                  name: {
+                    type: 'string',
+                  },
+                },
+                required: ['id'],
+              },
+            },
+            zoom: {
+              type: 'number',
+            },
+            x: {
+              type: 'number',
+            },
+            y: {
+              type: 'number',
+            },
+          },
+          additionalProperties: {},
+        },
+        {
+          type: 'null',
+        },
+      ],
+    },
+    temporary: {
+      anyOf: [
+        {
+          default: false,
+          type: 'boolean',
+        },
+        {
+          type: 'null',
+        },
+      ],
+    },
+    costLimitUsd: {
+      anyOf: [
+        {
+          type: 'number',
+          minimum: 0,
+        },
+        {
+          type: 'null',
+        },
+      ],
+    },
+    currentVersion: {
+      type: 'string',
+    },
+  },
+  required: ['currentVersion'],
+  additionalProperties: false,
+} as const;
+
+export const UpdateGraphResponseDtoSchema = {
+  type: 'object',
+  properties: {
+    graph: {
+      type: 'object',
+      properties: {
+        id: {
+          type: 'string',
+          format: 'uuid',
+          pattern:
+            '^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$',
+        },
+        name: {
+          type: 'string',
+        },
+        description: {
+          anyOf: [
+            {
+              type: 'string',
+            },
+            {
+              type: 'null',
+            },
+          ],
+        },
+        error: {
+          anyOf: [
+            {
+              type: 'string',
+            },
+            {
+              type: 'null',
+            },
+          ],
+        },
+        version: {
+          type: 'string',
+        },
+        targetVersion: {
+          type: 'string',
+        },
+        schema: {
+          type: 'object',
+          properties: {
+            nodes: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  id: {
+                    type: 'string',
+                  },
+                  template: {
+                    type: 'string',
+                  },
+                  config: {
+                    type: 'object',
+                    propertyNames: {
+                      type: 'string',
+                    },
+                    additionalProperties: {},
+                  },
+                },
+                required: ['id', 'template', 'config'],
+              },
+            },
+            edges: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  from: {
+                    type: 'string',
+                  },
+                  to: {
+                    type: 'string',
+                  },
+                  label: {
+                    type: 'string',
+                  },
+                },
+                required: ['from', 'to'],
+              },
+            },
+          },
+          required: ['nodes'],
+        },
+        status: {
+          type: 'string',
+          enum: ['created', 'compiling', 'running', 'stopped', 'error'],
+        },
+        metadata: {
+          anyOf: [
+            {
+              type: 'object',
+              properties: {
+                nodes: {
+                  type: 'array',
+                  items: {
+                    type: 'object',
+                    properties: {
+                      id: {
+                        type: 'string',
+                      },
+                      x: {
+                        type: 'number',
+                      },
+                      y: {
+                        type: 'number',
+                      },
+                      name: {
+                        type: 'string',
+                      },
+                    },
+                    required: ['id'],
+                  },
+                },
+                zoom: {
+                  type: 'number',
+                },
+                x: {
+                  type: 'number',
+                },
+                y: {
+                  type: 'number',
+                },
+              },
+              additionalProperties: {},
+            },
+            {
+              type: 'null',
+            },
+          ],
+        },
+        runningThreads: {
+          default: 0,
+          type: 'integer',
+          minimum: 0,
+          maximum: 9007199254740991,
+        },
+        totalThreads: {
+          default: 0,
+          type: 'integer',
+          minimum: 0,
+          maximum: 9007199254740991,
+        },
+        createdAt: {
+          type: 'string',
+          format: 'date-time',
+          pattern:
+            '^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$',
+        },
+        updatedAt: {
+          type: 'string',
+          format: 'date-time',
+          pattern:
+            '^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$',
+        },
+        temporary: {
+          anyOf: [
+            {
+              default: false,
+              type: 'boolean',
+            },
+            {
+              type: 'null',
+            },
+          ],
+        },
+        projectId: {
+          anyOf: [
+            {
+              type: 'string',
+              format: 'uuid',
+              pattern:
+                '^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$',
+            },
+            {
+              type: 'null',
+            },
+          ],
+        },
+        settings: {
+          type: 'object',
+          propertyNames: {
+            type: 'string',
+          },
+          additionalProperties: {},
+        },
+        costLimitUsd: {
+          anyOf: [
+            {
+              type: 'number',
+              minimum: 0,
+            },
+            {
+              type: 'null',
+            },
+          ],
+        },
+      },
+      required: [
+        'id',
+        'name',
+        'version',
+        'targetVersion',
+        'schema',
+        'status',
+        'createdAt',
+        'updatedAt',
+      ],
+    },
+    revision: {
+      anyOf: [
+        {
+          type: 'object',
+          properties: {
+            id: {
+              type: 'string',
+              format: 'uuid',
+              pattern:
+                '^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$',
+            },
+            graphId: {
+              type: 'string',
+              format: 'uuid',
+              pattern:
+                '^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$',
+            },
+            baseVersion: {
+              type: 'string',
+            },
+            toVersion: {
+              type: 'string',
+            },
+            configDiff: {
+              type: 'array',
+              items: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    properties: {
+                      op: {
+                        type: 'string',
+                        const: 'add',
+                      },
+                      path: {
+                        type: 'string',
+                      },
+                      value: {},
+                    },
+                    required: ['op', 'path', 'value'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      op: {
+                        type: 'string',
+                        const: 'remove',
+                      },
+                      path: {
+                        type: 'string',
+                      },
+                    },
+                    required: ['op', 'path'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      op: {
+                        type: 'string',
+                        const: 'replace',
+                      },
+                      path: {
+                        type: 'string',
+                      },
+                      value: {},
+                    },
+                    required: ['op', 'path', 'value'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      op: {
+                        type: 'string',
+                        const: 'move',
+                      },
+                      from: {
+                        type: 'string',
+                      },
+                      path: {
+                        type: 'string',
+                      },
+                    },
+                    required: ['op', 'from', 'path'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      op: {
+                        type: 'string',
+                        const: 'copy',
+                      },
+                      from: {
+                        type: 'string',
+                      },
+                      path: {
+                        type: 'string',
+                      },
+                    },
+                    required: ['op', 'from', 'path'],
+                  },
+                  {
+                    type: 'object',
+                    properties: {
+                      op: {
+                        type: 'string',
+                        const: 'test',
+                      },
+                      path: {
+                        type: 'string',
+                      },
+                      value: {},
+                    },
+                    required: ['op', 'path', 'value'],
+                  },
+                ],
+              },
+            },
+            clientConfig: {
+              type: 'object',
+              properties: {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    nodes: {
+                      type: 'array',
+                      items: {
+                        type: 'object',
+                        properties: {
+                          id: {
+                            type: 'string',
+                          },
+                          template: {
+                            type: 'string',
+                          },
+                          config: {
+                            type: 'object',
+                            propertyNames: {
+                              type: 'string',
+                            },
+                            additionalProperties: {},
+                          },
+                        },
+                        required: ['id', 'template', 'config'],
+                      },
+                    },
+                    edges: {
+                      type: 'array',
+                      items: {
+                        type: 'object',
+                        properties: {
+                          from: {
+                            type: 'string',
+                          },
+                          to: {
+                            type: 'string',
+                          },
+                          label: {
+                            type: 'string',
+                          },
+                        },
+                        required: ['from', 'to'],
+                      },
+                    },
+                  },
+                  required: ['nodes'],
+                },
+                name: {
+                  type: 'string',
+                },
+                description: {
+                  anyOf: [
+                    {
+                      type: 'string',
+                    },
+                    {
+                      type: 'null',
+                    },
+                  ],
+                },
+                temporary: {
+                  type: 'boolean',
+                },
+              },
+              required: ['schema', 'name', 'description', 'temporary'],
+            },
+            newConfig: {
+              type: 'object',
+              properties: {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    nodes: {
+                      type: 'array',
+                      items: {
+                        type: 'object',
+                        properties: {
+                          id: {
+                            type: 'string',
+                          },
+                          template: {
+                            type: 'string',
+                          },
+                          config: {
+                            type: 'object',
+                            propertyNames: {
+                              type: 'string',
+                            },
+                            additionalProperties: {},
+                          },
+                        },
+                        required: ['id', 'template', 'config'],
+                      },
+                    },
+                    edges: {
+                      type: 'array',
+                      items: {
+                        type: 'object',
+                        properties: {
+                          from: {
+                            type: 'string',
+                          },
+                          to: {
+                            type: 'string',
+                          },
+                          label: {
+                            type: 'string',
+                          },
+                        },
+                        required: ['from', 'to'],
+                      },
+                    },
+                  },
+                  required: ['nodes'],
+                },
+                name: {
+                  type: 'string',
+                },
+                description: {
+                  anyOf: [
+                    {
+                      type: 'string',
+                    },
+                    {
+                      type: 'null',
+                    },
+                  ],
+                },
+                temporary: {
+                  type: 'boolean',
+                },
+              },
+              required: ['schema', 'name', 'description', 'temporary'],
+            },
+            status: {
+              type: 'string',
+              enum: ['pending', 'applying', 'applied', 'failed'],
+            },
+            error: {
+              type: 'string',
+            },
+            createdAt: {
+              type: 'string',
+              format: 'date-time',
+              pattern:
+                '^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$',
+            },
+            updatedAt: {
+              type: 'string',
+              format: 'date-time',
+              pattern:
+                '^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$',
+            },
+          },
+          required: [
+            'id',
+            'graphId',
+            'baseVersion',
+            'toVersion',
+            'configDiff',
+            'clientConfig',
+            'newConfig',
+            'status',
+            'createdAt',
+            'updatedAt',
+          ],
+        },
+        {
+          type: 'null',
+        },
+      ],
+    },
+  },
+  required: ['graph'],
+} as const;
+
+export const ExecuteTriggerDtoSchema = {
+  type: 'object',
+  properties: {
+    messages: {
+      minItems: 1,
+      type: 'array',
+      items: {
+        anyOf: [
+          {
+            type: 'string',
+          },
+          {
+            type: 'object',
+            properties: {
+              content: {
+                minItems: 1,
+                type: 'array',
+                items: {
+                  oneOf: [
+                    {
+                      type: 'object',
+                      properties: {
+                        type: {
+                          type: 'string',
+                          const: 'text',
+                        },
+                        text: {
+                          type: 'string',
+                          minLength: 1,
+                        },
+                      },
+                      required: ['type', 'text'],
+                    },
+                    {
+                      type: 'object',
+                      properties: {
+                        type: {
+                          type: 'string',
+                          const: 'image_url',
+                        },
+                        image_url: {
+                          type: 'object',
+                          properties: {
+                            url: {
+                              type: 'string',
+                            },
+                            detail: {
+                              default: 'auto',
+                              type: 'string',
+                              enum: ['auto', 'low', 'high'],
+                            },
+                          },
+                          required: ['url'],
+                        },
+                      },
+                      required: ['type', 'image_url'],
+                    },
+                  ],
+                },
+              },
+            },
+            required: ['content'],
+          },
+        ],
+      },
+    },
+    threadSubId: {
+      type: 'string',
+    },
+    async: {
+      type: 'boolean',
+    },
+    metadata: {
+      type: 'object',
+      propertyNames: {
+        type: 'string',
+      },
+      additionalProperties: {},
+    },
+  },
+  required: ['messages'],
+} as const;
+
+export const ExecuteTriggerResponseDtoSchema = {
+  type: 'object',
+  properties: {
+    externalThreadId: {
+      type: 'string',
+    },
+    checkpointNs: {
+      type: 'string',
+    },
+  },
+  required: ['externalThreadId'],
+} as const;
+
+export const GraphRevisionDtoSchema = {
+  type: 'object',
+  properties: {
+    id: {
+      type: 'string',
+      format: 'uuid',
+      pattern:
+        '^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$',
+    },
+    graphId: {
+      type: 'string',
+      format: 'uuid',
+      pattern:
+        '^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$',
+    },
+    baseVersion: {
+      type: 'string',
+    },
+    toVersion: {
+      type: 'string',
+    },
+    configDiff: {
+      type: 'array',
+      items: {
+        oneOf: [
+          {
+            type: 'object',
+            properties: {
+              op: {
+                type: 'string',
+                const: 'add',
+              },
+              path: {
+                type: 'string',
+              },
+              value: {},
+            },
+            required: ['op', 'path', 'value'],
+          },
+          {
+            type: 'object',
+            properties: {
+              op: {
+                type: 'string',
+                const: 'remove',
+              },
+              path: {
+                type: 'string',
+              },
+            },
+            required: ['op', 'path'],
+          },
+          {
+            type: 'object',
+            properties: {
+              op: {
+                type: 'string',
+                const: 'replace',
+              },
+              path: {
+                type: 'string',
+              },
+              value: {},
+            },
+            required: ['op', 'path', 'value'],
+          },
+          {
+            type: 'object',
+            properties: {
+              op: {
+                type: 'string',
+                const: 'move',
+              },
+              from: {
+                type: 'string',
+              },
+              path: {
+                type: 'string',
+              },
+            },
+            required: ['op', 'from', 'path'],
+          },
+          {
+            type: 'object',
+            properties: {
+              op: {
+                type: 'string',
+                const: 'copy',
+              },
+              from: {
+                type: 'string',
+              },
+              path: {
+                type: 'string',
+              },
+            },
+            required: ['op', 'from', 'path'],
+          },
+          {
+            type: 'object',
+            properties: {
+              op: {
+                type: 'string',
+                const: 'test',
+              },
+              path: {
+                type: 'string',
+              },
+              value: {},
+            },
+            required: ['op', 'path', 'value'],
+          },
+        ],
+      },
+    },
+    clientConfig: {
+      type: 'object',
+      properties: {
+        schema: {
+          type: 'object',
+          properties: {
+            nodes: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  id: {
+                    type: 'string',
+                  },
+                  template: {
+                    type: 'string',
+                  },
+                  config: {
+                    type: 'object',
+                    propertyNames: {
+                      type: 'string',
+                    },
+                    additionalProperties: {},
+                  },
+                },
+                required: ['id', 'template', 'config'],
+              },
+            },
+            edges: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  from: {
+                    type: 'string',
+                  },
+                  to: {
+                    type: 'string',
+                  },
+                  label: {
+                    type: 'string',
+                  },
+                },
+                required: ['from', 'to'],
+              },
+            },
+          },
+          required: ['nodes'],
+        },
+        name: {
+          type: 'string',
+        },
+        description: {
+          anyOf: [
+            {
+              type: 'string',
+            },
+            {
+              type: 'null',
+            },
+          ],
+        },
+        temporary: {
+          type: 'boolean',
+        },
+      },
+      required: ['schema', 'name', 'description', 'temporary'],
+    },
+    newConfig: {
+      type: 'object',
+      properties: {
+        schema: {
+          type: 'object',
+          properties: {
+            nodes: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  id: {
+                    type: 'string',
+                  },
+                  template: {
+                    type: 'string',
+                  },
+                  config: {
+                    type: 'object',
+                    propertyNames: {
+                      type: 'string',
+                    },
+                    additionalProperties: {},
+                  },
+                },
+                required: ['id', 'template', 'config'],
+              },
+            },
+            edges: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  from: {
+                    type: 'string',
+                  },
+                  to: {
+                    type: 'string',
+                  },
+                  label: {
+                    type: 'string',
+                  },
+                },
+                required: ['from', 'to'],
+              },
+            },
+          },
+          required: ['nodes'],
+        },
+        name: {
+          type: 'string',
+        },
+        description: {
+          anyOf: [
+            {
+              type: 'string',
+            },
+            {
+              type: 'null',
+            },
+          ],
+        },
+        temporary: {
+          type: 'boolean',
+        },
+      },
+      required: ['schema', 'name', 'description', 'temporary'],
+    },
+    status: {
+      type: 'string',
+      enum: ['pending', 'applying', 'applied', 'failed'],
+    },
+    error: {
+      type: 'string',
+    },
+    createdAt: {
+      type: 'string',
+      format: 'date-time',
+      pattern:
+        '^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$',
+    },
+    updatedAt: {
+      type: 'string',
+      format: 'date-time',
+      pattern:
+        '^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$',
+    },
+  },
+  required: [
+    'id',
+    'graphId',
+    'baseVersion',
+    'toVersion',
+    'configDiff',
+    'clientConfig',
+    'newConfig',
+    'status',
+    'createdAt',
+    'updatedAt',
+  ],
+} as const;
+
+export const TemplateDtoSchema = {
+  type: 'object',
+  properties: {
+    id: {
+      type: 'string',
+    },
+    name: {
+      type: 'string',
+    },
+    description: {
+      type: 'string',
+    },
+    kind: {
+      type: 'string',
+      enum: [
+        'runtime',
+        'tool',
+        'simpleAgent',
+        'trigger',
+        'resource',
+        'mcp',
+        'instruction',
+      ],
+    },
+    schema: {
+      type: 'object',
+      propertyNames: {
+        type: 'string',
+      },
+      additionalProperties: {},
+    },
+    inputs: {
+      type: 'array',
+      items: {
+        oneOf: [
+          {
+            type: 'object',
+            properties: {
+              type: {
+                type: 'string',
+                const: 'kind',
+              },
+              value: {
+                type: 'string',
+                enum: [
+                  'runtime',
+                  'tool',
+                  'simpleAgent',
+                  'trigger',
+                  'resource',
+                  'mcp',
+                  'instruction',
+                ],
+              },
+              required: {
+                type: 'boolean',
+              },
+              multiple: {
+                type: 'boolean',
+              },
+            },
+            required: ['type', 'value', 'multiple'],
+          },
+          {
+            type: 'object',
+            properties: {
+              type: {
+                type: 'string',
+                const: 'template',
+              },
+              value: {
+                type: 'string',
+              },
+              required: {
+                type: 'boolean',
+              },
+              multiple: {
+                type: 'boolean',
+              },
+            },
+            required: ['type', 'value', 'multiple'],
+          },
+        ],
+      },
+    },
+    outputs: {
+      type: 'array',
+      items: {
+        oneOf: [
+          {
+            type: 'object',
+            properties: {
+              type: {
+                type: 'string',
+                const: 'kind',
+              },
+              value: {
+                type: 'string',
+                enum: [
+                  'runtime',
+                  'tool',
+                  'simpleAgent',
+                  'trigger',
+                  'resource',
+                  'mcp',
+                  'instruction',
+                ],
+              },
+              required: {
+                type: 'boolean',
+              },
+              multiple: {
+                type: 'boolean',
+              },
+            },
+            required: ['type', 'value', 'multiple'],
+          },
+          {
+            type: 'object',
+            properties: {
+              type: {
+                type: 'string',
+                const: 'template',
+              },
+              value: {
+                type: 'string',
+              },
+              required: {
+                type: 'boolean',
+              },
+              multiple: {
+                type: 'boolean',
+              },
+            },
+            required: ['type', 'value', 'multiple'],
+          },
+        ],
+      },
+    },
+    systemAgentId: {
+      type: 'string',
+    },
+    systemAgentContentHash: {
+      type: 'string',
+    },
+    systemAgentPredefinedTools: {
+      type: 'array',
+      items: {
+        type: 'string',
+      },
+    },
+    instructionBlockId: {
+      type: 'string',
+    },
+    instructionBlockContentHash: {
+      type: 'string',
+    },
+  },
+  required: ['id', 'name', 'description', 'kind', 'schema'],
+} as const;
+
 export const CreateSecretDtoSchema = {
   type: 'object',
   properties: {
@@ -4283,6 +4291,167 @@ export const UpdateSecretDtoSchema = {
       ],
     },
   },
+} as const;
+
+export const SuggestAgentInstructionsDtoSchema = {
+  type: 'object',
+  properties: {
+    userRequest: {
+      type: 'string',
+      minLength: 1,
+    },
+    threadId: {
+      type: 'string',
+    },
+    model: {
+      type: 'string',
+      minLength: 1,
+    },
+  },
+  required: ['userRequest'],
+} as const;
+
+export const SuggestAgentInstructionsResponseDtoSchema = {
+  type: 'object',
+  properties: {
+    instructions: {
+      type: 'string',
+    },
+    threadId: {
+      type: 'string',
+    },
+  },
+  required: ['instructions', 'threadId'],
+} as const;
+
+export const SuggestGraphInstructionsDtoSchema = {
+  type: 'object',
+  properties: {
+    userRequest: {
+      type: 'string',
+      minLength: 1,
+    },
+    model: {
+      type: 'string',
+      minLength: 1,
+    },
+  },
+  required: ['userRequest'],
+} as const;
+
+export const SuggestGraphInstructionsResponseDtoSchema = {
+  type: 'object',
+  properties: {
+    updates: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          nodeId: {
+            type: 'string',
+            minLength: 1,
+          },
+          name: {
+            type: 'string',
+            minLength: 1,
+          },
+          instructions: {
+            type: 'string',
+            minLength: 1,
+          },
+        },
+        required: ['nodeId', 'instructions'],
+      },
+    },
+  },
+  required: ['updates'],
+} as const;
+
+export const ThreadAnalysisRequestDtoSchema = {
+  type: 'object',
+  properties: {
+    userInput: {
+      type: 'string',
+      minLength: 1,
+      maxLength: 5000,
+    },
+    threadId: {
+      type: 'string',
+    },
+    model: {
+      type: 'string',
+      minLength: 1,
+    },
+  },
+} as const;
+
+export const ThreadAnalysisResponseDtoSchema = {
+  type: 'object',
+  properties: {
+    analysis: {
+      type: 'string',
+    },
+    conversationId: {
+      type: 'string',
+    },
+  },
+  required: ['analysis', 'conversationId'],
+} as const;
+
+export const KnowledgeContentSuggestionRequestDtoSchema = {
+  type: 'object',
+  properties: {
+    userRequest: {
+      type: 'string',
+      minLength: 1,
+    },
+    currentTitle: {
+      type: 'string',
+    },
+    currentContent: {
+      type: 'string',
+    },
+    currentTags: {
+      type: 'array',
+      items: {
+        type: 'string',
+        minLength: 1,
+      },
+    },
+    threadId: {
+      type: 'string',
+    },
+    model: {
+      type: 'string',
+      minLength: 1,
+    },
+  },
+  required: ['userRequest'],
+} as const;
+
+export const KnowledgeContentSuggestionResponseDtoSchema = {
+  type: 'object',
+  properties: {
+    title: {
+      type: 'string',
+      minLength: 1,
+    },
+    content: {
+      type: 'string',
+      minLength: 1,
+    },
+    tags: {
+      type: 'array',
+      items: {
+        type: 'string',
+        minLength: 1,
+      },
+    },
+    threadId: {
+      type: 'string',
+    },
+  },
+  required: ['title', 'content', 'threadId'],
 } as const;
 
 export const AnalyticsOverviewDtoSchema = {

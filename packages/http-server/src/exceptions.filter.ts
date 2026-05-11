@@ -1,7 +1,7 @@
 import {
-  ArgumentsHost,
+  type ArgumentsHost,
   Catch,
-  HttpServer,
+  type HttpServer,
   type INestApplication,
 } from '@nestjs/common';
 import {
@@ -10,7 +10,7 @@ import {
   HttpAdapterHost,
 } from '@nestjs/core';
 import { BaseLogger, Logger, SentryService } from '@packages/common';
-import { FastifyRequest } from 'fastify';
+import type { FastifyRequest } from 'fastify';
 
 import { RequestContextService } from './context';
 import { ExceptionHandler } from './exception-handler';
