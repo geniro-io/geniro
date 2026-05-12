@@ -27,9 +27,9 @@ export type ThreadStoreDeleteToolSchemaType = z.infer<
   typeof ThreadStoreDeleteToolSchema
 >;
 
-export interface ThreadStoreDeleteToolOutput {
+export type ThreadStoreDeleteToolOutput = {
   success: boolean;
-}
+};
 
 @Injectable()
 export class ThreadStoreDeleteTool extends ThreadStoreBaseTool<

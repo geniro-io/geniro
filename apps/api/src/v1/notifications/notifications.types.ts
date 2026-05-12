@@ -14,7 +14,10 @@ import {
   RuntimeInstanceStatus,
   RuntimeStartingPhase,
 } from '../runtime/runtime.types';
-import { ThreadStoreEntryMode } from '../thread-store/thread-store.types';
+import {
+  ThreadStoreAction,
+  ThreadStoreEntryMode,
+} from '../thread-store/thread-store.types';
 import { ThreadSchema } from '../threads/dto/threads.dto';
 import { ThreadEntity } from '../threads/entity/thread.entity';
 import { ThreadStatus } from '../threads/threads.types';
@@ -310,12 +313,15 @@ export type IGraphPreviewNotification = z.infer<
   typeof GraphPreviewNotificationSchema
 >;
 
+// externalThreadId is intentionally duplicated in envelope.threadId (Socket.io routing key)
+// and data.externalThreadId (payload-level external identity for consumers). Removing
+// data.externalThreadId would break ThreadStorePanel's notification.data path.
 export const ThreadStoreUpdateDataSchema = z.object({
   externalThreadId: z.string(),
   namespace: z.string(),
   key: z.string(),
   mode: z.nativeEnum(ThreadStoreEntryMode),
-  action: z.union([z.literal('put'), z.literal('append'), z.literal('delete')]),
+  action: z.nativeEnum(ThreadStoreAction),
   authorAgentId: z.string().nullable().optional(),
 });
 export const ThreadStoreUpdateNotificationSchema = z.object({

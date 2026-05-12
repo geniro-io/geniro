@@ -73,6 +73,17 @@ describe('SubagentsRunTaskTool', () => {
       makeMockSubTool('files_read'),
       makeMockSubTool('files_write'),
     ]);
+    toolSets.set('thread-store:read-only', [
+      makeMockSubTool('thread_store_get'),
+      makeMockSubTool('thread_store_list'),
+    ]);
+    toolSets.set('thread-store:full', [
+      makeMockSubTool('thread_store_put'),
+      makeMockSubTool('thread_store_append'),
+      makeMockSubTool('thread_store_get'),
+      makeMockSubTool('thread_store_list'),
+      makeMockSubTool('thread_store_delete'),
+    ]);
     return toolSets;
   };
 
@@ -179,9 +190,16 @@ describe('SubagentsRunTaskTool', () => {
         defaultCfg,
       );
 
-      // Explorer has toolIds: ['shell:read-only', 'files:read-only']
-      // shell:read-only = 1 tool, files:read-only = 2 tools
-      expect(mockSubAgent.addTool).toHaveBeenCalledTimes(3);
+      // Explorer has toolIds: ['shell:read-only', 'files:read-only', 'thread-store:read-only']
+      // shell:read-only = 1 tool, files:read-only = 2 tools, thread-store:read-only = 2 tools
+      expect(mockSubAgent.addTool).toHaveBeenCalledTimes(5);
+      const addedToolNames = mockSubAgent.addTool.mock.calls.map(
+        (call) => (call[0] as BuiltAgentTool).name,
+      );
+      expect(addedToolNames).toEqual(
+        expect.arrayContaining(['thread_store_get', 'thread_store_list']),
+      );
+      expect(addedToolNames).not.toContain('thread_store_put');
     });
 
     it('should resolve simple agent tools via addTool', async () => {
@@ -195,9 +213,21 @@ describe('SubagentsRunTaskTool', () => {
         defaultCfg,
       );
 
-      // Simple has toolIds: ['shell', 'files:full']
-      // shell = 1 tool, files:full = 3 tools
-      expect(mockSubAgent.addTool).toHaveBeenCalledTimes(4);
+      // Simple has toolIds: ['shell', 'files:full', 'thread-store:full']
+      // shell = 1 tool, files:full = 3 tools, thread-store:full = 5 tools
+      expect(mockSubAgent.addTool).toHaveBeenCalledTimes(9);
+      const addedToolNames = mockSubAgent.addTool.mock.calls.map(
+        (call) => (call[0] as BuiltAgentTool).name,
+      );
+      expect(addedToolNames).toEqual(
+        expect.arrayContaining([
+          'thread_store_put',
+          'thread_store_append',
+          'thread_store_get',
+          'thread_store_list',
+          'thread_store_delete',
+        ]),
+      );
     });
   });
 

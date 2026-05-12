@@ -129,6 +129,28 @@ describe('ThreadStorePutTool', () => {
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 
+  it('persists authorAgentId from caller_agent.getConfig().name when getConfig succeeds', async () => {
+    const callerAgent = {
+      getConfig: vi.fn(() => ({ name: 'MySubagent' })),
+    };
+
+    await tool.invoke(
+      { namespace: 'ns', key: 'k', value: 'v' },
+      {},
+      buildCfg({
+        caller_agent:
+          callerAgent as unknown as Required<BaseAgentConfigurable>['caller_agent'],
+      }),
+    );
+
+    expect(service.putForUser).toHaveBeenCalledWith(
+      'user-1',
+      PROJECT_ID,
+      THREAD_INTERNAL_ID,
+      expect.objectContaining({ authorAgentId: 'MySubagent' }),
+    );
+  });
+
   it('falls back to node_id author when caller_agent.getConfig() throws (e.g. uninitialized agent config)', async () => {
     // Agents emit `getConfig()` throwing 'Agent config not initialized' when
     // the framework instantiates the agent shell before the LangGraph runtime
@@ -149,9 +171,8 @@ describe('ThreadStorePutTool', () => {
       // Cast required: caller_agent is typed as BaseAgent but we only need
       // the getConfig() shape that resolveContext touches.
       buildCfg({
-        caller_agent: callerAgent as unknown as Required<
-          BaseAgentConfigurable
-        >['caller_agent'],
+        caller_agent:
+          callerAgent as unknown as Required<BaseAgentConfigurable>['caller_agent'],
       }),
     );
 

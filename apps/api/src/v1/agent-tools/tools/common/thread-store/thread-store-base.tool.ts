@@ -87,10 +87,16 @@ export abstract class ThreadStoreBaseTool<
   ): string {
     const callerAgent = cfg.configurable?.caller_agent;
     if (callerAgent) {
-      const agentConfig = callerAgent.getConfig() as Record<string, unknown>;
-      const name = agentConfig?.name;
-      if (typeof name === 'string' && name.length > 0) {
-        return name;
+      try {
+        const agentConfig = callerAgent.getConfig() as Record<string, unknown>;
+        const name = agentConfig?.name;
+        if (typeof name === 'string' && name.length > 0) {
+          return name;
+        }
+      } catch {
+        // getConfig() may throw when the agent config has not yet been
+        // initialized (e.g. during subagent boot ordering). Fall through to
+        // the node_id fallback below.
       }
     }
     const nodeId = cfg.configurable?.node_id;

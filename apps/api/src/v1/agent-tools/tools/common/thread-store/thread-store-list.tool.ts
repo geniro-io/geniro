@@ -12,12 +12,12 @@ import {
   ExtendedLangGraphRunnableConfig,
   ToolInvokeResult,
 } from '../../base-tool';
-import { ThreadStoreEntryOutput } from './thread-store.tool-types';
-import { toEntryOutput } from './thread-store.tool-utils';
 import {
   ThreadStoreBaseTool,
   ThreadStoreBaseToolConfig,
 } from './thread-store-base.tool';
+import { toEntryOutput } from './thread-store-tool-utils';
+import { ThreadStoreEntryOutput } from './thread-store-tools.types';
 
 export const ThreadStoreListToolSchema = z.object({
   namespace: namespaceSchema
@@ -48,12 +48,12 @@ export type ThreadStoreListToolSchemaType = z.infer<
   typeof ThreadStoreListToolSchema
 >;
 
-export interface ThreadStoreListToolOutput {
+export type ThreadStoreListToolOutput = {
   namespaces?: NamespaceSummary[];
   entries?: ThreadStoreEntryOutput[];
   totalCount?: number;
   truncated?: boolean;
-}
+};
 
 @Injectable()
 export class ThreadStoreListTool extends ThreadStoreBaseTool<
@@ -64,7 +64,7 @@ export class ThreadStoreListTool extends ThreadStoreBaseTool<
   public description =
     "Discover what is in the current thread's shared store. " +
     'Without a namespace, returns a summary of every namespace with entry counts. ' +
-    'With a namespace, returns the entries (newest first, capped by limit). ' +
+    'With a namespace, returns the entries (oldest first for append-mode, newest first for kv-mode, capped by limit). ' +
     'Prefer thread_store_get when you already know the exact key -- listing everything wastes context.';
 
   public get schema() {
@@ -86,8 +86,9 @@ export class ThreadStoreListTool extends ThreadStoreBaseTool<
       Two modes:
       - **Summary mode (no namespace)**: returns \`namespaces: [{namespace, entryCount, lastUpdatedAt}, ...]\`.
         Use this as a cheap first call to see what's available.
-      - **Entries mode (namespace provided)**: returns \`entries: [...]\` sorted by createdAt DESC,
-        along with \`totalCount\` and \`truncated\` to indicate whether more entries exist.
+      - **Entries mode (namespace provided)**: returns \`entries: [...]\` sorted by createdAt ASC for
+        append-mode namespaces, DESC for kv-mode, along with \`totalCount\` and \`truncated\` to
+        indicate whether more entries exist.
 
       ### Efficiency Rules
       - Do NOT list entries at the top of every turn — you'll blow up your context window.
@@ -122,7 +123,7 @@ export class ThreadStoreListTool extends ThreadStoreBaseTool<
     const limit = args.limit ?? 50;
     const offset = args.offset ?? 0;
 
-    const [entries, namespaces] = await Promise.all([
+    const [entries, totalCount] = await Promise.all([
       this.threadStoreService.listEntriesForUser(
         userId,
         projectId,
@@ -130,18 +131,15 @@ export class ThreadStoreListTool extends ThreadStoreBaseTool<
         args.namespace,
         { limit, offset },
       ),
-      this.threadStoreService.listNamespacesForUser(
+      this.threadStoreService.countEntriesForUser(
         userId,
         projectId,
         internalThreadId,
+        args.namespace,
       ),
     ]);
 
-    const namespaceSummary = namespaces.find(
-      (ns) => ns.namespace === args.namespace,
-    );
-    const totalCount = namespaceSummary?.entryCount ?? entries.length;
-    const truncated = entries.length >= limit;
+    const truncated = offset + entries.length < totalCount;
 
     return {
       output: {

@@ -45,6 +45,7 @@ export type ThreadStoreEntry = z.infer<typeof ThreadStoreEntryDtoSchema>;
 
 export const NamespaceSummaryDtoSchema = z.object({
   namespace: z.string(),
+  mode: z.nativeEnum(ThreadStoreEntryMode),
   entryCount: z.number().int().nonnegative(),
   lastUpdatedAt: z.string().datetime(),
 });

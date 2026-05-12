@@ -42,11 +42,11 @@ export type ThreadStorePutToolSchemaType = z.infer<
   typeof ThreadStorePutToolSchema
 >;
 
-export interface ThreadStorePutToolOutput {
+export type ThreadStorePutToolOutput = {
   id: string;
   namespace: string;
   key: string;
-}
+};
 
 @Injectable()
 export class ThreadStorePutTool extends ThreadStoreBaseTool<

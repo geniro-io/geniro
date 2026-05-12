@@ -250,13 +250,6 @@ describe('SimpleAgent', () => {
     });
   });
 
-  describe('buildState', () => {
-    it('should have buildState method available', () => {
-      // buildState is a private method, just test that the agent has the method
-      expect(typeof agent['buildState']).toBe('function');
-    });
-  });
-
   describe('run', () => {
     it('should execute agent with valid configuration', async () => {
       const mockMessages = [new HumanMessage('Response')];
@@ -651,13 +644,6 @@ describe('SimpleAgent', () => {
     });
   });
 
-  describe('buildGraph', () => {
-    it('should have buildGraph method available', () => {
-      // buildGraph is a private method, just test that the agent has the method
-      expect(typeof agent['buildGraph']).toBe('function');
-    });
-  });
-
   describe('stop', () => {
     it('should handle stop when no active runs exist', async () => {
       // Verify no active runs
@@ -676,7 +662,7 @@ describe('SimpleAgent', () => {
     it('should handle abort errors gracefully during stream processing', async () => {
       const mockGraph = {
         stream: vi.fn(),
-      } as unknown as { stream: any };
+      } as unknown as { stream: ReturnType<typeof vi.fn> };
 
       async function* mockStream() {
         yield [

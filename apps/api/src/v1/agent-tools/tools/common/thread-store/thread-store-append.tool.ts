@@ -35,11 +35,11 @@ export type ThreadStoreAppendToolSchemaType = z.infer<
   typeof ThreadStoreAppendToolSchema
 >;
 
-export interface ThreadStoreAppendToolOutput {
+export type ThreadStoreAppendToolOutput = {
   id: string;
   namespace: string;
   key: string;
-}
+};
 
 @Injectable()
 export class ThreadStoreAppendTool extends ThreadStoreBaseTool<

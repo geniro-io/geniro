@@ -23,9 +23,11 @@ export function toPostgresArrayLiteral(
   }
 
   const elements = tags.map((tag) => {
-    // Elements that need quoting: contain special chars or are the NULL keyword
+    // Elements that need quoting: empty string, contain special chars, or are the NULL keyword
     const needsQuoting =
-      /[,{}\\"'\s]/.test(tag) || tag.toUpperCase() === 'NULL';
+      tag.length === 0 ||
+      /[,{}\\"'\s]/.test(tag) ||
+      tag.toUpperCase() === 'NULL';
 
     if (needsQuoting) {
       // Escape backslashes then double-quotes

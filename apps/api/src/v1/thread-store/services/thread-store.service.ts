@@ -21,6 +21,7 @@ import {
   PutEntryInput,
   THREAD_STORE_MAX_ENTRIES_PER_NAMESPACE,
   THREAD_STORE_MAX_VALUE_BYTES,
+  ThreadStoreAction,
   ThreadStoreEntryMode,
 } from '../thread-store.types';
 
@@ -159,7 +160,7 @@ export class ThreadStoreService {
       }
     });
 
-    await this.emitUpdate(thread, entry, 'put');
+    await this.emitUpdate(thread, entry, ThreadStoreAction.Put);
     return this.toDto(entry);
   }
 
@@ -185,7 +186,6 @@ export class ThreadStoreService {
 
       entry = await this.threadStoreDao.create(
         {
-          thread,
           threadId: thread.id,
           namespace: input.namespace,
           key: generatedKey,
@@ -209,7 +209,7 @@ export class ThreadStoreService {
       }
     });
 
-    await this.emitUpdate(thread, entry, 'append');
+    await this.emitUpdate(thread, entry, ThreadStoreAction.Append);
     return this.toDto(entry);
   }
 
@@ -234,11 +234,23 @@ export class ThreadStoreService {
     const summaries = await this.threadStoreDao.getNamespaceSummaries(threadId);
     return summaries.map((s) => ({
       namespace: s.namespace,
+      mode: s.mode,
       entryCount: s.entryCount,
       lastUpdatedAt: s.lastUpdatedAt.toISOString(),
     }));
   }
 
+  /**
+   * Lists entries in a namespace for the given user.
+   *
+   * Sort order is mode-aware:
+   * - Append-mode namespaces are sorted ASC (oldest first) so callers read the
+   *   log in chronological order.
+   * - KV-mode namespaces are sorted DESC (most-recently-updated first), which
+   *   surfaces the freshest keys for quick inspection.
+   * - If the namespace has no entries yet (summary lookup misses), DESC is used
+   *   as a safe default.
+   */
   async listEntriesForUser(
     userId: string,
     projectId: string,
@@ -247,12 +259,28 @@ export class ThreadStoreService {
     query?: ListEntriesQuery,
   ): Promise<ThreadStoreEntry[]> {
     await this.getOwnedThread(userId, projectId, threadId);
+
+    const summaries = await this.threadStoreDao.getNamespaceSummaries(threadId);
+    const summary = summaries.find((s) => s.namespace === namespace);
+    const order =
+      summary?.mode === ThreadStoreEntryMode.Append ? 'ASC' : 'DESC';
+
     const entities = await this.threadStoreDao.listInNamespace(
       threadId,
       namespace,
-      { limit: query?.limit, offset: query?.offset },
+      { limit: query?.limit, offset: query?.offset, order },
     );
     return entities.map((entity) => this.toDto(entity));
+  }
+
+  async countEntriesForUser(
+    userId: string,
+    projectId: string,
+    threadId: string,
+    namespace: string,
+  ): Promise<number> {
+    await this.getOwnedThread(userId, projectId, threadId);
+    return await this.threadStoreDao.countForNamespace(threadId, namespace);
   }
 
   async deleteForUser(
@@ -274,7 +302,7 @@ export class ThreadStoreService {
       );
     }
     await this.threadStoreDao.deleteById(entity.id);
-    await this.emitUpdate(thread, entity, 'delete');
+    await this.emitUpdate(thread, entity, ThreadStoreAction.Delete);
   }
 
   /**
@@ -344,6 +372,7 @@ export class ThreadStoreService {
       }
     }
 
+    // Soft-deleted KV key resurrection (deletedAt set) consumes a capacity slot — getByKey honors the default softDelete filter, so resurrection always falls through to the count check. Intentional per the C1 capacity-guard design.
     const count = await this.threadStoreDao.countForNamespace(
       threadId,
       namespace,
@@ -360,7 +389,7 @@ export class ThreadStoreService {
   private async emitUpdate(
     thread: ThreadEntity,
     entity: ThreadStoreEntryEntity,
-    action: 'put' | 'append' | 'delete',
+    action: ThreadStoreAction,
   ): Promise<void> {
     await this.notificationsService.emit({
       type: NotificationEvent.ThreadStoreUpdate,

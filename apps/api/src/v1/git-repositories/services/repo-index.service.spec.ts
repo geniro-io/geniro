@@ -352,6 +352,15 @@ describe('RepoIndexService', () => {
 
       mockRepoIndexDao.getOne.mockResolvedValue(existingEntity);
 
+      const callOrder: string[] = [];
+      mockRepoIndexQueueService.addIndexJob.mockImplementation(async () => {
+        callOrder.push('addIndexJob');
+      });
+      mockRepoIndexDao.updateById.mockImplementation(async () => {
+        callOrder.push('updateById');
+        return 1;
+      });
+
       const result = await service.getOrInitIndexForRepo(baseParams);
 
       expect(result.status).toBe('in_progress');
@@ -364,6 +373,7 @@ describe('RepoIndexService', () => {
         repoUrl: baseParams.repoUrl,
         branch: baseParams.branch,
       });
+      expect(callOrder).toEqual(['addIndexJob', 'updateById']);
     });
 
     it('does not re-enqueue when pending row is within staleness window', async () => {
@@ -457,20 +467,23 @@ describe('RepoIndexService', () => {
 
       expect(result.status).toBe('in_progress');
       expect(mockRepoIndexQueueService.addIndexJob).not.toHaveBeenCalled();
+      expect(mockRepoIndexDao.updateById).not.toHaveBeenCalledWith(
+        'active-stale-inprogress',
+        expect.objectContaining({ status: RepoIndexStatus.Pending }),
+      );
     });
 
-    it('retries the repair on the next call when the first repair fails after updateById refreshed updatedAt', async () => {
-      // MikroORM's @Property onUpdate auto-refreshes `updatedAt` whenever a
-      // row is persisted. The repair path performs updateById(status: Pending,
-      // errorMessage: null) BEFORE calling addIndexJob — if addIndexJob then
-      // rejects (Redis flaky), the row in the DB has a fresh updatedAt even
-      // though no repair actually happened. Faithful to that DB behavior, we
-      // mock updateById to bump existingEntity.updatedAt to now().
+    it('retries the repair on the next call when the first repair fails without refreshing updatedAt', async () => {
+      // The repair path calls addIndexJob FIRST and only runs updateById on
+      // success. If addIndexJob rejects (Redis flaky), updateById is never
+      // reached so updatedAt is NOT bumped. The row remains semantically stale
+      // (old updatedAt, status Pending), so the next call will detect it as
+      // stale again and retry the repair once Redis recovers.
       //
-      // The repair-path comment explicitly promises: "if Redis is flaky and
-      // `addIndexJob` throws after `updateById` succeeded ... the next
-      // `codebase_search` call will retry the repair once Redis recovers."
-      // This test exercises that promise.
+      // The updateById mock below still bumps updatedAt to simulate MikroORM's
+      // @Property onUpdate behaviour — it fires on the second (successful) call
+      // only, confirming the repair completes cleanly on retry.
+      // This test exercises the end-to-end retry promise.
       const STALE_MS = 21 * 24 * 60 * 60 * 1000;
       const existingEntity = {
         id: 'repair-retry-index',
@@ -508,8 +521,8 @@ describe('RepoIndexService', () => {
 
       // Second call (next user interaction). Redis has recovered:
       // addIndexJob succeeds. The repair path MUST retry — the row is still
-      // semantically stale (status Pending, no successful job enqueue), even
-      // though its updatedAt was bumped by the failed first-pass updateById.
+      // semantically stale (status Pending, updatedAt not bumped because the
+      // first repair short-circuited before updateById).
       mockRepoIndexQueueService.addIndexJob.mockResolvedValueOnce(undefined);
 
       const second = await service.getOrInitIndexForRepo(baseParams);

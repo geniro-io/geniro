@@ -5,6 +5,7 @@ import { BaseDao } from '@packages/mikroorm';
 
 import { ThreadStoreEntryEntity } from '../entity/thread-store-entry.entity';
 import type { NamespaceSummaryRow } from '../thread-store.types';
+import { ThreadStoreEntryMode } from '../thread-store.types';
 import { toPostgresArrayLiteral } from '../thread-store.utils';
 
 @Injectable()
@@ -106,18 +107,25 @@ export class ThreadStoreDao extends BaseDao<ThreadStoreEntryEntity> {
       .createQueryBuilder(ThreadStoreEntryEntity, 'e')
       .select([
         'e.namespace',
+        'e.mode',
         raw('count(*) as cnt'),
         raw('max(e.updated_at) as last_updated_at'),
       ])
       .where({ threadId, deletedAt: null })
-      .groupBy('e.namespace')
+      .groupBy(['e.namespace', 'e.mode'])
       .orderBy({ namespace: 'ASC' })
       .execute<
-        { namespace: string; cnt: string; last_updated_at: Date | string }[]
+        {
+          namespace: string;
+          mode: string;
+          cnt: string;
+          last_updated_at: Date | string;
+        }[]
       >();
 
     return rows.map((row) => ({
       namespace: row.namespace,
+      mode: row.mode as ThreadStoreEntryMode,
       entryCount: parseInt(row.cnt, 10),
       lastUpdatedAt:
         row.last_updated_at instanceof Date
@@ -129,11 +137,12 @@ export class ThreadStoreDao extends BaseDao<ThreadStoreEntryEntity> {
   async listInNamespace(
     threadId: string,
     namespace: string,
-    options?: { limit?: number; offset?: number },
+    options?: { limit?: number; offset?: number; order?: 'ASC' | 'DESC' },
   ): Promise<ThreadStoreEntryEntity[]> {
+    const { order = 'DESC', ...restOptions } = options ?? {};
     return await this.getAll(
       { threadId, namespace },
-      { orderBy: { createdAt: 'DESC' }, ...options },
+      { orderBy: { createdAt: order }, ...restOptions },
     );
   }
 }

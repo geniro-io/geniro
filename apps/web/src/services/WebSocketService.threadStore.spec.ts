@@ -81,6 +81,7 @@ describe('WebSocketService — socket.on registrations', () => {
       graphId: 'graph-1',
       ownerId: 'owner-1',
       threadId: 'graph-1:thread-1',
+      scope: [],
       data: {
         externalThreadId: 'graph-1:thread-1',
         namespace: 'plan',

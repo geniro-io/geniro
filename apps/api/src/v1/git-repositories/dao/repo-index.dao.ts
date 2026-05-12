@@ -39,7 +39,7 @@ export class RepoIndexDao extends BaseDao<RepoIndexEntity> {
       .createQueryBuilder(RepoIndexEntity)
       .update({
         indexedTokens: raw(`indexed_tokens + ${amount}`),
-        updatedAt: new Date(),
+        updatedAt: raw('NOW()'),
       })
       .where({ id })
       .execute();

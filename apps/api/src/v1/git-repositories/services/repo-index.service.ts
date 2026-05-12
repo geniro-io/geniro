@@ -545,20 +545,21 @@ export class RepoIndexService implements OnModuleInit {
               estimatedTokens: existing.estimatedTokens,
             },
           );
-          // Repair is best-effort — if Redis is flaky and `addIndexJob`
-          // throws after `updateById` succeeded, we still return
-          // `in_progress` to the caller. The row remains in Pending and the
-          // next `codebase_search` call will retry the repair once Redis
-          // recovers.
+          // Repair is best-effort — enqueue the job FIRST so that if Redis
+          // is flaky and `addIndexJob` throws, `updatedAt` is NOT refreshed
+          // by `updateById`. A stale `updatedAt` means the next
+          // `codebase_search` call will see the row as still-stale and retry
+          // the repair once Redis recovers. If `addIndexJob` succeeds, we
+          // mark the row Pending so the staleness window restarts accurately.
           try {
-            await this.repoIndexDao.updateById(existing.id, {
-              status: RepoIndexStatus.Pending,
-              errorMessage: null,
-            });
             await this.repoIndexQueueService.addIndexJob({
               repoIndexId: existing.id,
               repoUrl: existing.repoUrl,
               branch: existing.branch,
+            });
+            await this.repoIndexDao.updateById(existing.id, {
+              status: RepoIndexStatus.Pending,
+              errorMessage: null,
             });
           } catch (repairErr) {
             this.logger.warn('Failed to re-enqueue stale repo index job', {
@@ -1185,19 +1186,21 @@ export class RepoIndexService implements OnModuleInit {
     /** Token count inherited from a donor branch via cross-branch seeding. */
     seededTokens?: number;
   }> {
-    let needsFullReindex =
-      !existing ||
-      existing.status === RepoIndexStatus.Failed ||
+    const noExisting = !existing;
+    const previousFailed = existing?.status === RepoIndexStatus.Failed;
+    const configChanged =
+      existing != null &&
       this.needsFullReindexDueToConfigChange(existing, config);
+    let needsFullReindex = noExisting || previousFailed || configChanged;
 
     this.logger.debug('Index strategy resolved', {
       repositoryId,
       needsFullReindex,
-      reason: !existing
+      reason: noExisting
         ? 'no_existing_index'
-        : existing.status === RepoIndexStatus.Failed
+        : previousFailed
           ? 'previous_failed'
-          : this.needsFullReindexDueToConfigChange(existing, config)
+          : configChanged
             ? 'config_changed'
             : 'incremental',
       lastIndexedCommit: existing?.lastIndexedCommit,

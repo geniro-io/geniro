@@ -1,5 +1,5 @@
 import { Controller, Get, Param, Query } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { NotFoundException } from '@packages/common';
 import { CtxStorage, OnlyForAuthorized } from '@packages/http-server';
@@ -22,6 +22,7 @@ export class ThreadStoreController {
   constructor(private readonly threadStoreService: ThreadStoreService) {}
 
   @Throttle({ default: { ttl: 60000, limit: 50 } })
+  @ApiOkResponse({ type: NamespaceSummaryDto, isArray: true })
   @Get()
   async listNamespaces(
     @Param('threadId') threadId: string,
@@ -31,6 +32,7 @@ export class ThreadStoreController {
   }
 
   @Throttle({ default: { ttl: 60000, limit: 50 } })
+  @ApiOkResponse({ type: ThreadStoreEntryDto, isArray: true })
   @Get(':namespace')
   async listEntries(
     @Param('threadId') threadId: string,
@@ -48,6 +50,7 @@ export class ThreadStoreController {
   }
 
   @Throttle({ default: { ttl: 60000, limit: 50 } })
+  @ApiOkResponse({ type: ThreadStoreEntryDto })
   @Get(':namespace/:key')
   async getEntry(
     @Param('threadId') threadId: string,

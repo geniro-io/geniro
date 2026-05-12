@@ -11,6 +11,7 @@ import { ThreadStoreDao } from '../dao/thread-store.dao';
 import { ThreadStoreEntryEntity } from '../entity/thread-store-entry.entity';
 import {
   THREAD_STORE_MAX_ENTRIES_PER_NAMESPACE,
+  ThreadStoreAction,
   ThreadStoreEntryMode,
 } from '../thread-store.types';
 import { ThreadStoreService } from './thread-store.service';
@@ -75,6 +76,10 @@ describe('ThreadStoreService', () => {
       create: vi.fn(),
       deleteById: vi.fn(),
     } as unknown as MockedDao;
+    // Default getNamespaceSummaries to empty so tests that don't care don't blow up
+    (dao.getNamespaceSummaries as ReturnType<typeof vi.fn>).mockResolvedValue(
+      [],
+    );
     threadsDao = { getOne: vi.fn() };
     // em.transactional executes the callback immediately with the same em mock
     em = {
@@ -411,6 +416,72 @@ describe('ThreadStoreService', () => {
     );
   });
 
+  it('listEntriesForUser: uses ASC order for append-mode namespaces', async () => {
+    threadsDao.getOne.mockResolvedValue(buildThread());
+    dao.getNamespaceSummaries.mockResolvedValue([
+      {
+        namespace: 'learnings',
+        mode: ThreadStoreEntryMode.Append,
+        entryCount: 2,
+        lastUpdatedAt: new Date('2026-04-19T12:00:00Z'),
+      },
+    ]);
+    dao.listInNamespace.mockResolvedValue([]);
+
+    await service.listEntriesForUser(
+      USER_ID,
+      PROJECT_ID,
+      THREAD_ID,
+      'learnings',
+    );
+
+    expect(dao.listInNamespace).toHaveBeenCalledWith(
+      THREAD_ID,
+      'learnings',
+      expect.objectContaining({ order: 'ASC' }),
+    );
+  });
+
+  it('listEntriesForUser: uses DESC order for kv-mode namespaces', async () => {
+    threadsDao.getOne.mockResolvedValue(buildThread());
+    dao.getNamespaceSummaries.mockResolvedValue([
+      {
+        namespace: 'plan',
+        mode: ThreadStoreEntryMode.Kv,
+        entryCount: 1,
+        lastUpdatedAt: new Date('2026-04-19T12:00:00Z'),
+      },
+    ]);
+    dao.listInNamespace.mockResolvedValue([]);
+
+    await service.listEntriesForUser(USER_ID, PROJECT_ID, THREAD_ID, 'plan');
+
+    expect(dao.listInNamespace).toHaveBeenCalledWith(
+      THREAD_ID,
+      'plan',
+      expect.objectContaining({ order: 'DESC' }),
+    );
+  });
+
+  it('listEntriesForUser: defaults to DESC when namespace summary is missing', async () => {
+    threadsDao.getOne.mockResolvedValue(buildThread());
+    dao.getNamespaceSummaries.mockResolvedValue([]);
+    dao.listInNamespace.mockResolvedValue([]);
+
+    await service.listEntriesForUser(
+      USER_ID,
+      PROJECT_ID,
+      THREAD_ID,
+      'nonexistent',
+    );
+
+    expect(dao.listInNamespace).toHaveBeenCalledWith(
+      THREAD_ID,
+      'nonexistent',
+      expect.objectContaining({ order: 'DESC' }),
+    );
+  });
+
   // -- putForUser --
 
   it('putForUser: invokes em.transactional exactly once', async () => {
@@ -445,6 +516,76 @@ describe('ThreadStoreService', () => {
         value: 'v',
       }),
     ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  // -- countEntriesForUser --
+
+  it('countEntriesForUser: returns count from DAO for the given namespace', async () => {
+    threadsDao.getOne.mockResolvedValue(buildThread());
+    dao.countForNamespace.mockResolvedValue(7);
+
+    const count = await service.countEntriesForUser(
+      USER_ID,
+      PROJECT_ID,
+      THREAD_ID,
+      'plan',
+    );
+
+    expect(count).toBe(7);
+    expect(dao.countForNamespace).toHaveBeenCalledWith(THREAD_ID, 'plan');
+  });
+
+  it('countEntriesForUser: throws NotFoundException when thread ownership check fails', async () => {
+    threadsDao.getOne.mockResolvedValue(null);
+
+    await expect(
+      service.countEntriesForUser(USER_ID, PROJECT_ID, THREAD_ID, 'plan'),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('countEntriesForUser: passes projectId to the ownership check', async () => {
+    threadsDao.getOne.mockResolvedValue(buildThread());
+    dao.countForNamespace.mockResolvedValue(0);
+
+    await service.countEntriesForUser(USER_ID, 'proj-42', THREAD_ID, 'ns');
+
+    expect(threadsDao.getOne).toHaveBeenCalledWith(
+      expect.objectContaining({ projectId: 'proj-42' }),
+    );
+  });
+
+  // -- emitUpdate (ThreadStoreAction enum) --
+
+  it('emitUpdate: emits ThreadStoreAction enum value (not raw string) for put', async () => {
+    threadsDao.getOne.mockResolvedValue(buildThread());
+    dao.getByKey.mockResolvedValue(null);
+    dao.countForNamespace.mockResolvedValue(0);
+    dao.upsertKvEntry.mockResolvedValue(buildEntry());
+
+    await service.putForUser(USER_ID, PROJECT_ID, THREAD_ID, {
+      namespace: 'plan',
+      key: 'root',
+      value: 'x',
+    });
+
+    expect(notifications.emit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ action: ThreadStoreAction.Put }),
+      }),
+    );
+  });
+
+  it('emitUpdate: emits ThreadStoreAction.Delete for delete operations', async () => {
+    threadsDao.getOne.mockResolvedValue(buildThread());
+    dao.getByKey.mockResolvedValue(buildEntry());
+
+    await service.delete(buildCtx(), THREAD_ID, 'plan', 'root');
+
+    expect(notifications.emit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ action: ThreadStoreAction.Delete }),
+      }),
+    );
   });
 
   // -- emitUpdate --

@@ -11,7 +11,10 @@ import {
   IThreadStoreUpdateNotification,
   NotificationEvent,
 } from '../../../notifications/notifications.types';
-import { ThreadStoreEntryMode } from '../../../thread-store/thread-store.types';
+import {
+  ThreadStoreAction,
+  ThreadStoreEntryMode,
+} from '../../../thread-store/thread-store.types';
 import { NotificationScope } from '../../notification-handlers.types';
 import { SimpleEnrichmentHandler } from './simple-enrichment-handler';
 
@@ -182,7 +185,7 @@ describe('SimpleEnrichmentHandler', () => {
           namespace: 'results',
           key: 'output-1',
           mode: ThreadStoreEntryMode.Kv,
-          action: 'put',
+          action: ThreadStoreAction.Put,
           authorAgentId: 'agent-node-1',
         },
       };
@@ -204,7 +207,7 @@ describe('SimpleEnrichmentHandler', () => {
           namespace: 'results',
           key: 'output-1',
           mode: ThreadStoreEntryMode.Kv,
-          action: 'put',
+          action: ThreadStoreAction.Put,
           authorAgentId: 'agent-node-1',
         },
       });
@@ -220,7 +223,7 @@ describe('SimpleEnrichmentHandler', () => {
           namespace: 'logs',
           key: 'entry-1',
           mode: ThreadStoreEntryMode.Append,
-          action: 'append',
+          action: ThreadStoreAction.Append,
         },
       };
 
@@ -246,7 +249,7 @@ describe('SimpleEnrichmentHandler', () => {
           namespace: 'ns',
           key: 'k',
           mode: ThreadStoreEntryMode.Kv,
-          action: 'delete',
+          action: ThreadStoreAction.Delete,
         },
       };
 

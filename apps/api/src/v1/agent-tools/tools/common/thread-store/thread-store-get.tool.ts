@@ -12,12 +12,12 @@ import {
   ExtendedLangGraphRunnableConfig,
   ToolInvokeResult,
 } from '../../base-tool';
-import { ThreadStoreEntryOutput } from './thread-store.tool-types';
-import { toEntryOutput } from './thread-store.tool-utils';
 import {
   ThreadStoreBaseTool,
   ThreadStoreBaseToolConfig,
 } from './thread-store-base.tool';
+import { toEntryOutput } from './thread-store-tool-utils';
+import { ThreadStoreEntryOutput } from './thread-store-tools.types';
 
 export const ThreadStoreGetToolSchema = z.object({
   namespace: namespaceSchema.describe('Namespace the entry lives under.'),
@@ -29,10 +29,10 @@ export type ThreadStoreGetToolSchemaType = z.infer<
   typeof ThreadStoreGetToolSchema
 >;
 
-export interface ThreadStoreGetToolOutput {
+export type ThreadStoreGetToolOutput = {
   found: boolean;
   entry?: ThreadStoreEntryOutput;
-}
+};
 
 @Injectable()
 export class ThreadStoreGetTool extends ThreadStoreBaseTool<

@@ -5,8 +5,15 @@ export enum ThreadStoreEntryMode {
   Append = 'append',
 }
 
+export enum ThreadStoreAction {
+  Put = 'put',
+  Append = 'append',
+  Delete = 'delete',
+}
+
 export interface NamespaceSummaryRow {
   namespace: string;
+  mode: ThreadStoreEntryMode;
   entryCount: number;
   lastUpdatedAt: Date;
 }
