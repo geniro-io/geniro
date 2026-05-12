@@ -128,4 +128,47 @@ describe('ThreadStorePutTool', () => {
       ),
     ).rejects.toBeInstanceOf(BadRequestException);
   });
+
+  it('falls back to node_id author when caller_agent.getConfig() throws (e.g. uninitialized agent config)', async () => {
+    // Agents emit `getConfig()` throwing 'Agent config not initialized' when
+    // the framework instantiates the agent shell before the LangGraph runtime
+    // has populated currentConfig. The tool runs in that window for some
+    // subagent boot orderings, and we don't want a put() call from an agent
+    // to crash with an opaque 'Agent config not initialized' just because we
+    // were trying to label authorship — the write should succeed with the
+    // node_id (or 'unknown-agent') label as a fallback.
+    const callerAgent = {
+      getConfig: vi.fn(() => {
+        throw new Error('Agent config not initialized');
+      }),
+    };
+
+    const result = await tool.invoke(
+      { namespace: 'plan', key: 'root', value: { ok: true } },
+      {},
+      // Cast required: caller_agent is typed as BaseAgent but we only need
+      // the getConfig() shape that resolveContext touches.
+      buildCfg({
+        caller_agent: callerAgent as unknown as Required<
+          BaseAgentConfigurable
+        >['caller_agent'],
+      }),
+    );
+
+    expect(result.output).toEqual({
+      id: 'entry-1',
+      namespace: 'plan',
+      key: 'root',
+    });
+    expect(service.putForUser).toHaveBeenCalledWith(
+      'user-1',
+      PROJECT_ID,
+      THREAD_INTERNAL_ID,
+      expect.objectContaining({
+        // Falls back to node_id from the config when caller_agent metadata
+        // is unavailable.
+        authorAgentId: 'agent-node',
+      }),
+    );
+  });
 });

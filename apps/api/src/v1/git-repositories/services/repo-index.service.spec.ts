@@ -458,6 +458,65 @@ describe('RepoIndexService', () => {
       expect(result.status).toBe('in_progress');
       expect(mockRepoIndexQueueService.addIndexJob).not.toHaveBeenCalled();
     });
+
+    it('retries the repair on the next call when the first repair fails after updateById refreshed updatedAt', async () => {
+      // MikroORM's @Property onUpdate auto-refreshes `updatedAt` whenever a
+      // row is persisted. The repair path performs updateById(status: Pending,
+      // errorMessage: null) BEFORE calling addIndexJob — if addIndexJob then
+      // rejects (Redis flaky), the row in the DB has a fresh updatedAt even
+      // though no repair actually happened. Faithful to that DB behavior, we
+      // mock updateById to bump existingEntity.updatedAt to now().
+      //
+      // The repair-path comment explicitly promises: "if Redis is flaky and
+      // `addIndexJob` throws after `updateById` succeeded ... the next
+      // `codebase_search` call will retry the repair once Redis recovers."
+      // This test exercises that promise.
+      const STALE_MS = 21 * 24 * 60 * 60 * 1000;
+      const existingEntity = {
+        id: 'repair-retry-index',
+        status: RepoIndexStatus.Pending,
+        indexedTokens: 0,
+        estimatedTokens: 1_444_254,
+        updatedAt: new Date(Date.now() - STALE_MS),
+        repoUrl: baseParams.repoUrl,
+        branch: baseParams.branch,
+      } as unknown as RepoIndexEntity;
+
+      // MikroORM-faithful: persistence bumps updatedAt.
+      mockRepoIndexDao.updateById.mockImplementation(
+        async (
+          _id: string,
+          patch: Partial<RepoIndexEntity>,
+        ): Promise<number> => {
+          Object.assign(existingEntity, patch, { updatedAt: new Date() });
+          return 1;
+        },
+      );
+      mockRepoIndexDao.getOne.mockResolvedValue(existingEntity);
+      mockRepoIndexQueueService.getJobState.mockResolvedValue(null);
+
+      // First call: Redis is flaky — addIndexJob rejects. The repair attempt
+      // is intentionally swallowed by the try/catch; the caller is told
+      // "in_progress" and is expected to retry on the next interaction.
+      mockRepoIndexQueueService.addIndexJob.mockRejectedValueOnce(
+        new Error('ECONNREFUSED — redis down'),
+      );
+
+      const first = await service.getOrInitIndexForRepo(baseParams);
+      expect(first.status).toBe('in_progress');
+      expect(mockRepoIndexQueueService.addIndexJob).toHaveBeenCalledTimes(1);
+
+      // Second call (next user interaction). Redis has recovered:
+      // addIndexJob succeeds. The repair path MUST retry — the row is still
+      // semantically stale (status Pending, no successful job enqueue), even
+      // though its updatedAt was bumped by the failed first-pass updateById.
+      mockRepoIndexQueueService.addIndexJob.mockResolvedValueOnce(undefined);
+
+      const second = await service.getOrInitIndexForRepo(baseParams);
+      expect(second.status).toBe('in_progress');
+      // The promise made in the inline comment: the next call retries.
+      expect(mockRepoIndexQueueService.addIndexJob).toHaveBeenCalledTimes(2);
+    });
   });
 
   describe('searchCodebase', () => {

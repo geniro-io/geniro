@@ -224,4 +224,37 @@ describe('ThreadStoreListTool', () => {
 
     expect(result.output.totalCount).toBe(2);
   });
+
+  it('reports truncated=false when the last page is exactly limit entries with no more remaining', async () => {
+    // Namespace has 30 entries total; caller requests offset=20, limit=10.
+    // Service returns entries 21..30 (length = 10 == limit). No further entries
+    // exist (totalCount === offset + entries.length), so the result is NOT
+    // truncated — there is nothing more for the agent to fetch.
+    const limit = 10;
+    const offset = 20;
+    const totalEntriesInNamespace = 30;
+
+    service.listEntriesForUser.mockResolvedValue(
+      Array.from({ length: limit }, (_, i) => makeEntry(`k${offset + i}`)),
+    );
+    service.listNamespacesForUser.mockResolvedValue([
+      {
+        namespace: 'learnings',
+        entryCount: totalEntriesInNamespace,
+        lastUpdatedAt: '2026-04-20T10:00:00.000Z',
+      },
+    ]);
+
+    const result = await tool.invoke(
+      { namespace: 'learnings', limit, offset },
+      {},
+      buildCfg(),
+    );
+
+    expect(result.output.entries).toHaveLength(limit);
+    expect(result.output.totalCount).toBe(totalEntriesInNamespace);
+    // Agent should NOT be told to paginate further when the page exactly
+    // exhausted the namespace.
+    expect(result.output.truncated).toBe(false);
+  });
 });
