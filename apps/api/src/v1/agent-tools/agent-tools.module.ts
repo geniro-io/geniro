@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { forwardRef, Module } from '@nestjs/common';
 
 import { GitRepositoriesModule } from '../git-repositories/git-repositories.module';
 import { KnowledgeModule } from '../knowledge/knowledge.module';
@@ -56,7 +56,7 @@ import { WaitForTool } from './tools/core/wait-for.tool';
     KnowledgeModule,
     QdrantModule,
     SubagentsModule,
-    ThreadStoreModule,
+    forwardRef(() => ThreadStoreModule),
   ],
   controllers: [],
   providers: [

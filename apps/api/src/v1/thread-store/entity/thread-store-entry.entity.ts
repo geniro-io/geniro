@@ -6,11 +6,13 @@ import {
   ManyToOne,
   PrimaryKey,
   Property,
+  Unique,
 } from '@mikro-orm/decorators/legacy';
 
 import { AuditEntity } from '../../../auth/audit.entity';
 import { ThreadEntity } from '../../threads/entity/thread.entity';
 import { ThreadStoreEntryMode } from '../thread-store.types';
+import { PgTextArrayType } from '../types/pg-text-array.type';
 
 @Entity({ tableName: 'thread_store_entries' })
 @Filter({ name: 'softDelete', cond: { deletedAt: null }, default: true })
@@ -18,6 +20,7 @@ import { ThreadStoreEntryMode } from '../thread-store.types';
   name: 'thread_store_entries_thread_ns_idx',
   properties: ['threadId', 'namespace'],
 })
+@Unique({ properties: ['threadId', 'namespace', 'key'] })
 export class ThreadStoreEntryEntity extends AuditEntity {
   @PrimaryKey({ type: 'uuid', defaultRaw: 'gen_random_uuid()' })
   id!: string;
@@ -64,6 +67,6 @@ export class ThreadStoreEntryEntity extends AuditEntity {
   @Property({ type: 'string', length: 128, nullable: true })
   authorAgentId!: string | null;
 
-  @Property({ type: 'array', columnType: 'text[]', nullable: true })
+  @Property({ type: PgTextArrayType, columnType: 'text[]', nullable: true })
   tags!: string[] | null;
 }

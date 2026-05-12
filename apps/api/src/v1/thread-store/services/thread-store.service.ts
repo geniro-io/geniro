@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { EntityManager } from '@mikro-orm/postgresql';
-import { Injectable } from '@nestjs/common';
+import { forwardRef, Inject, Injectable } from '@nestjs/common';
 import { BadRequestException, NotFoundException } from '@packages/common';
 
 import { AppContextStorage } from '../../../auth/app-context-storage';
@@ -29,6 +29,7 @@ import {
 export class ThreadStoreService {
   constructor(
     private readonly em: EntityManager,
+    @Inject(forwardRef(() => ThreadsDao))
     private readonly threadsDao: ThreadsDao,
     private readonly threadStoreDao: ThreadStoreDao,
     private readonly notificationsService: NotificationsService,
@@ -132,8 +133,6 @@ export class ThreadStoreService {
       entry = await this.threadStoreDao.upsertKvEntry(
         // deletedAt: null — C1: resurrect soft-deleted rows on re-put.
         // updatedAt: new Date() — M14: explicit timestamp in merge path.
-        // Cast is required because the DAO data type does not yet declare these
-        // fields; they are in onConflictMergeFields and accepted by MikroORM.
         {
           threadId: thread.id,
           namespace: input.namespace,
@@ -146,7 +145,7 @@ export class ThreadStoreService {
           updatedAt: new Date(),
           createdBy: userId,
           projectId,
-        } as Parameters<ThreadStoreDao['upsertKvEntry']>[0],
+        },
         txEm,
       );
 
@@ -372,7 +371,9 @@ export class ThreadStoreService {
       }
     }
 
-    // Soft-deleted KV key resurrection (deletedAt set) consumes a capacity slot — getByKey honors the default softDelete filter, so resurrection always falls through to the count check. Intentional per the C1 capacity-guard design.
+    // Soft-deleted KV key resurrection (deletedAt set) consumes a capacity slot —
+    // getByKey honors the default softDelete filter, so resurrection always falls
+    // through to the count check. Intentional per the C1 capacity-guard design.
     const count = await this.threadStoreDao.countForNamespace(
       threadId,
       namespace,

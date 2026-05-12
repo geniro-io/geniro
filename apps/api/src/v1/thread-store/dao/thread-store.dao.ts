@@ -6,7 +6,6 @@ import { BaseDao } from '@packages/mikroorm';
 import { ThreadStoreEntryEntity } from '../entity/thread-store-entry.entity';
 import type { NamespaceSummaryRow } from '../thread-store.types';
 import { ThreadStoreEntryMode } from '../thread-store.types';
-import { toPostgresArrayLiteral } from '../thread-store.utils';
 
 @Injectable()
 export class ThreadStoreDao extends BaseDao<ThreadStoreEntryEntity> {
@@ -23,18 +22,14 @@ export class ThreadStoreDao extends BaseDao<ThreadStoreEntryEntity> {
   }
 
   /**
-   * Upsert a KV entry. On `(threadId, namespace, key)` conflict (respecting the
-   * partial unique index `WHERE deleted_at IS NULL`), replaces `value`,
-   * `authorAgentId`, `tags`, `updatedAt`, and clears `deletedAt` (soft-delete
-   * resurrection). Never changes `mode`.
+   * Upsert a KV entry. On `(threadId, namespace, key)` conflict (full unique
+   * index), replaces `value`, `authorAgentId`, `tags`, `updatedAt`, and clears
+   * `deletedAt` (soft-delete resurrection). Never changes `mode`.
    *
-   * Uses raw SQL because MikroORM 7.0.6 `upsert()` with `onConflictFields`
-   * generates `ON CONFLICT (col, ...) DO UPDATE ...` without a WHERE predicate on
-   * the conflict target, which PostgreSQL refuses when only a partial unique index
-   * exists for that column list. `onConflictWhere` in MikroORM's UpsertOptions
-   * appends a WHERE to the outer INSERT (not the conflict target), so it does not
-   * resolve the mismatch. Raw SQL with the explicit partial-index predicate is the
-   * only MikroORM-equivalent solution here.
+   * Uses MikroORM's native `em.upsert()` against the full unique index on
+   * `(thread_id, namespace, key)`. The full index (no WHERE predicate) lets
+   * MikroORM emit a plain `ON CONFLICT (col, ...) DO UPDATE` that PostgreSQL
+   * accepts without a partial-index WHERE clause.
    */
   async upsertKvEntry(
     data: {
@@ -45,50 +40,43 @@ export class ThreadStoreDao extends BaseDao<ThreadStoreEntryEntity> {
       mode: ThreadStoreEntryEntity['mode'];
       authorAgentId?: string | null;
       tags?: string[] | null;
+      deletedAt?: Date | null;
+      updatedAt?: Date;
       createdBy: string;
       projectId: string;
     },
     txEm?: EntityManager,
   ): Promise<ThreadStoreEntryEntity> {
     const em = txEm ?? this.em;
-    await em.getConnection().execute(
-      `INSERT INTO "thread_store_entries"
-         ("id", "thread_id", "namespace", "key", "value", "mode",
-          "author_agent_id", "tags", "created_by", "project_id",
-          "created_at", "updated_at", "deleted_at")
-       VALUES
-         (gen_random_uuid(), ?, ?, ?, ?::jsonb, ?, ?, ?::text[], ?, ?, now(), now(), NULL)
-       ON CONFLICT ("thread_id", "namespace", "key") WHERE "deleted_at" IS NULL
-       DO UPDATE SET
-         "value"           = EXCLUDED.value,
-         "author_agent_id" = EXCLUDED.author_agent_id,
-         "tags"            = EXCLUDED.tags,
-         "updated_at"      = now(),
-         "deleted_at"      = NULL`,
-      [
-        data.threadId,
-        data.namespace,
-        data.key,
-        JSON.stringify(data.value ?? null),
-        data.mode,
-        data.authorAgentId ?? null,
-        toPostgresArrayLiteral(data.tags),
-        data.createdBy,
-        data.projectId,
-      ],
+    return await this.getRepo(em).upsert(
+      {
+        threadId: data.threadId,
+        namespace: data.namespace,
+        key: data.key,
+        value: data.value,
+        mode: data.mode,
+        authorAgentId: data.authorAgentId ?? null,
+        tags: data.tags ?? null,
+        // Explicit timestamps are required so the conflict-merge branch sets them
+        // to the values the caller provides (deletedAt: null clears soft-delete on
+        // resurrection; updatedAt reflects the current wall-clock time).
+        deletedAt: data.deletedAt ?? null,
+        updatedAt: data.updatedAt ?? new Date(),
+        createdBy: data.createdBy,
+        projectId: data.projectId,
+      },
+      {
+        onConflictFields: ['threadId', 'namespace', 'key'],
+        onConflictAction: 'merge',
+        onConflictMergeFields: [
+          'value',
+          'authorAgentId',
+          'tags',
+          'updatedAt',
+          'deletedAt',
+        ],
+      },
     );
-
-    // refresh: true forces a re-read from DB instead of serving the identity-map
-    // cache, so the caller always gets the authoritative post-upsert state.
-    // filters: { softDelete: false } is required because the upsert may have
-    // cleared deleted_at on a previously soft-deleted row; without this the
-    // default softDelete filter could momentarily exclude the row.
-    const entry = await em.findOneOrFail(
-      ThreadStoreEntryEntity,
-      { threadId: data.threadId, namespace: data.namespace, key: data.key },
-      { filters: { softDelete: false }, refresh: true },
-    );
-    return entry;
   }
 
   async getByKey(

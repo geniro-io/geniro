@@ -16,7 +16,6 @@ import {
   ThreadStoreBaseTool,
   ThreadStoreBaseToolConfig,
 } from './thread-store-base.tool';
-import { toEntryOutput } from './thread-store-tool-utils';
 import { ThreadStoreEntryOutput } from './thread-store-tools.types';
 
 export const ThreadStoreGetToolSchema = z.object({
@@ -89,6 +88,20 @@ export class ThreadStoreGetTool extends ThreadStoreBaseTool<
       return { output: { found: false } };
     }
 
-    return { output: { found: true, entry: toEntryOutput(entry) } };
+    return {
+      output: {
+        found: true,
+        entry: {
+          namespace: entry.namespace,
+          key: entry.key,
+          value: entry.value,
+          mode: entry.mode,
+          authorAgentId: entry.authorAgentId,
+          tags: entry.tags,
+          createdAt: entry.createdAt,
+          updatedAt: entry.updatedAt,
+        },
+      },
+    };
   }
 }

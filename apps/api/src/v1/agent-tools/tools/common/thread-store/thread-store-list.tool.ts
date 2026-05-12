@@ -16,7 +16,6 @@ import {
   ThreadStoreBaseTool,
   ThreadStoreBaseToolConfig,
 } from './thread-store-base.tool';
-import { toEntryOutput } from './thread-store-tool-utils';
 import { ThreadStoreEntryOutput } from './thread-store-tools.types';
 
 export const ThreadStoreListToolSchema = z.object({
@@ -143,7 +142,16 @@ export class ThreadStoreListTool extends ThreadStoreBaseTool<
 
     return {
       output: {
-        entries: entries.map(toEntryOutput),
+        entries: entries.map((entry) => ({
+          namespace: entry.namespace,
+          key: entry.key,
+          value: entry.value,
+          mode: entry.mode,
+          authorAgentId: entry.authorAgentId,
+          tags: entry.tags,
+          createdAt: entry.createdAt,
+          updatedAt: entry.updatedAt,
+        })),
         totalCount,
         truncated,
       },
