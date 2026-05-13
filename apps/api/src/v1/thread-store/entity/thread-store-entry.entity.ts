@@ -8,11 +8,11 @@ import {
   Property,
   Unique,
 } from '@mikro-orm/decorators/legacy';
+import { PgTextArrayType } from '@packages/mikroorm';
 
 import { AuditEntity } from '../../../auth/audit.entity';
 import { ThreadEntity } from '../../threads/entity/thread.entity';
 import { ThreadStoreEntryMode } from '../thread-store.types';
-import { PgTextArrayType } from '../types/pg-text-array.type';
 
 @Entity({ tableName: 'thread_store_entries' })
 @Filter({ name: 'softDelete', cond: { deletedAt: null }, default: true })
