@@ -1,6 +1,7 @@
 import axios from 'axios';
 import {
   BarChart3,
+  Database,
   Download,
   ExternalLink,
   GitBranch,
@@ -53,6 +54,7 @@ import {
   type ThreadExportData,
   ThreadSnapshotModal,
 } from './components/ThreadSnapshotModal';
+import { ThreadStoreSidebar } from './components/ThreadStoreSidebar';
 import { ThreadTokenUsageLine } from './components/ThreadTokenUsageLine';
 import { UsageStatsModal } from './components/UsageStatsModal';
 import { useChatsAnalysis } from './hooks/useChatsAnalysis';
@@ -311,6 +313,8 @@ export const ChatsPage = () => {
 
   // --- Runtime sidebar ---
   const [runtimeSidebarOpen, setRuntimeSidebarOpen] = useState(false);
+  // --- Thread store sidebar ---
+  const [storeSidebarOpen, setStoreSidebarOpen] = useState(false);
 
   const runtimeNodeNames = useMemo(() => {
     if (!selectedThread || selectedThreadIsDraft) {
@@ -1086,6 +1090,28 @@ export const ChatsPage = () => {
                               </TooltipContent>
                             </Tooltip>
                           )}
+                          {!selectedThreadIsDraft && (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  variant={
+                                    storeSidebarOpen ? 'default' : 'ghost'
+                                  }
+                                  size="icon"
+                                  className="h-7 w-7 p-0"
+                                  onClick={() =>
+                                    setStoreSidebarOpen((v) => !v)
+                                  }>
+                                  <Database className="h-3.5 w-3.5" />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                {storeSidebarOpen
+                                  ? 'Hide thread store'
+                                  : 'Show thread store'}
+                              </TooltipContent>
+                            </Tooltip>
+                          )}
                           {selectedThreadHeaderUsage && (
                             <Tooltip>
                               <TooltipTrigger asChild>
@@ -1235,6 +1261,16 @@ export const ChatsPage = () => {
             nodeDisplayNames={runtimeNodeNames}
             nodeAgentNames={runtimeAgentNames}
           />
+          {selectedThread && !selectedThreadIsDraft ? (
+            <ThreadStoreSidebar
+              open={storeSidebarOpen}
+              onClose={() => setStoreSidebarOpen(false)}
+              threadId={selectedThread.id}
+              externalThreadId={
+                externalThreadIds[selectedThread.id] ?? undefined
+              }
+            />
+          ) : null}
         </div>
       </div>
 

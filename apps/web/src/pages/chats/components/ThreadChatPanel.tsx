@@ -69,7 +69,6 @@ import {
 } from '../../../utils/imageAttachments';
 import { sortMessagesChronologically } from '../../../utils/threadMessages';
 import ThreadMessagesView from '../../graphs/components/ThreadMessagesView';
-import { ThreadStorePanel } from '../../graphs/components/ThreadStorePanel';
 import type { PendingMessage } from '../../graphs/types/messages';
 
 interface ThreadChatPanelProps {
@@ -1150,13 +1149,6 @@ export const ThreadChatPanel: React.FC<ThreadChatPanelProps> = ({
 
   return (
     <div style={style} className="flex flex-col flex-1 min-h-0 overflow-hidden">
-      {!isDraft && thread.id ? (
-        <ThreadStorePanel
-          threadId={thread.id}
-          externalThreadId={thread.externalThreadId ?? undefined}
-          className="mx-2 mt-2"
-        />
-      ) : null}
       <div className="flex-1 min-h-0 rounded-lg flex flex-col overflow-hidden">
         <ThreadMessagesView
           messages={messages}
