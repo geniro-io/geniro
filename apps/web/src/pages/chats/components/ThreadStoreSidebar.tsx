@@ -1,12 +1,5 @@
 import { Braces, Clock, Hash, Loader2, RefreshCw, X } from 'lucide-react';
-import {
-  Fragment,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from 'react';
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 
 import { threadStoreApi } from '../../../api';
 import type {
@@ -192,11 +185,6 @@ export const ThreadStoreSidebar = ({
     }
   });
 
-  const totalEntries = useMemo(
-    () => namespaces.reduce((sum, ns) => sum + ns.entryCount, 0),
-    [namespaces],
-  );
-
   const handleRefresh = useCallback(() => {
     void fetchNamespaces();
     if (activeNamespace) {
@@ -221,14 +209,7 @@ export const ThreadStoreSidebar = ({
       <div className="w-72 shrink-0 border-l border-border flex flex-col bg-background overflow-hidden">
         {/* Header */}
         <div className="px-4 py-4 border-b border-border flex justify-between items-center shrink-0">
-          <h3 className="text-base font-semibold">
-            Thread store
-            {namespaces.length > 0 ? (
-              <Badge variant="secondary" className="ml-2">
-                {namespaces.length} ns · {totalEntries}
-              </Badge>
-            ) : null}
-          </h3>
+          <h3 className="text-base font-semibold">Thread store</h3>
           <div className="flex items-center gap-1">
             <Tooltip>
               <TooltipTrigger asChild>
