@@ -1,4 +1,4 @@
-import { Loader2, RefreshCw, X } from 'lucide-react';
+import { Clock, Hash, Loader2, RefreshCw, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { threadStoreApi } from '../../../api';
@@ -16,7 +16,12 @@ import {
 } from '../../../components/ui/tooltip';
 import { useWebSocketEvent } from '../../../hooks/useWebSocket';
 import type { ThreadStoreUpdateNotification } from '../../../services/WebSocketTypes';
-import { formatTimestamp, formatValue } from './threadStoreUtils';
+import {
+  formatTimestamp,
+  formatValue,
+  MODE_EXPLANATION,
+  parseAppendKey,
+} from './threadStoreUtils';
 
 interface ThreadStoreSidebarProps {
   open: boolean;
@@ -278,6 +283,8 @@ export const ThreadStoreSidebar = ({
           </div>
         ) : null}
 
+        {activeNamespace ? <NamespaceModeHint entries={entries} /> : null}
+
         {activeSummary ? (
           <div className="text-xs text-muted-foreground">
             Last update: {formatTimestamp(activeSummary.lastUpdatedAt)}
@@ -297,43 +304,130 @@ export const ThreadStoreSidebar = ({
             ) : (
               <ul className="space-y-2">
                 {entries.map((entry) => (
-                  <li
-                    key={entry.id}
-                    className="rounded-md border border-border bg-card p-2">
-                    <div className="flex items-center gap-2 flex-wrap text-xs text-muted-foreground">
-                      <span className="font-mono text-foreground break-all">
-                        {entry.key}
-                      </span>
-                      <Badge
-                        variant={
-                          entry.mode === 'append' ? 'secondary' : 'outline'
-                        }>
-                        {entry.mode}
-                      </Badge>
-                      {entry.authorAgentId ? (
-                        <Badge variant="outline">{entry.authorAgentId}</Badge>
-                      ) : null}
-                      <span>{formatTimestamp(entry.updatedAt)}</span>
-                    </div>
-                    {entry.tags && entry.tags.length > 0 ? (
-                      <div className="mt-1 flex items-center gap-1 flex-wrap">
-                        {entry.tags.map((tag) => (
-                          <Badge key={tag} variant="secondary">
-                            {tag}
-                          </Badge>
-                        ))}
-                      </div>
-                    ) : null}
-                    <pre className="mt-2 whitespace-pre-wrap break-words text-xs font-mono text-foreground bg-muted/40 rounded p-2">
-                      {formatValue(entry.value)}
-                    </pre>
-                  </li>
+                  <EntryCard key={entry.id} entry={entry} />
                 ))}
               </ul>
             )}
           </ScrollArea>
         ) : null}
       </div>
+    </div>
+  );
+};
+
+const APPEND_DATE_FMT = new Intl.DateTimeFormat(undefined, {
+  month: 'short',
+  day: 'numeric',
+  hour: 'numeric',
+  minute: '2-digit',
+  second: '2-digit',
+});
+
+const EntryCard = ({ entry }: { entry: ThreadStoreEntryDto }) => {
+  const parsed = entry.mode === 'append' ? parseAppendKey(entry.key) : null;
+  const isAppend = entry.mode === 'append';
+  const modeLabel = isAppend ? 'append' : 'kv';
+  const modeExplain = MODE_EXPLANATION[modeLabel];
+
+  return (
+    <li className="rounded-md border border-border bg-card p-3 space-y-2">
+      {/* Header — uniform shape: icon + prominent identifier + mode badge */}
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex items-center gap-1.5 min-w-0 flex-1">
+          {parsed ? (
+            <Clock className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+          ) : (
+            <Hash className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+          )}
+          {parsed ? (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="text-sm font-medium text-foreground truncate cursor-default">
+                  {APPEND_DATE_FMT.format(parsed.date)}
+                </span>
+              </TooltipTrigger>
+              <TooltipContent className="font-mono text-xs">
+                {entry.key}
+              </TooltipContent>
+            </Tooltip>
+          ) : (
+            <span className="text-sm font-mono font-medium text-foreground break-all">
+              {entry.key}
+            </span>
+          )}
+        </div>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Badge
+              variant={isAppend ? 'secondary' : 'outline'}
+              className="shrink-0 cursor-help">
+              {modeLabel}
+            </Badge>
+          </TooltipTrigger>
+          <TooltipContent className="max-w-xs">{modeExplain}</TooltipContent>
+        </Tooltip>
+      </div>
+
+      {/* Meta — author + updated. No middle-dot separator: flex-wrap was
+          turning it into an orphan glyph when the row broke onto two lines. */}
+      <div className="flex items-baseline gap-x-2 gap-y-0.5 flex-wrap text-[11px] text-muted-foreground">
+        {entry.authorAgentId ? (
+          <span className="font-medium text-foreground/70">
+            {entry.authorAgentId}
+          </span>
+        ) : null}
+        <span>{formatTimestamp(entry.updatedAt)}</span>
+      </div>
+
+      {/* Tags */}
+      {entry.tags && entry.tags.length > 0 ? (
+        <div className="flex items-center gap-1 flex-wrap">
+          {entry.tags.map((tag) => (
+            <Badge key={tag} variant="secondary" className="text-[10px]">
+              {tag}
+            </Badge>
+          ))}
+        </div>
+      ) : null}
+
+      {/* Value */}
+      <pre className="whitespace-pre-wrap break-words text-xs font-mono text-foreground bg-muted/40 rounded p-2">
+        {formatValue(entry.value)}
+      </pre>
+    </li>
+  );
+};
+
+const NamespaceModeHint = ({ entries }: { entries: ThreadStoreEntryDto[] }) => {
+  if (entries.length === 0) {
+    return null;
+  }
+  const hasAppend = entries.some((e) => e.mode === 'append');
+  const hasKv = entries.some((e) => e.mode === 'kv');
+
+  // Pure single-mode namespace: show the matching explanation.
+  if (hasAppend && !hasKv) {
+    return (
+      <div className="flex items-start gap-2 rounded-md border border-border bg-muted/30 px-2.5 py-2 text-xs text-muted-foreground">
+        <Clock className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+        <span>{MODE_EXPLANATION.append}</span>
+      </div>
+    );
+  }
+  if (hasKv && !hasAppend) {
+    return (
+      <div className="flex items-start gap-2 rounded-md border border-border bg-muted/30 px-2.5 py-2 text-xs text-muted-foreground">
+        <Hash className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+        <span>{MODE_EXPLANATION.kv}</span>
+      </div>
+    );
+  }
+
+  // Mixed (rare). Don't pretend it's one or the other.
+  return (
+    <div className="rounded-md border border-border bg-muted/30 px-2.5 py-2 text-xs text-muted-foreground">
+      Mixed namespace — contains both append-log and key-value entries. Hover
+      the badge on each card to see the difference.
     </div>
   );
 };
