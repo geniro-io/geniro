@@ -1,5 +1,12 @@
 import { Braces, Clock, Hash, Loader2, RefreshCw, X } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 
 import { threadStoreApi } from '../../../api';
 import type {
@@ -453,25 +460,30 @@ const ValuePreview = ({
   onView: () => void;
 }) => {
   // Decide what the preview body looks like based on the value's shape.
+  // `min-w-0` / grid `minmax(0, 1fr)` everywhere is load-bearing: without
+  // them, a long single-token value (e.g. "repository overview research
+  // only") prevents inner spans from shrinking and pushes the whole
+  // w-72 sidebar wider than its declared width.
   let body: React.ReactNode;
   if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
     const entries = Object.entries(value as Record<string, unknown>);
     const shown = entries.slice(0, PREVIEW_FIELD_LIMIT);
     const remaining = entries.length - shown.length;
     body = (
-      <div className="space-y-0.5">
+      // grid-cols-[auto_minmax(0,1fr)] is the trick: minmax(0, 1fr) lets the
+      // value column shrink below its content min-width so `truncate` fires.
+      // `flex` + `min-w-0` is less reliable in nested layouts.
+      <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-1.5 gap-y-0.5 items-baseline">
         {shown.map(([k, v]) => (
-          <div key={k} className="flex gap-1.5 items-baseline">
-            <span className="font-semibold text-foreground/80 shrink-0">
-              {k}:
-            </span>
-            <span className="text-foreground/70 truncate min-w-0">
+          <Fragment key={k}>
+            <span className="font-semibold text-foreground/80">{k}:</span>
+            <span className="text-foreground/70 truncate">
               {previewScalar(v)}
             </span>
-          </div>
+          </Fragment>
         ))}
         {remaining > 0 ? (
-          <div className="text-muted-foreground/70 italic">
+          <div className="col-span-2 text-muted-foreground/70 italic">
             +{remaining} more {remaining === 1 ? 'field' : 'fields'}
           </div>
         ) : null}
@@ -479,7 +491,7 @@ const ValuePreview = ({
     );
   } else if (Array.isArray(value)) {
     body = (
-      <div className="text-foreground/70 italic">
+      <div className="text-foreground/70 italic truncate">
         Array · {value.length} {value.length === 1 ? 'item' : 'items'}
       </div>
     );
@@ -489,21 +501,25 @@ const ValuePreview = ({
         ? `${value.slice(0, PREVIEW_VALUE_CHAR_LIMIT * 2)}…`
         : value;
     body = (
-      <div className="whitespace-pre-wrap break-words text-foreground/80">
+      <div className="text-foreground/80 line-clamp-2 break-words">
         {display}
       </div>
     );
   } else {
     body = (
-      <div className="text-foreground/80 font-mono">{previewScalar(value)}</div>
+      <div className="text-foreground/80 font-mono truncate">
+        {previewScalar(value)}
+      </div>
     );
   }
 
   return (
+    // `min-w-0 overflow-hidden` on the button is the final safety net: it
+    // stops any stray child width from breaching the sidebar's `w-72`.
     <button
       type="button"
       onClick={onView}
-      className="w-full text-left rounded bg-muted/40 hover:bg-muted/60 transition-colors p-2 text-xs font-mono cursor-pointer group">
+      className="w-full min-w-0 overflow-hidden text-left rounded bg-muted/40 hover:bg-muted/60 transition-colors p-2 text-xs font-mono cursor-pointer group">
       {body}
       <div className="mt-1.5 flex items-center gap-1 text-[10px] text-muted-foreground/70 group-hover:text-muted-foreground">
         <Braces className="h-3 w-3" />
