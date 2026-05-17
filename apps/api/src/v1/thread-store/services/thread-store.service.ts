@@ -121,8 +121,12 @@ export class ThreadStoreService {
     const thread = await this.getOwnedThread(userId, projectId, threadId);
     this.assertValueSize(input.value);
 
+    // Agent tools call this outside an HTTP request, so `this.em` is the
+    // shared global EM. A fork gives us an isolated connection context so
+    // the inner `transactional()` opens a fresh BEGIN, not a SAVEPOINT
+    // nested in some unrelated outer tx. Mirrors PgCheckpointSaver.fork().
     let entry!: ThreadStoreEntryEntity;
-    await this.em.transactional(async (txEm) => {
+    await this.em.fork().transactional(async (txEm) => {
       await this.assertCapacity(
         thread.id,
         input.namespace,
@@ -174,8 +178,10 @@ export class ThreadStoreService {
 
     const generatedKey = `${new Date().toISOString()}-${randomUUID().slice(0, 8)}`;
 
+    // See putForUser comment: fork to detach from any in-flight tx on the
+    // shared global EM when invoked from an agent tool.
     let entry!: ThreadStoreEntryEntity;
-    await this.em.transactional(async (txEm) => {
+    await this.em.fork().transactional(async (txEm) => {
       await this.assertCapacity(
         thread.id,
         input.namespace,
