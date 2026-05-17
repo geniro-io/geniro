@@ -190,8 +190,6 @@ export const ThreadStoreSidebar = ({
     }
   }, [fetchNamespaces, fetchEntries, activeNamespace]);
 
-  const activeSummary = namespaces.find((n) => n.namespace === activeNamespace);
-
   if (!open) {
     return null;
   }
@@ -285,12 +283,6 @@ export const ThreadStoreSidebar = ({
 
         {activeNamespace ? <NamespaceModeHint entries={entries} /> : null}
 
-        {activeSummary ? (
-          <div className="text-xs text-muted-foreground">
-            Last update: {formatTimestamp(activeSummary.lastUpdatedAt)}
-          </div>
-        ) : null}
-
         {activeNamespace ? (
           <ScrollArea className="max-h-[calc(100vh-260px)]">
             {loadingEntries && entries.length === 0 ? (
@@ -368,16 +360,19 @@ const EntryCard = ({ entry }: { entry: ThreadStoreEntryDto }) => {
         </Tooltip>
       </div>
 
-      {/* Meta — author + updated. No middle-dot separator: flex-wrap was
-          turning it into an orphan glyph when the row broke onto two lines. */}
-      <div className="flex items-baseline gap-x-2 gap-y-0.5 flex-wrap text-[11px] text-muted-foreground">
-        {entry.authorAgentId ? (
-          <span className="font-medium text-foreground/70">
-            {entry.authorAgentId}
-          </span>
-        ) : null}
-        <span>{formatTimestamp(entry.updatedAt)}</span>
-      </div>
+      {/* Meta — author, plus updatedAt only for kv (append already shows
+          the create-time in the header — append rows are immutable, so
+          updatedAt would just duplicate it). */}
+      {entry.authorAgentId || !isAppend ? (
+        <div className="flex items-baseline gap-x-2 gap-y-0.5 flex-wrap text-[11px] text-muted-foreground">
+          {entry.authorAgentId ? (
+            <span className="font-medium text-foreground/70">
+              {entry.authorAgentId}
+            </span>
+          ) : null}
+          {isAppend ? null : <span>{formatTimestamp(entry.updatedAt)}</span>}
+        </div>
+      ) : null}
 
       {/* Tags */}
       {entry.tags && entry.tags.length > 0 ? (
