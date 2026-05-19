@@ -63,7 +63,10 @@ describe('ThreadStoreService', () => {
   let service: ThreadStoreService;
   let dao: MockedDao;
   let threadsDao: MockedThreadsDao;
-  let em: { transactional: ReturnType<typeof vi.fn> };
+  let em: {
+    transactional: ReturnType<typeof vi.fn>;
+    fork: ReturnType<typeof vi.fn>;
+  };
   let notifications: { emit: ReturnType<typeof vi.fn> };
 
   beforeEach(async () => {
@@ -81,14 +84,18 @@ describe('ThreadStoreService', () => {
       [],
     );
     threadsDao = { getOne: vi.fn() };
-    // em.transactional executes the callback immediately with the same em mock
+    // em.transactional executes the callback immediately with the same em mock.
+    // em.fork returns the same em — production code uses .fork() to detach
+    // from the request-scoped EM (see ThreadStoreService put/append).
     em = {
       transactional: vi
         .fn()
         .mockImplementation(async (cb: (txEm: unknown) => Promise<unknown>) => {
           return await cb(undefined);
         }),
+      fork: vi.fn(),
     };
+    em.fork.mockReturnValue(em);
     notifications = { emit: vi.fn().mockResolvedValue(undefined) };
 
     const module: TestingModule = await Test.createTestingModule({
