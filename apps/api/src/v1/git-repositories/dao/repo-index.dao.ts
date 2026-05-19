@@ -30,12 +30,17 @@ export class RepoIndexDao extends BaseDao<RepoIndexEntity> {
 
   /**
    * Atomically increment indexedTokens column to avoid race conditions
-   * when multiple batches complete concurrently.
+   * when multiple batches complete concurrently. Also bumps updated_at to NOW()
+   * so callers can treat the timestamp as a liveness signal — a row that
+   * exceeds the staleness window is genuinely lost, not just mid-progress.
    */
   async incrementIndexedTokens(id: string, amount: number): Promise<void> {
     await this.em
       .createQueryBuilder(RepoIndexEntity)
-      .update({ indexedTokens: raw(`indexed_tokens + ${amount}`) })
+      .update({
+        indexedTokens: raw(`indexed_tokens + ${amount}`),
+        updatedAt: raw('NOW()'),
+      })
       .where({ id })
       .execute();
   }

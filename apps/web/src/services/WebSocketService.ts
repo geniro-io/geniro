@@ -41,7 +41,6 @@ class WebSocketService {
 
     console.debug('[WebSocket] Connecting to:', API_URL);
 
-    // Create socket connection with authentication
     this.socket = io(API_URL, {
       auth: (cb) => {
         cb({ token: this.token });
@@ -57,9 +56,6 @@ class WebSocketService {
     this.isConnecting = false;
   }
 
-  /**
-   * Setup socket event listeners
-   */
   private setupEventListeners(): void {
     if (!this.socket) {
       return;
@@ -92,42 +88,38 @@ class WebSocketService {
       }
     });
 
-    // Graph update events
     this.socket.on('graph.update', (data: SocketNotification) => {
       this.emitToHandlers('graph.update', data);
     });
 
-    // Graph preview events
     this.socket.on('graph.preview', (data: SocketNotification) => {
       this.emitToHandlers('graph.preview', data);
     });
 
-    // Agent message events
     this.socket.on('agent.message', (data: SocketNotification) => {
       this.emitToHandlers('agent.message', data);
     });
 
-    // Agent state update events
     this.socket.on('agent.state.update', (data: SocketNotification) => {
       this.emitToHandlers('agent.state.update', data);
     });
 
-    // Thread create events
     this.socket.on('thread.create', (data: SocketNotification) => {
       this.emitToHandlers('thread.create', data);
     });
 
-    // Thread update events
     this.socket.on('thread.update', (data: SocketNotification) => {
       this.emitToHandlers('thread.update', data);
     });
 
-    // Thread delete events
     this.socket.on('thread.delete', (data: SocketNotification) => {
       this.emitToHandlers('thread.delete', data);
     });
 
-    // Graph node update events
+    this.socket.on('thread.store.update', (data: SocketNotification) => {
+      this.emitToHandlers('thread.store.update', data);
+    });
+
     this.socket.on('graph.node.update', (data: SocketNotification) => {
       this.emitToHandlers('graph.node.update', data);
     });
@@ -146,20 +138,15 @@ class WebSocketService {
       });
     });
 
-    // Runtime status events
     this.socket.on('runtime.status', (data: SocketNotification) => {
       this.emitToHandlers('runtime.status', data);
     });
 
-    // Server error events
     this.socket.on('server_error', (error: ServerErrorNotification) => {
       console.error('[WebSocket] Server error:', error);
     });
   }
 
-  /**
-   * Emit notification to all registered handlers for an event type
-   */
   private emitToHandlers(eventType: string, data: SocketNotification): void {
     const handlers = this.eventHandlers.get(eventType);
     if (handlers) {

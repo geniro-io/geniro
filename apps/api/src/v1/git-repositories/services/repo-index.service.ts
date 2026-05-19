@@ -505,12 +505,73 @@ export class RepoIndexService implements OnModuleInit {
       repoUrl = existing.repoUrl;
     }
 
-    // If indexing is actively running, return immediately
+    // If indexing is actively running, return immediately.
+    // Repair-on-read: if the row has been sitting in Pending/InProgress beyond
+    // the staleness window, the BullMQ job may be lost (Redis flush, worker
+    // eviction, or crash between updateById and queue.add). Reset and re-enqueue
+    // so the next user interaction unblocks the zombie row. `recoverStuckJobs`
+    // only runs on module init, so long-lived pods need this in-path recovery.
+    //
+    // Two-layer defense: `updatedAt` is the first filter (age > window), but a
+    // slow embedding batch (many large files × slow LiteLLM) can stall
+    // `incrementIndexedTokens` for >2 min while the worker is still alive.
+    // The BullMQ `getJobState` check is the second layer — it confirms the job
+    // is not actively being processed before force-failing and re-enqueueing.
+    // Both conditions must hold before the repair fires.
     if (
       existing &&
       (existing.status === RepoIndexStatus.InProgress ||
         existing.status === RepoIndexStatus.Pending)
     ) {
+      const ageMs = Date.now() - new Date(existing.updatedAt).getTime();
+      if (ageMs > environment.codebaseIndexStaleMs) {
+        const jobState = await this.repoIndexQueueService.getJobState(
+          existing.id,
+        );
+        if (jobState === 'active') {
+          this.logger.debug(
+            'Stale repo index row but BullMQ job is active, skipping repair',
+            { repoIndexId: existing.id, ageMs, jobState },
+          );
+        } else {
+          this.logger.warn(
+            'Stale repo index detected, re-enqueueing background job',
+            {
+              repoIndexId: existing.id,
+              previousStatus: existing.status,
+              ageMs,
+              jobState,
+              indexedTokens: existing.indexedTokens,
+              estimatedTokens: existing.estimatedTokens,
+            },
+          );
+          // Repair is best-effort — enqueue the job FIRST so that if Redis
+          // is flaky and `addIndexJob` throws, `updatedAt` is NOT refreshed
+          // by `updateById`. A stale `updatedAt` means the next
+          // `codebase_search` call will see the row as still-stale and retry
+          // the repair once Redis recovers. If `addIndexJob` succeeds, we
+          // mark the row Pending so the staleness window restarts accurately.
+          try {
+            await this.repoIndexQueueService.addIndexJob({
+              repoIndexId: existing.id,
+              repoUrl: existing.repoUrl,
+              branch: existing.branch,
+            });
+            await this.repoIndexDao.updateById(existing.id, {
+              status: RepoIndexStatus.Pending,
+              errorMessage: null,
+            });
+          } catch (repairErr) {
+            this.logger.warn('Failed to re-enqueue stale repo index job', {
+              repoIndexId: existing.id,
+              error:
+                repairErr instanceof Error
+                  ? repairErr.message
+                  : String(repairErr),
+            });
+          }
+        }
+      }
       return { earlyReturn: { status: 'in_progress', repoIndex: existing } };
     }
 
@@ -1125,19 +1186,21 @@ export class RepoIndexService implements OnModuleInit {
     /** Token count inherited from a donor branch via cross-branch seeding. */
     seededTokens?: number;
   }> {
-    let needsFullReindex =
-      !existing ||
-      existing.status === RepoIndexStatus.Failed ||
+    const noExisting = !existing;
+    const previousFailed = existing?.status === RepoIndexStatus.Failed;
+    const configChanged =
+      existing != null &&
       this.needsFullReindexDueToConfigChange(existing, config);
+    let needsFullReindex = noExisting || previousFailed || configChanged;
 
     this.logger.debug('Index strategy resolved', {
       repositoryId,
       needsFullReindex,
-      reason: !existing
+      reason: noExisting
         ? 'no_existing_index'
-        : existing.status === RepoIndexStatus.Failed
+        : previousFailed
           ? 'previous_failed'
-          : this.needsFullReindexDueToConfigChange(existing, config)
+          : configChanged
             ? 'config_changed'
             : 'incremental',
       lastIndexedCommit: existing?.lastIndexedCommit,

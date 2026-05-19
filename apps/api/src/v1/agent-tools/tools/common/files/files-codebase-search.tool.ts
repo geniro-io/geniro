@@ -318,7 +318,11 @@ export class FilesCodebaseSearchTool extends FilesBaseTool<CodebaseSearchSchemaT
         );
       }
 
-      // Attempt partial search if some tokens have already been indexed
+      // Attempt partial search if some tokens have already been indexed.
+      // TODO(.geniro/knowledge/gotchas/typescript-runtime-gotchas.jsonl#G7):
+      // also allow the partial path when `qdrantCollection && lastIndexedCommit`
+      // are set — a prior Completed index may have populated Qdrant before the
+      // row was reset to Pending/indexedTokens=0.
       if (repoIndex.indexedTokens > 0 && repoIndex.qdrantCollection) {
         try {
           const collection = repoIndex.qdrantCollection;

@@ -290,7 +290,7 @@ When all four are set, the `GET /api/system/settings` endpoint returns `githubAp
 
 - **Auth**: Keycloak-backed. `AuthContextService` provides the current user. Dev-mode bypass available via `AUTH_DEV_MODE=true`.
 - **Real-time**: Socket.IO for pushing graph/thread lifecycle events to clients.
-- **Task queue**: BullMQ (Redis) for async work like revision processing and knowledge reindexing.
+- **Task queue**: BullMQ (Redis) for async work like revision processing and knowledge reindexing. Any DB-tracked job must provide repair-on-read (reset stale Pending/InProgress rows on the next user interaction) OR a periodic watchdog — startup-only recovery is insufficient for long-running pods. See `.geniro/knowledge/gotchas/typescript-runtime-gotchas.jsonl#G7`.
 - **Observability**: Pino structured logging, Prometheus metrics at `/metrics`, optional Sentry.
 - **Vector search**: Qdrant stores knowledge chunk embeddings; queries use `text-embedding-3-small` via LiteLLM.
 - **LLM routing**: All model calls go through a local LiteLLM proxy (port 4000). Supports OpenAI, and Ollama for offline use.

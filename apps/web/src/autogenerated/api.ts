@@ -1877,6 +1877,31 @@ export interface ModelDefaultsDto {
 /**
  *
  * @export
+ * @interface NamespaceSummaryDto
+ */
+export interface NamespaceSummaryDto {
+  /**
+   *
+   * @type {string}
+   * @memberof NamespaceSummaryDto
+   */
+  'namespace': string;
+  /**
+   *
+   * @type {number}
+   * @memberof NamespaceSummaryDto
+   */
+  'entryCount': number;
+  /**
+   *
+   * @type {string}
+   * @memberof NamespaceSummaryDto
+   */
+  'lastUpdatedAt': string;
+}
+/**
+ *
+ * @export
  * @interface OAuthLinkRequestDto
  */
 export interface OAuthLinkRequestDto {
@@ -3549,6 +3574,82 @@ export interface ThreadMessageDtoRequestTokenUsage {
    */
   'currentContext'?: number;
 }
+/**
+ *
+ * @export
+ * @interface ThreadStoreEntryDto
+ */
+export interface ThreadStoreEntryDto {
+  /**
+   *
+   * @type {string}
+   * @memberof ThreadStoreEntryDto
+   */
+  'id': string;
+  /**
+   *
+   * @type {string}
+   * @memberof ThreadStoreEntryDto
+   */
+  'threadId': string;
+  /**
+   *
+   * @type {string}
+   * @memberof ThreadStoreEntryDto
+   */
+  'namespace': string;
+  /**
+   *
+   * @type {string}
+   * @memberof ThreadStoreEntryDto
+   */
+  'key': string;
+  /**
+   *
+   * @type {any}
+   * @memberof ThreadStoreEntryDto
+   */
+  'value': any;
+  /**
+   *
+   * @type {string}
+   * @memberof ThreadStoreEntryDto
+   */
+  'mode': ThreadStoreEntryDtoModeEnum;
+  /**
+   *
+   * @type {string}
+   * @memberof ThreadStoreEntryDto
+   */
+  'authorAgentId': string | null;
+  /**
+   *
+   * @type {Array<string>}
+   * @memberof ThreadStoreEntryDto
+   */
+  'tags': Array<string> | null;
+  /**
+   *
+   * @type {string}
+   * @memberof ThreadStoreEntryDto
+   */
+  'createdAt': string;
+  /**
+   *
+   * @type {string}
+   * @memberof ThreadStoreEntryDto
+   */
+  'updatedAt': string;
+}
+
+export const ThreadStoreEntryDtoModeEnum = {
+  Kv: 'kv',
+  Append: 'append',
+} as const;
+
+export type ThreadStoreEntryDtoModeEnum =
+  (typeof ThreadStoreEntryDtoModeEnum)[keyof typeof ThreadStoreEntryDtoModeEnum];
+
 /**
  *
  * @export
@@ -14096,6 +14197,438 @@ export class TemplatesApi extends BaseAPI {
   public getAllTemplates(options?: RawAxiosRequestConfig) {
     return TemplatesApiFp(this.configuration)
       .getAllTemplates(options)
+      .then((request) => request(this.axios, this.basePath));
+  }
+}
+
+/**
+ * ThreadStoreApi - axios parameter creator
+ * @export
+ */
+export const ThreadStoreApiAxiosParamCreator = function (
+  configuration?: Configuration,
+) {
+  return {
+    /**
+     *
+     * @param {string} threadId
+     * @param {string} namespace
+     * @param {string} key
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
+    getEntry: async (
+      threadId: string,
+      namespace: string,
+      key: string,
+      options: RawAxiosRequestConfig = {},
+    ): Promise<RequestArgs> => {
+      // verify required parameter 'threadId' is not null or undefined
+      assertParamExists('getEntry', 'threadId', threadId);
+      // verify required parameter 'namespace' is not null or undefined
+      assertParamExists('getEntry', 'namespace', namespace);
+      // verify required parameter 'key' is not null or undefined
+      assertParamExists('getEntry', 'key', key);
+      const localVarPath = `/api/v1/threads/{threadId}/store/{namespace}/{key}`
+        .replace(`{${'threadId'}}`, encodeURIComponent(String(threadId)))
+        .replace(`{${'namespace'}}`, encodeURIComponent(String(namespace)))
+        .replace(`{${'key'}}`, encodeURIComponent(String(key)));
+      // use dummy base URL string because the URL constructor only accepts absolute URLs.
+      const localVarUrlObj = new URL(localVarPath, DUMMY_BASE_URL);
+      let baseOptions;
+      if (configuration) {
+        baseOptions = configuration.baseOptions;
+      }
+
+      const localVarRequestOptions = {
+        method: 'GET',
+        ...baseOptions,
+        ...options,
+      };
+      const localVarHeaderParameter = {} as any;
+      const localVarQueryParameter = {} as any;
+
+      // authentication bearer required
+      // http bearer authentication required
+      await setBearerAuthToObject(localVarHeaderParameter, configuration);
+
+      setSearchParams(localVarUrlObj, localVarQueryParameter);
+      let headersFromBaseOptions =
+        baseOptions && baseOptions.headers ? baseOptions.headers : {};
+      localVarRequestOptions.headers = {
+        ...localVarHeaderParameter,
+        ...headersFromBaseOptions,
+        ...options.headers,
+      };
+
+      return {
+        url: toPathString(localVarUrlObj),
+        options: localVarRequestOptions,
+      };
+    },
+    /**
+     *
+     * @param {string} threadId
+     * @param {string} namespace
+     * @param {number} [limit]
+     * @param {number} [offset]
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
+    listEntries: async (
+      threadId: string,
+      namespace: string,
+      limit?: number,
+      offset?: number,
+      options: RawAxiosRequestConfig = {},
+    ): Promise<RequestArgs> => {
+      // verify required parameter 'threadId' is not null or undefined
+      assertParamExists('listEntries', 'threadId', threadId);
+      // verify required parameter 'namespace' is not null or undefined
+      assertParamExists('listEntries', 'namespace', namespace);
+      const localVarPath = `/api/v1/threads/{threadId}/store/{namespace}`
+        .replace(`{${'threadId'}}`, encodeURIComponent(String(threadId)))
+        .replace(`{${'namespace'}}`, encodeURIComponent(String(namespace)));
+      // use dummy base URL string because the URL constructor only accepts absolute URLs.
+      const localVarUrlObj = new URL(localVarPath, DUMMY_BASE_URL);
+      let baseOptions;
+      if (configuration) {
+        baseOptions = configuration.baseOptions;
+      }
+
+      const localVarRequestOptions = {
+        method: 'GET',
+        ...baseOptions,
+        ...options,
+      };
+      const localVarHeaderParameter = {} as any;
+      const localVarQueryParameter = {} as any;
+
+      // authentication bearer required
+      // http bearer authentication required
+      await setBearerAuthToObject(localVarHeaderParameter, configuration);
+
+      if (limit !== undefined) {
+        localVarQueryParameter['limit'] = limit;
+      }
+
+      if (offset !== undefined) {
+        localVarQueryParameter['offset'] = offset;
+      }
+
+      setSearchParams(localVarUrlObj, localVarQueryParameter);
+      let headersFromBaseOptions =
+        baseOptions && baseOptions.headers ? baseOptions.headers : {};
+      localVarRequestOptions.headers = {
+        ...localVarHeaderParameter,
+        ...headersFromBaseOptions,
+        ...options.headers,
+      };
+
+      return {
+        url: toPathString(localVarUrlObj),
+        options: localVarRequestOptions,
+      };
+    },
+    /**
+     *
+     * @param {string} threadId
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
+    listNamespaces: async (
+      threadId: string,
+      options: RawAxiosRequestConfig = {},
+    ): Promise<RequestArgs> => {
+      // verify required parameter 'threadId' is not null or undefined
+      assertParamExists('listNamespaces', 'threadId', threadId);
+      const localVarPath = `/api/v1/threads/{threadId}/store`.replace(
+        `{${'threadId'}}`,
+        encodeURIComponent(String(threadId)),
+      );
+      // use dummy base URL string because the URL constructor only accepts absolute URLs.
+      const localVarUrlObj = new URL(localVarPath, DUMMY_BASE_URL);
+      let baseOptions;
+      if (configuration) {
+        baseOptions = configuration.baseOptions;
+      }
+
+      const localVarRequestOptions = {
+        method: 'GET',
+        ...baseOptions,
+        ...options,
+      };
+      const localVarHeaderParameter = {} as any;
+      const localVarQueryParameter = {} as any;
+
+      // authentication bearer required
+      // http bearer authentication required
+      await setBearerAuthToObject(localVarHeaderParameter, configuration);
+
+      setSearchParams(localVarUrlObj, localVarQueryParameter);
+      let headersFromBaseOptions =
+        baseOptions && baseOptions.headers ? baseOptions.headers : {};
+      localVarRequestOptions.headers = {
+        ...localVarHeaderParameter,
+        ...headersFromBaseOptions,
+        ...options.headers,
+      };
+
+      return {
+        url: toPathString(localVarUrlObj),
+        options: localVarRequestOptions,
+      };
+    },
+  };
+};
+
+/**
+ * ThreadStoreApi - functional programming interface
+ * @export
+ */
+export const ThreadStoreApiFp = function (configuration?: Configuration) {
+  const localVarAxiosParamCreator =
+    ThreadStoreApiAxiosParamCreator(configuration);
+  return {
+    /**
+     *
+     * @param {string} threadId
+     * @param {string} namespace
+     * @param {string} key
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
+    async getEntry(
+      threadId: string,
+      namespace: string,
+      key: string,
+      options?: RawAxiosRequestConfig,
+    ): Promise<
+      (
+        axios?: AxiosInstance,
+        basePath?: string,
+      ) => AxiosPromise<ThreadStoreEntryDto>
+    > {
+      const localVarAxiosArgs = await localVarAxiosParamCreator.getEntry(
+        threadId,
+        namespace,
+        key,
+        options,
+      );
+      const localVarOperationServerIndex = configuration?.serverIndex ?? 0;
+      const localVarOperationServerBasePath =
+        operationServerMap['ThreadStoreApi.getEntry']?.[
+          localVarOperationServerIndex
+        ]?.url;
+      return (axios, basePath) =>
+        createRequestFunction(
+          localVarAxiosArgs,
+          globalAxios,
+          BASE_PATH,
+          configuration,
+        )(axios, localVarOperationServerBasePath || basePath);
+    },
+    /**
+     *
+     * @param {string} threadId
+     * @param {string} namespace
+     * @param {number} [limit]
+     * @param {number} [offset]
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
+    async listEntries(
+      threadId: string,
+      namespace: string,
+      limit?: number,
+      offset?: number,
+      options?: RawAxiosRequestConfig,
+    ): Promise<
+      (
+        axios?: AxiosInstance,
+        basePath?: string,
+      ) => AxiosPromise<Array<ThreadStoreEntryDto>>
+    > {
+      const localVarAxiosArgs = await localVarAxiosParamCreator.listEntries(
+        threadId,
+        namespace,
+        limit,
+        offset,
+        options,
+      );
+      const localVarOperationServerIndex = configuration?.serverIndex ?? 0;
+      const localVarOperationServerBasePath =
+        operationServerMap['ThreadStoreApi.listEntries']?.[
+          localVarOperationServerIndex
+        ]?.url;
+      return (axios, basePath) =>
+        createRequestFunction(
+          localVarAxiosArgs,
+          globalAxios,
+          BASE_PATH,
+          configuration,
+        )(axios, localVarOperationServerBasePath || basePath);
+    },
+    /**
+     *
+     * @param {string} threadId
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
+    async listNamespaces(
+      threadId: string,
+      options?: RawAxiosRequestConfig,
+    ): Promise<
+      (
+        axios?: AxiosInstance,
+        basePath?: string,
+      ) => AxiosPromise<Array<NamespaceSummaryDto>>
+    > {
+      const localVarAxiosArgs = await localVarAxiosParamCreator.listNamespaces(
+        threadId,
+        options,
+      );
+      const localVarOperationServerIndex = configuration?.serverIndex ?? 0;
+      const localVarOperationServerBasePath =
+        operationServerMap['ThreadStoreApi.listNamespaces']?.[
+          localVarOperationServerIndex
+        ]?.url;
+      return (axios, basePath) =>
+        createRequestFunction(
+          localVarAxiosArgs,
+          globalAxios,
+          BASE_PATH,
+          configuration,
+        )(axios, localVarOperationServerBasePath || basePath);
+    },
+  };
+};
+
+/**
+ * ThreadStoreApi - factory interface
+ * @export
+ */
+export const ThreadStoreApiFactory = function (
+  configuration?: Configuration,
+  basePath?: string,
+  axios?: AxiosInstance,
+) {
+  const localVarFp = ThreadStoreApiFp(configuration);
+  return {
+    /**
+     *
+     * @param {string} threadId
+     * @param {string} namespace
+     * @param {string} key
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
+    getEntry(
+      threadId: string,
+      namespace: string,
+      key: string,
+      options?: RawAxiosRequestConfig,
+    ): AxiosPromise<ThreadStoreEntryDto> {
+      return localVarFp
+        .getEntry(threadId, namespace, key, options)
+        .then((request) => request(axios, basePath));
+    },
+    /**
+     *
+     * @param {string} threadId
+     * @param {string} namespace
+     * @param {number} [limit]
+     * @param {number} [offset]
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
+    listEntries(
+      threadId: string,
+      namespace: string,
+      limit?: number,
+      offset?: number,
+      options?: RawAxiosRequestConfig,
+    ): AxiosPromise<Array<ThreadStoreEntryDto>> {
+      return localVarFp
+        .listEntries(threadId, namespace, limit, offset, options)
+        .then((request) => request(axios, basePath));
+    },
+    /**
+     *
+     * @param {string} threadId
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
+    listNamespaces(
+      threadId: string,
+      options?: RawAxiosRequestConfig,
+    ): AxiosPromise<Array<NamespaceSummaryDto>> {
+      return localVarFp
+        .listNamespaces(threadId, options)
+        .then((request) => request(axios, basePath));
+    },
+  };
+};
+
+/**
+ * ThreadStoreApi - object-oriented interface
+ * @export
+ * @class ThreadStoreApi
+ * @extends {BaseAPI}
+ */
+export class ThreadStoreApi extends BaseAPI {
+  /**
+   *
+   * @param {string} threadId
+   * @param {string} namespace
+   * @param {string} key
+   * @param {*} [options] Override http request option.
+   * @throws {RequiredError}
+   * @memberof ThreadStoreApi
+   */
+  public getEntry(
+    threadId: string,
+    namespace: string,
+    key: string,
+    options?: RawAxiosRequestConfig,
+  ) {
+    return ThreadStoreApiFp(this.configuration)
+      .getEntry(threadId, namespace, key, options)
+      .then((request) => request(this.axios, this.basePath));
+  }
+
+  /**
+   *
+   * @param {string} threadId
+   * @param {string} namespace
+   * @param {number} [limit]
+   * @param {number} [offset]
+   * @param {*} [options] Override http request option.
+   * @throws {RequiredError}
+   * @memberof ThreadStoreApi
+   */
+  public listEntries(
+    threadId: string,
+    namespace: string,
+    limit?: number,
+    offset?: number,
+    options?: RawAxiosRequestConfig,
+  ) {
+    return ThreadStoreApiFp(this.configuration)
+      .listEntries(threadId, namespace, limit, offset, options)
+      .then((request) => request(this.axios, this.basePath));
+  }
+
+  /**
+   *
+   * @param {string} threadId
+   * @param {*} [options] Override http request option.
+   * @throws {RequiredError}
+   * @memberof ThreadStoreApi
+   */
+  public listNamespaces(threadId: string, options?: RawAxiosRequestConfig) {
+    return ThreadStoreApiFp(this.configuration)
+      .listNamespaces(threadId, options)
       .then((request) => request(this.axios, this.basePath));
   }
 }

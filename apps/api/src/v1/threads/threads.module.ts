@@ -21,7 +21,7 @@ import { ThreadsListener } from './threads.listener';
 
 @Module({
   imports: [
-    registerEntities([ThreadEntity, MessageEntity]),
+    registerEntities([MessageEntity, ThreadEntity]),
     forwardRef(() => AgentsModule),
     forwardRef(() => GraphsModule),
     NotificationsModule,
@@ -32,8 +32,8 @@ import { ThreadsListener } from './threads.listener';
   providers: [
     ThreadsService,
     { provide: THREADS_SERVICE_TOKEN, useExisting: ThreadsService },
-    ThreadsDao,
     MessagesDao,
+    ThreadsDao,
     ThreadNameGeneratorService,
     ThreadsListener,
     ThreadResumeQueueService,

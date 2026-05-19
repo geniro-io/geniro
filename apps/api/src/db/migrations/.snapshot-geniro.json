@@ -3503,6 +3503,326 @@
       "comment": null
     },
     {
+      "name": "thread_store_entries",
+      "schema": "public",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": true,
+          "nullable": false,
+          "unique": false,
+          "length": null,
+          "precision": null,
+          "scale": null,
+          "default": "gen_random_uuid()",
+          "comment": null,
+          "enumItems": [],
+          "mappedType": "uuid"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamptz(6)",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": false,
+          "unique": false,
+          "length": 6,
+          "precision": null,
+          "scale": null,
+          "default": "now()",
+          "comment": null,
+          "enumItems": [],
+          "mappedType": "datetime"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamptz(6)",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": false,
+          "unique": false,
+          "length": 6,
+          "precision": null,
+          "scale": null,
+          "default": "now()",
+          "comment": null,
+          "enumItems": [],
+          "mappedType": "datetime"
+        },
+        "deleted_at": {
+          "name": "deleted_at",
+          "type": "timestamptz(6)",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": true,
+          "unique": false,
+          "length": 6,
+          "precision": null,
+          "scale": null,
+          "default": null,
+          "comment": null,
+          "enumItems": [],
+          "mappedType": "datetime"
+        },
+        "created_by": {
+          "name": "created_by",
+          "type": "varchar(255)",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": false,
+          "unique": false,
+          "length": 255,
+          "precision": null,
+          "scale": null,
+          "default": null,
+          "comment": null,
+          "enumItems": [],
+          "mappedType": "string"
+        },
+        "project_id": {
+          "name": "project_id",
+          "type": "uuid",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": false,
+          "unique": false,
+          "length": null,
+          "precision": null,
+          "scale": null,
+          "default": null,
+          "comment": null,
+          "enumItems": [],
+          "mappedType": "uuid"
+        },
+        "thread_id": {
+          "name": "thread_id",
+          "type": "uuid",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": false,
+          "unique": true,
+          "length": null,
+          "precision": null,
+          "scale": null,
+          "default": null,
+          "comment": null,
+          "enumItems": [],
+          "mappedType": "uuid"
+        },
+        "namespace": {
+          "name": "namespace",
+          "type": "varchar(128)",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": false,
+          "unique": false,
+          "length": 128,
+          "precision": null,
+          "scale": null,
+          "default": null,
+          "comment": null,
+          "enumItems": [],
+          "mappedType": "string"
+        },
+        "key": {
+          "name": "key",
+          "type": "varchar(256)",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": false,
+          "unique": false,
+          "length": 256,
+          "precision": null,
+          "scale": null,
+          "default": null,
+          "comment": null,
+          "enumItems": [],
+          "mappedType": "string"
+        },
+        "value": {
+          "name": "value",
+          "type": "jsonb",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": false,
+          "unique": false,
+          "length": null,
+          "precision": null,
+          "scale": null,
+          "default": null,
+          "comment": null,
+          "enumItems": [],
+          "mappedType": "json"
+        },
+        "mode": {
+          "name": "mode",
+          "type": "text",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": false,
+          "unique": false,
+          "length": null,
+          "precision": null,
+          "scale": null,
+          "default": null,
+          "comment": null,
+          "enumItems": [
+            "kv",
+            "append"
+          ],
+          "mappedType": "enum"
+        },
+        "author_agent_id": {
+          "name": "author_agent_id",
+          "type": "varchar(128)",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": true,
+          "unique": false,
+          "length": 128,
+          "precision": null,
+          "scale": null,
+          "default": null,
+          "comment": null,
+          "enumItems": [],
+          "mappedType": "string"
+        },
+        "tags": {
+          "name": "tags",
+          "type": "text[]",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": true,
+          "unique": false,
+          "length": null,
+          "precision": null,
+          "scale": null,
+          "default": null,
+          "comment": null,
+          "enumItems": [],
+          "mappedType": "array"
+        }
+      },
+      "indexes": [
+        {
+          "columnNames": [
+            "created_by"
+          ],
+          "composite": false,
+          "constraint": false,
+          "keyName": "thread_store_entries_created_by_index",
+          "unique": false,
+          "primary": false
+        },
+        {
+          "columnNames": [
+            "id"
+          ],
+          "composite": false,
+          "constraint": false,
+          "keyName": "thread_store_entries_pkey",
+          "unique": true,
+          "primary": true
+        },
+        {
+          "columnNames": [
+            "project_id"
+          ],
+          "composite": false,
+          "constraint": false,
+          "keyName": "thread_store_entries_project_id_index",
+          "unique": false,
+          "primary": false
+        },
+        {
+          "columnNames": [
+            "thread_id",
+            "namespace"
+          ],
+          "composite": true,
+          "constraint": false,
+          "keyName": "thread_store_entries_thread_ns_idx",
+          "unique": false,
+          "primary": false
+        },
+        {
+          "columnNames": [
+            "thread_id",
+            "namespace",
+            "key"
+          ],
+          "composite": true,
+          "constraint": false,
+          "keyName": "thread_store_entries_thread_ns_key_uniq",
+          "unique": true,
+          "primary": false,
+          "expression": "CREATE UNIQUE INDEX thread_store_entries_thread_ns_key_uniq ON public.thread_store_entries USING btree (thread_id, namespace, key) WHERE (deleted_at IS NULL)"
+        }
+      ],
+      "checks": [
+        {
+          "name": "thread_store_entries_mode_check",
+          "columnName": "mode",
+          "definition": "check (\"mode\" in ('kv', 'append'))",
+          "expression": "\"mode\" in ('kv', 'append')"
+        }
+      ],
+      "foreignKeys": {
+        "thread_store_entries_thread_id_foreign": {
+          "columnNames": [
+            "thread_id"
+          ],
+          "constraintName": "thread_store_entries_thread_id_foreign",
+          "localTableName": "public.thread_store_entries",
+          "referencedTableName": "public.threads",
+          "referencedColumnNames": [
+            "id"
+          ],
+          "updateRule": "no action",
+          "deleteRule": "cascade"
+        }
+      },
+      "nativeEnums": {
+        "runtime_instances_error_code_enum": {
+          "name": "runtime_instances_error_code_enum",
+          "schema": "public",
+          "items": [
+            "ProviderAuth",
+            "RuntimeIo",
+            "ImagePull",
+            "Timeout",
+            "Unknown"
+          ]
+        },
+        "runtime_instances_starting_phase_enum": {
+          "name": "runtime_instances_starting_phase_enum",
+          "schema": "public",
+          "items": [
+            "PullingImage",
+            "ContainerCreated",
+            "InitScript",
+            "Ready"
+          ]
+        }
+      },
+      "comment": null
+    },
+    {
       "name": "threads",
       "schema": "public",
       "columns": {

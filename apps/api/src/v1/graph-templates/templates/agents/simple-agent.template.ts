@@ -210,7 +210,9 @@ export class SimpleAgentTemplate extends SimpleAgentNodeBaseTemplate<
 
         instance.setConfig(config);
         instance.setMcpServices(mcpOutputs);
-        await instance.initTools(config);
+        const { builtInToolGroupInstructions } =
+          await instance.initTools(config);
+        toolGroupInstructions.push(...builtInToolGroupInstructions);
 
         const toolInstructions = collectToolInstructions(
           instance.getTools() as BuiltAgentTool[],

@@ -1,16 +1,32 @@
 import type { LLMRequestContext } from '../agents/agents.types';
 import { LlmModelsService } from '../litellm/services/llm-models.service';
 
-/** Logical tool set identifiers available to subagent definitions. */
+/**
+ * Logical tool set identifiers available to subagent definitions.
+ *
+ * Read-only behavior for subagent tools is expressed solely via:
+ *   1. A distinct `SubagentToolId.*ReadOnly` enum value, AND
+ *   2. The tool builder passing `readOnly: true` so the resulting tool
+ *      rejects mutating operations structurally.
+ * Do NOT add a separate `readOnly` boolean to tool definition objects —
+ * the enum value IS the source of truth.
+ *
+ * NOTE: ShellReadOnly currently relies on system-prompt enforcement only.
+ * Structural enforcement (command-level rejection) is tracked as TODO(M12).
+ */
 export enum SubagentToolId {
   /** Full shell access. */
   Shell = 'shell',
-  /** Shell with read-only access (enforced via system prompt). */
+  /** Shell with read-only access. Currently enforced via system prompt; structural enforcement is TODO(M12). */
   ShellReadOnly = 'shell:read-only',
   /** File tools without edit/write/delete. */
   FilesReadOnly = 'files:read-only',
   /** File tools with all actions. */
   FilesFull = 'files:full',
+  /** Full thread-store access (put, append, get, list, delete). */
+  ThreadStore = 'thread-store:full',
+  /** Thread-store read-only (get, list). */
+  ThreadStoreReadOnly = 'thread-store:read-only',
 }
 
 /** Context passed to the model resolver callback at runtime. */

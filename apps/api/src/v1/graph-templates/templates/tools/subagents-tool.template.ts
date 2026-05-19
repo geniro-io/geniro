@@ -6,6 +6,7 @@ import { BuiltAgentTool } from '../../../agent-tools/tools/base-tool';
 import { FilesToolGroup } from '../../../agent-tools/tools/common/files/files-tool-group';
 import { ShellTool } from '../../../agent-tools/tools/common/shell.tool';
 import { SubagentsToolGroup } from '../../../agent-tools/tools/common/subagents/subagents-tool-group';
+import { ThreadStoreToolGroup } from '../../../agent-tools/tools/common/thread-store/thread-store-tool-group';
 import { GraphNode, NodeKind } from '../../../graphs/graphs.types';
 import { GraphRegistry } from '../../../graphs/services/graph-registry';
 import { RuntimeThreadProvider } from '../../../runtime/services/runtime-thread-provider';
@@ -14,6 +15,9 @@ import { RegisterTemplate } from '../../decorators/register-template.decorator';
 import { ToolNodeBaseTemplate } from '../base-node.template';
 
 export const SubagentsToolTemplateSchema = z.object({}).strip();
+export type SubagentsToolTemplateSchemaType = z.infer<
+  typeof SubagentsToolTemplateSchema
+>;
 
 @Injectable()
 @RegisterTemplate()
@@ -47,6 +51,7 @@ export class SubagentsToolTemplate extends ToolNodeBaseTemplate<
     private readonly subagentsToolGroup: SubagentsToolGroup,
     private readonly shellTool: ShellTool,
     private readonly filesToolGroup: FilesToolGroup,
+    private readonly threadStoreToolGroup: ThreadStoreToolGroup,
     private readonly graphRegistry: GraphRegistry,
   ) {
     super();
@@ -54,24 +59,20 @@ export class SubagentsToolTemplate extends ToolNodeBaseTemplate<
 
   public async create() {
     return {
-      provide: async (
-        _params: GraphNode<z.infer<typeof SubagentsToolTemplateSchema>>,
-      ) => ({
+      provide: async (_params: GraphNode<SubagentsToolTemplateSchemaType>) => ({
         tools: [] as BuiltAgentTool[],
         instructions: undefined as string | undefined,
       }),
 
       configure: async (
-        params: GraphNode<z.infer<typeof SubagentsToolTemplateSchema>>,
+        params: GraphNode<SubagentsToolTemplateSchemaType>,
         instance: { tools: BuiltAgentTool[]; instructions?: string },
       ) => {
         const graphId = params.metadata.graphId;
-        const outputNodeIds = params.outputNodeIds;
 
-        // Resolve runtime node
         const runtimeNodeIds = this.graphRegistry.filterNodesByType(
           graphId,
-          outputNodeIds,
+          params.outputNodeIds,
           NodeKind.Runtime,
         );
 
@@ -95,33 +96,41 @@ export class SubagentsToolTemplate extends ToolNodeBaseTemplate<
           );
         }
 
-        // Build tool sets for each SubagentToolId
         const toolSets = new Map<string, BuiltAgentTool[]>();
 
-        // Shell tool (full access)
         const shellBuilt = this.shellTool.build({
           runtimeProvider: runtimeNode.instance,
         });
         toolSets.set(SubagentToolId.Shell, [shellBuilt]);
 
-        // Shell tool (read-only — same tool, restrictions enforced via system prompt)
+        // TODO(M12): ShellReadOnly relies on system-prompt enforcement; add structural
+        // readOnly once ShellTool supports command-level rejection (deny/allow-list).
+        // When M12 lands, replace [shellBuilt] with shellTool.build({ runtimeProvider, readOnly: true }).
         toolSets.set(SubagentToolId.ShellReadOnly, [shellBuilt]);
 
-        // Files read-only
         const filesReadOnly = this.filesToolGroup.buildTools({
           runtimeProvider: runtimeNode.instance,
           includeEditActions: false,
         });
         toolSets.set(SubagentToolId.FilesReadOnly, filesReadOnly.tools);
 
-        // Files full
         const filesFull = this.filesToolGroup.buildTools({
           runtimeProvider: runtimeNode.instance,
           includeEditActions: true,
         });
         toolSets.set(SubagentToolId.FilesFull, filesFull.tools);
 
-        // Build the subagents tool group
+        const threadStoreFull = this.threadStoreToolGroup.buildTools({});
+        toolSets.set(SubagentToolId.ThreadStore, threadStoreFull.tools);
+
+        const threadStoreReadOnly = this.threadStoreToolGroup.buildTools({
+          readOnly: true,
+        });
+        toolSets.set(
+          SubagentToolId.ThreadStoreReadOnly,
+          threadStoreReadOnly.tools,
+        );
+
         const { tools, instructions } = this.subagentsToolGroup.buildTools({
           toolSets,
           runtimeProvider: runtimeNode.instance,

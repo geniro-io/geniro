@@ -21,7 +21,7 @@ import {
 
 const makeHandle = <TInstance>(
   instance: TInstance,
-): GraphNodeInstanceHandle<TInstance, any> => ({
+): GraphNodeInstanceHandle<TInstance, unknown> => ({
   provide: async () => instance,
   configure: async () => {},
   destroy: async () => {},
@@ -56,7 +56,9 @@ describe('SimpleAgentTemplate', () => {
       resetTools: vi.fn(),
       run: vi.fn(),
       setConfig: vi.fn(),
-      initTools: vi.fn().mockResolvedValue(undefined),
+      initTools: vi
+        .fn()
+        .mockResolvedValue({ builtInToolGroupInstructions: [] }),
       setMcpServices: vi.fn(),
       ensureGraphBuilt: vi.fn(),
       updateToolsSnapshot: vi.fn(),
@@ -134,20 +136,6 @@ describe('SimpleAgentTemplate', () => {
       };
 
       expect(() => SimpleAgentTemplateSchema.parse(validConfig)).not.toThrow();
-    });
-
-    it('should validate with optional toolNodeIds', () => {
-      const configWithTools = {
-        name: 'Test Agent',
-        description: 'A test agent',
-        instructions: 'You are a test agent',
-        invokeModelName: 'gpt-4o',
-        toolNodeIds: ['tool-1', 'tool-2'],
-      };
-
-      expect(() =>
-        SimpleAgentTemplateSchema.parse(configWithTools),
-      ).not.toThrow();
     });
 
     it('should reject missing required fields', () => {

@@ -67,7 +67,11 @@ export const SYSTEM_AGENTS: SubagentDefinition[] = [
     - When done, respond with your findings as a structured text message. Include file paths and line numbers for key references.
     - If you cannot fully complete the task, return what you found and clearly state what remains unknown.
   ` + buildWorkspaceContext(ctx),
-    toolIds: [SubagentToolId.ShellReadOnly, SubagentToolId.FilesReadOnly],
+    toolIds: [
+      SubagentToolId.ShellReadOnly,
+      SubagentToolId.FilesReadOnly,
+      SubagentToolId.ThreadStoreReadOnly,
+    ],
     model: (ctx) =>
       ctx.llmModelsService.getSubagentExplorerModel(
         ctx.modelOverrideContext?.models?.llmCodeExplorerSubagentModel,
@@ -113,7 +117,11 @@ export const SYSTEM_AGENTS: SubagentDefinition[] = [
     - Be concise but thorough — favor well-supported conclusions over speculation.
     - If you cannot fully complete the task, return what you found and clearly state what remains uncertain.
   ` + buildWorkspaceContext(ctx),
-    toolIds: [SubagentToolId.ShellReadOnly, SubagentToolId.FilesReadOnly],
+    toolIds: [
+      SubagentToolId.ShellReadOnly,
+      SubagentToolId.FilesReadOnly,
+      SubagentToolId.ThreadStoreReadOnly,
+    ],
     model: (ctx) => ctx.parentModel,
     maxIterations: 1500,
     maxContextTokens: 200_000,
@@ -144,7 +152,11 @@ export const SYSTEM_AGENTS: SubagentDefinition[] = [
     - When done, respond with a short summary of what you did.
     - If you cannot complete the task, explain what went wrong briefly.
   ` + buildWorkspaceContext(ctx),
-    toolIds: [SubagentToolId.Shell, SubagentToolId.FilesFull],
+    toolIds: [
+      SubagentToolId.Shell,
+      SubagentToolId.FilesFull,
+      SubagentToolId.ThreadStore,
+    ],
     model: (ctx) =>
       ctx.llmModelsService.getSubagentFastModel(
         ctx.modelOverrideContext?.models?.llmMiniCodeModel,
@@ -181,7 +193,11 @@ export const SYSTEM_AGENTS: SubagentDefinition[] = [
     - If you cannot complete the task, explain what you attempted and what went wrong.
     - Be concise but thorough.
   ` + buildWorkspaceContext(ctx),
-    toolIds: [SubagentToolId.Shell, SubagentToolId.FilesFull],
+    toolIds: [
+      SubagentToolId.Shell,
+      SubagentToolId.FilesFull,
+      SubagentToolId.ThreadStore,
+    ],
     model: (ctx) => ctx.parentModel,
     maxIterations: 2500,
   },

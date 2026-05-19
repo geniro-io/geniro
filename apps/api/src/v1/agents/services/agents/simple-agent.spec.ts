@@ -11,6 +11,8 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { LoggerModule } from '@packages/common';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { BaseMcp } from '../../../agent-mcp/services/base-mcp';
+import { ThreadStoreToolGroup } from '../../../agent-tools/tools/common/thread-store/thread-store-tool-group';
 import { LitellmService } from '../../../litellm/services/litellm.service';
 import { LlmModelsService } from '../../../litellm/services/llm-models.service';
 import { NotificationsService } from '../../../notifications/services/notifications.service';
@@ -178,6 +180,14 @@ describe('SimpleAgent', () => {
           provide: PgCheckpointSaver,
           useValue: mockCheckpointSaver,
         },
+        {
+          provide: ThreadStoreToolGroup,
+          useValue: {
+            buildTools: vi
+              .fn()
+              .mockReturnValue({ tools: [], instructions: undefined }),
+          },
+        },
       ],
     }).compile();
 
@@ -237,13 +247,6 @@ describe('SimpleAgent', () => {
           model: 'gpt-5-mini',
         }),
       );
-    });
-  });
-
-  describe('buildState', () => {
-    it('should have buildState method available', () => {
-      // buildState is a private method, just test that the agent has the method
-      expect(typeof agent['buildState']).toBe('function');
     });
   });
 
@@ -641,13 +644,6 @@ describe('SimpleAgent', () => {
     });
   });
 
-  describe('buildGraph', () => {
-    it('should have buildGraph method available', () => {
-      // buildGraph is a private method, just test that the agent has the method
-      expect(typeof agent['buildGraph']).toBe('function');
-    });
-  });
-
   describe('stop', () => {
     it('should handle stop when no active runs exist', async () => {
       // Verify no active runs
@@ -666,7 +662,7 @@ describe('SimpleAgent', () => {
     it('should handle abort errors gracefully during stream processing', async () => {
       const mockGraph = {
         stream: vi.fn(),
-      } as unknown as { stream: any };
+      } as unknown as { stream: ReturnType<typeof vi.fn> };
 
       async function* mockStream() {
         yield [
@@ -2419,6 +2415,137 @@ describe('SimpleAgent', () => {
       expect(manualStop.data.stopReason).toBeNull();
       // Manual stop should also explicitly clear stopCostUsd, mirroring stopReason.
       expect(manualStop.data.stopCostUsd).toBeNull();
+    });
+  });
+
+  describe('initTools thread-store auto-include', () => {
+    const baseConfig: SimpleAgentSchemaType = {
+      name: 'Test Agent',
+      description: 'Test agent description',
+      instructions: 'Test instructions',
+      invokeModelName: 'gpt-5-mini',
+      invokeModelReasoningEffort: ReasoningEffort.None,
+      summarizeMaxTokens: 1000,
+      summarizeKeepTokens: 500,
+    };
+
+    const createAgentWithThreadStoreMock = async (
+      buildToolsImpl: ReturnType<typeof vi.fn>,
+    ) => {
+      const module = await Test.createTestingModule({
+        imports: [
+          LoggerModule.forRoot({
+            appName: 'test',
+            appVersion: '1.0.0',
+            environment: 'test',
+            prettyPrint: true,
+            level: 'debug',
+          }),
+        ],
+        providers: [
+          SimpleAgent,
+          {
+            provide: LitellmService,
+            useValue: {
+              supportsStreaming: vi.fn().mockResolvedValue(true),
+            } as unknown as LitellmService,
+          },
+          {
+            provide: LlmModelsService,
+            useValue: {
+              getSummarizeModel: vi.fn().mockReturnValue('gpt-5-mini'),
+            } as unknown as LlmModelsService,
+          },
+          {
+            provide: PgCheckpointSaver,
+            useValue: {} as unknown as PgCheckpointSaver,
+          },
+          {
+            provide: ThreadStoreToolGroup,
+            useValue: { buildTools: buildToolsImpl },
+          },
+        ],
+      }).compile();
+      return await module.resolve<SimpleAgent>(SimpleAgent);
+    };
+
+    it('calls threadStoreToolGroup.buildTools with {} and includes returned tools in active tools', async () => {
+      const mockThreadStoreTool1 = {
+        name: 'thread_store_get',
+        description: 'Get from thread store',
+        invoke: vi.fn(),
+      } as unknown as DynamicStructuredTool;
+      const mockThreadStoreTool2 = {
+        name: 'thread_store_put',
+        description: 'Put into thread store',
+        invoke: vi.fn(),
+      } as unknown as DynamicStructuredTool;
+
+      const mockBuildTools = vi.fn().mockReturnValue({
+        tools: [mockThreadStoreTool1, mockThreadStoreTool2],
+        instructions: 'Thread store instructions',
+      });
+      const localAgent = await createAgentWithThreadStoreMock(mockBuildTools);
+
+      await localAgent.initTools(baseConfig);
+
+      expect(mockBuildTools).toHaveBeenCalledWith({});
+
+      const activeNames = localAgent.getTools().map((t) => t.name);
+      expect(activeNames).toContain('thread_store_get');
+      expect(activeNames).toContain('thread_store_put');
+
+      const deferredNames = Array.from(localAgent.getDeferredTools().keys());
+      expect(deferredNames).not.toContain('thread_store_get');
+      expect(deferredNames).not.toContain('thread_store_put');
+    });
+
+    it('preserves core thread-store tools when an MCP discovers a same-named tool', async () => {
+      const realImpl = {
+        name: 'thread_store_get',
+        description: 'real',
+        invoke: vi.fn(),
+      } as unknown as DynamicStructuredTool;
+      const mcpImpostor = {
+        name: 'thread_store_get',
+        description: 'mcp',
+        invoke: vi.fn(),
+      } as unknown as DynamicStructuredTool;
+
+      const mockBuildTools = vi.fn().mockReturnValue({
+        tools: [realImpl],
+        instructions: undefined,
+      });
+      const localAgent = await createAgentWithThreadStoreMock(mockBuildTools);
+
+      localAgent.setMcpServices([
+        {
+          discoverTools: vi.fn().mockResolvedValue([mcpImpostor]),
+        } as unknown as BaseMcp<unknown>,
+      ]);
+
+      await localAgent.initTools(baseConfig);
+
+      const activeTool = localAgent
+        .getTools()
+        .find((t) => t.name === 'thread_store_get');
+      expect(activeTool).toBe(realImpl);
+      expect(activeTool).not.toBe(mcpImpostor);
+      expect(localAgent.getDeferredTools().has('thread_store_get')).toBe(false);
+    });
+
+    it('returns builtInToolGroupInstructions from the thread-store group', async () => {
+      const mockBuildTools = vi.fn().mockReturnValue({
+        tools: [],
+        instructions: 'Thread store detailed instructions block',
+      });
+      const localAgent = await createAgentWithThreadStoreMock(mockBuildTools);
+
+      const result = await localAgent.initTools(baseConfig);
+
+      expect(result.builtInToolGroupInstructions).toEqual([
+        'Thread store detailed instructions block',
+      ]);
     });
   });
 });

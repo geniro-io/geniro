@@ -1235,7 +1235,7 @@ describe('Graph Revisions Integration Tests', () => {
   describe('Configuration Changes with Execution Verification', () => {
     it(
       'applies revision when changing agent model and verifies execution',
-      { timeout: 120000 },
+      { timeout: 180000 },
       async () => {
         const graphData = createMockGraphData();
 

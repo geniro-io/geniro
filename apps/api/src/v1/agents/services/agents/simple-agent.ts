@@ -22,6 +22,7 @@ import { ZodSchema } from 'zod';
 import { BaseMcp } from '../../../agent-mcp/services/base-mcp';
 import { zodToAjvSchema } from '../../../agent-tools/agent-tools.utils';
 import type { BuiltAgentTool } from '../../../agent-tools/tools/base-tool';
+import { ThreadStoreToolGroup } from '../../../agent-tools/tools/common/thread-store/thread-store-tool-group';
 import {
   DeferredToolEntry,
   ToolSearchTool,
@@ -96,6 +97,7 @@ export class SimpleAgent extends BaseAgent<SimpleAgentSchemaType> {
     private readonly litellmService: LitellmService,
     private readonly logger: DefaultLogger,
     private readonly llmModelsService: LlmModelsService,
+    private readonly threadStoreToolGroup: ThreadStoreToolGroup,
   ) {
     super();
   }
@@ -109,10 +111,25 @@ export class SimpleAgent extends BaseAgent<SimpleAgentSchemaType> {
     return undefined;
   }
 
-  public async initTools(_config: SimpleAgentSchemaType) {
+  public async initTools(
+    _config: SimpleAgentSchemaType,
+  ): Promise<{ builtInToolGroupInstructions: string[] }> {
+    const builtInToolGroupInstructions: string[] = [];
+
     // ----- core tools (always loaded) -----
     this.addTool(new FinishTool().build({}));
     this.addTool(new WaitForTool().build({}));
+
+    // ----- thread-store (always loaded, same tier as core tools) -----
+    const threadStoreResult = this.threadStoreToolGroup.buildTools({});
+    for (const tool of threadStoreResult.tools) {
+      if (!this.tools.has(tool.name)) {
+        this.addTool(tool);
+      }
+    }
+    if (threadStoreResult.instructions) {
+      builtInToolGroupInstructions.push(threadStoreResult.instructions);
+    }
 
     // ----- mcp -----
     for (const mcpService of this.mcpServices) {
@@ -120,6 +137,13 @@ export class SimpleAgent extends BaseAgent<SimpleAgentSchemaType> {
         const mcpTools = await mcpService.discoverTools();
 
         for (const builtAgentTool of mcpTools) {
+          // Core tools (finish, wait_for, thread-store) win over MCP impostors.
+          if (this.tools.has(builtAgentTool.name)) {
+            this.logger.warn(
+              `MCP tool "${builtAgentTool.name}" collides with an already-registered core tool; skipping MCP version.`,
+            );
+            continue;
+          }
           this.addTool(builtAgentTool);
         }
       } catch (error) {
@@ -134,6 +158,7 @@ export class SimpleAgent extends BaseAgent<SimpleAgentSchemaType> {
     const coreToolNames = new Set<string>([
       FinishTool.TOOL_NAME,
       WaitForTool.TOOL_NAME,
+      ...threadStoreResult.tools.map((t) => t.name),
     ]);
     for (const [name, tool] of this.tools.entries()) {
       if (!coreToolNames.has(name)) {
@@ -164,6 +189,8 @@ export class SimpleAgent extends BaseAgent<SimpleAgentSchemaType> {
     this.initialDeferredSnapshot = new Map(this.deferredTools);
     this.initialToolsSnapshot = new Map(this.tools);
     this.seenThreads.clear();
+
+    return { builtInToolGroupInstructions };
   }
 
   /**

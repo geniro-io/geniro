@@ -183,9 +183,37 @@ export class RepoIndexQueueService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
+   * Returns the current BullMQ state of the job associated with `repoIndexId`,
+   * or null if no such job exists. Used by the repair-on-read path in
+   * `claimIndexSlot` to avoid disrupting an actively-running worker: an
+   * 'active' state means a worker is processing the row even if its DB
+   * `updatedAt` has gone stale (e.g. a slow embedding batch that has not yet
+   * fired `incrementIndexedTokens`). Also used at startup by `recoverStuckJobs`
+   * to decide whether a row needs re-enqueueing.
+   */
+  async getJobState(repoIndexId: string): Promise<string | null> {
+    try {
+      const job = await this.queue.getJob(repoIndexId);
+      if (!job) {
+        return null;
+      }
+      return await job.getState();
+    } catch (err) {
+      this.logger.debug('Could not fetch job state', {
+        repoIndexId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return null;
+    }
+  }
+
+  /**
    * Add a job to the queue. If a job with the same ID already exists:
    * - If waiting/delayed: skip (already queued)
-   * - If active: try to move to failed (orphaned from previous server), then re-add
+   * - If active: attempt to move to failed (treats it as orphaned — only safe
+   *   when called from `recoverStuckJobs` at startup; the runtime repair path
+   *   in `claimIndexSlot` guards with `getJobState` before calling here so it
+   *   never reaches this branch with a live worker), then re-add
    * - If completed/failed: remove and re-add
    */
   async addIndexJob(data: RepoIndexJobData): Promise<void> {
@@ -205,8 +233,13 @@ export class RepoIndexQueueService implements OnModuleInit, OnModuleDestroy {
       // For active/completed/failed jobs, try to remove so we can re-add
       try {
         if (state === 'active') {
-          // Job is "active" but we're at startup, so it's orphaned from previous server
-          // Move to failed first, then remove
+          // The job appears active. At startup this means it is orphaned from
+          // a previous server; at runtime the caller (claimIndexSlot) must
+          // have verified via getJobState that the job is NOT active before
+          // reaching here. moveToFailed uses token '0' which will silently
+          // fail if a live worker holds the real lock — the subsequent
+          // queue.add then races the existing worker. That race is prevented
+          // by the BullMQ guard in claimIndexSlot.
           await existingJob.moveToFailed(
             new Error('Job orphaned after server restart'),
             '0',

@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { SubagentsService } from './subagents.service';
+import { SubagentToolId } from './subagents.types';
 
 describe('SubagentsService', () => {
   let service: SubagentsService;
@@ -56,7 +57,26 @@ describe('SubagentsService', () => {
       expect(smartExplorer!.toolIds).toEqual([
         'shell:read-only',
         'files:read-only',
+        'thread-store:read-only',
       ]);
+    });
+
+    it('simple and smart subagents include ThreadStore tool', () => {
+      const simple = service.getById('system:simple');
+      const smart = service.getById('system:smart');
+
+      expect(simple!.toolIds).toContain(SubagentToolId.ThreadStore);
+      expect(smart!.toolIds).toContain(SubagentToolId.ThreadStore);
+    });
+
+    it('explorer and smart-explorer subagents include ThreadStoreReadOnly tool', () => {
+      const explorer = service.getById('system:explorer');
+      const smartExplorer = service.getById('system:smart-explorer');
+
+      expect(explorer!.toolIds).toContain(SubagentToolId.ThreadStoreReadOnly);
+      expect(smartExplorer!.toolIds).toContain(
+        SubagentToolId.ThreadStoreReadOnly,
+      );
     });
   });
 

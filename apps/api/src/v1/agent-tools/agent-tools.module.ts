@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { forwardRef, Module } from '@nestjs/common';
 
 import { GitRepositoriesModule } from '../git-repositories/git-repositories.module';
 import { KnowledgeModule } from '../knowledge/knowledge.module';
@@ -6,6 +6,7 @@ import { LitellmModule } from '../litellm/litellm.module';
 import { OpenaiModule } from '../openai/openai.module';
 import { QdrantModule } from '../qdrant/qdrant.module';
 import { SubagentsModule } from '../subagents/subagents.module';
+import { ThreadStoreModule } from '../thread-store/thread-store.module';
 import { CommunicationExecTool } from './tools/common/communication/communication-exec.tool';
 import { CommunicationToolGroup } from './tools/common/communication/communication-tool-group';
 import { FilesApplyChangesTool } from './tools/common/files/files-apply-changes.tool';
@@ -36,6 +37,12 @@ import { ShellTool } from './tools/common/shell.tool';
 import { SubagentsListTool } from './tools/common/subagents/subagents-list.tool';
 import { SubagentsRunTaskTool } from './tools/common/subagents/subagents-run-task.tool';
 import { SubagentsToolGroup } from './tools/common/subagents/subagents-tool-group';
+import { ThreadStoreAppendTool } from './tools/common/thread-store/thread-store-append.tool';
+import { ThreadStoreDeleteTool } from './tools/common/thread-store/thread-store-delete.tool';
+import { ThreadStoreGetTool } from './tools/common/thread-store/thread-store-get.tool';
+import { ThreadStoreListTool } from './tools/common/thread-store/thread-store-list.tool';
+import { ThreadStorePutTool } from './tools/common/thread-store/thread-store-put.tool';
+import { ThreadStoreToolGroup } from './tools/common/thread-store/thread-store-tool-group';
 import { ToolSearchTool } from './tools/common/tool-search.tool';
 import { WebSearchTool } from './tools/common/web-search.tool';
 import { FinishTool } from './tools/core/finish.tool';
@@ -49,6 +56,7 @@ import { WaitForTool } from './tools/core/wait-for.tool';
     KnowledgeModule,
     QdrantModule,
     SubagentsModule,
+    forwardRef(() => ThreadStoreModule),
   ],
   controllers: [],
   providers: [
@@ -86,6 +94,12 @@ import { WaitForTool } from './tools/core/wait-for.tool';
     SubagentsListTool,
     SubagentsRunTaskTool,
     SubagentsToolGroup,
+    ThreadStorePutTool,
+    ThreadStoreAppendTool,
+    ThreadStoreGetTool,
+    ThreadStoreListTool,
+    ThreadStoreDeleteTool,
+    ThreadStoreToolGroup,
   ],
   exports: [
     ShellTool,
@@ -122,6 +136,12 @@ import { WaitForTool } from './tools/core/wait-for.tool';
     SubagentsListTool,
     SubagentsRunTaskTool,
     SubagentsToolGroup,
+    ThreadStorePutTool,
+    ThreadStoreAppendTool,
+    ThreadStoreGetTool,
+    ThreadStoreListTool,
+    ThreadStoreDeleteTool,
+    ThreadStoreToolGroup,
   ],
 })
 export class AgentToolsModule {}

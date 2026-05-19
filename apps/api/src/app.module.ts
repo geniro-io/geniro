@@ -20,6 +20,7 @@ import { ProjectsModule } from './v1/projects/projects.module';
 import { RuntimeModule } from './v1/runtime/runtime.module';
 import { SystemModule } from './v1/system/system.module';
 import { SystemAgentsModule } from './v1/system-agents/system-agents.module';
+import { ThreadStoreModule } from './v1/thread-store/thread-store.module';
 import { ThreadsModule } from './v1/threads/threads.module';
 import { UserPreferencesModule } from './v1/user-preferences/user-preferences.module';
 
@@ -49,6 +50,7 @@ import { UserPreferencesModule } from './v1/user-preferences/user-preferences.mo
     ProjectsModule,
     SystemModule,
     ThreadsModule,
+    ThreadStoreModule,
     UserPreferencesModule,
   ],
   controllers: [],
