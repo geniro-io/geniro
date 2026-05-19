@@ -2,6 +2,7 @@
   "id": "geniro",
   "realm": "geniro",
   "enabled": true,
+  "sslRequired": "none",
   "loginTheme": "geniro",
   "loginWithEmailAllowed": true,
   "duplicateEmailsAllowed": false,
