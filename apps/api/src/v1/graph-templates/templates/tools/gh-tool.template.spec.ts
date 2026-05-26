@@ -129,13 +129,13 @@ describe('GhToolTemplate', () => {
     it('should accept empty config (uses defaults)', () => {
       const config = {};
       const parsed = GhToolTemplateSchema.parse(config);
-      expect(parsed).toEqual({ cloneOnly: false });
+      expect(parsed).toEqual({ readOnly: false });
     });
 
-    it('should accept cloneOnly flag', () => {
-      const config = { cloneOnly: true };
+    it('should accept readOnly flag', () => {
+      const config = { readOnly: true };
       const parsed = GhToolTemplateSchema.parse(config);
-      expect(parsed.cloneOnly).toBe(true);
+      expect(parsed.readOnly).toBe(true);
     });
 
     it('should ignore legacy flags from older configs', () => {
@@ -144,7 +144,7 @@ describe('GhToolTemplate', () => {
         anotherExtra: 'value',
       };
       const parsed = GhToolTemplateSchema.parse(config);
-      expect(parsed).toEqual({ cloneOnly: false });
+      expect(parsed).toEqual({ readOnly: false });
     });
   });
 
@@ -246,7 +246,7 @@ describe('GhToolTemplate', () => {
       });
 
       const outputNodeIds = new Set([mockRuntimeId, mockResourceId]);
-      const config = { cloneOnly: false };
+      const config = { readOnly: false };
       const handle = await template.create();
       const init: GraphNode<typeof config> = {
         config,
@@ -259,7 +259,7 @@ describe('GhToolTemplate', () => {
 
       expect(mockGhToolGroup.buildTools).toHaveBeenCalledWith(
         expect.objectContaining({
-          tools: undefined,
+          readOnly: false,
         }),
       );
       expect(mockGhToolGroup.buildTools).toHaveBeenCalledWith(
@@ -277,9 +277,9 @@ describe('GhToolTemplate', () => {
       expect(buildArgs.runtimeProvider).toBe(mockRuntimeThreadProvider);
     });
 
-    it('should use cloneOnly flag to limit tools', async () => {
+    it('should use readOnly flag to limit tools', async () => {
       const outputNodeIds = new Set([mockRuntimeId, mockResourceId]);
-      const config = { cloneOnly: true };
+      const config = { readOnly: true };
       const handle = await template.create();
       const init: GraphNode<typeof config> = {
         config,
@@ -292,7 +292,7 @@ describe('GhToolTemplate', () => {
 
       expect(mockGhToolGroup.buildTools).toHaveBeenCalledWith(
         expect.objectContaining({
-          tools: ['clone'],
+          readOnly: true,
         }),
       );
     });
@@ -300,7 +300,7 @@ describe('GhToolTemplate', () => {
     it('should throw NotFoundException when runtime node not found', async () => {
       vi.mocked(mockGraphRegistry.filterNodesByType).mockReturnValue([]);
 
-      const config = { cloneOnly: false };
+      const config = { readOnly: false };
       const handle = await template.create();
       const init: GraphNode<typeof config> = {
         config,
@@ -319,7 +319,7 @@ describe('GhToolTemplate', () => {
       vi.mocked(mockGraphRegistry.getNode).mockReturnValue(undefined);
 
       const outputNodeIds = new Set([mockRuntimeId]);
-      const config = { cloneOnly: false };
+      const config = { readOnly: false };
       const handle = await template.create();
       const init: GraphNode<typeof config> = {
         config,
@@ -338,7 +338,7 @@ describe('GhToolTemplate', () => {
       vi.mocked(mockGraphRegistry.filterNodesByTemplate).mockReturnValue([]);
 
       const outputNodeIds = new Set([mockRuntimeId]);
-      const config = { cloneOnly: false };
+      const config = { readOnly: false };
       const handle = await template.create();
       const init: GraphNode<typeof config> = {
         config,
@@ -355,7 +355,7 @@ describe('GhToolTemplate', () => {
 
     it('should include init script from GitHub resource in runtime resolver', async () => {
       const outputNodeIds = new Set([mockRuntimeId, mockResourceId]);
-      const config = { cloneOnly: false };
+      const config = { readOnly: false };
       const handle = await template.create();
       const init: GraphNode<typeof config> = {
         config,
@@ -378,7 +378,7 @@ describe('GhToolTemplate', () => {
       );
 
       const outputNodeIds = new Set([mockRuntimeId, mockResourceId]);
-      const config = { cloneOnly: false };
+      const config = { readOnly: false };
       const handle = await template.create();
       const init: GraphNode<typeof config> = {
         config,
@@ -401,7 +401,7 @@ describe('GhToolTemplate', () => {
       mockResource.data.initScript = undefined;
 
       const outputNodeIds = new Set([mockRuntimeId, mockResourceId]);
-      const config = { cloneOnly: false };
+      const config = { readOnly: false };
       const handle = await template.create();
       const init: GraphNode<typeof config> = {
         config,

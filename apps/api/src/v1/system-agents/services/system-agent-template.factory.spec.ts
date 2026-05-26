@@ -44,7 +44,7 @@ const ENGINEER_DEFINITION: SystemAgentDefinition = {
   id: 'engineer',
   name: 'Engineer',
   description: 'A software engineer agent.',
-  tools: ['shell-tool', 'files-tool'],
+  tools: [{ id: 'shell-tool' }, { id: 'files-tool' }],
   defaultModel: null,
   instructions: 'You are a senior software engineer.',
   contentHash: 'abc123def456',
@@ -1052,7 +1052,7 @@ describe('SystemAgentTemplateFactory', () => {
       // def.tools contains 'some-mcp' as a predefined tool ID
       const defWithMcpId: SystemAgentDefinition = {
         ...ENGINEER_DEFINITION,
-        tools: ['some-mcp'],
+        tools: [{ id: 'some-mcp' }],
       };
 
       const someMcpToolMock = createMockToolTemplate({

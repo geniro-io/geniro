@@ -2,7 +2,10 @@ import { createHash } from 'crypto';
 import matter from 'gray-matter';
 import { z } from 'zod';
 
-import type { SystemAgentDefinition } from './system-agents.types';
+import type {
+  SystemAgentDefinition,
+  SystemAgentToolEntry,
+} from './system-agents.types';
 
 export const SystemAgentFrontmatterSchema = z.object({
   id: z.string().min(1),
@@ -14,6 +17,18 @@ export const SystemAgentFrontmatterSchema = z.object({
 
 export function computeContentHash(content: string): string {
   return createHash('sha256').update(content).digest('hex');
+}
+
+export function parseToolEntry(raw: string): SystemAgentToolEntry {
+  const pipeIdx = raw.indexOf('|');
+  if (pipeIdx === -1) {
+    return { id: raw };
+  }
+
+  const id = raw.slice(0, pipeIdx);
+  const jsonStr = raw.slice(pipeIdx + 1);
+
+  return { id, config: JSON.parse(jsonStr) as Record<string, unknown> };
 }
 
 export function parseSystemAgentFile(
@@ -39,7 +54,7 @@ export function parseSystemAgentFile(
     id: frontmatter.id,
     name: frontmatter.name,
     description: frontmatter.description,
-    tools: frontmatter.tools,
+    tools: frontmatter.tools.map(parseToolEntry),
     defaultModel: frontmatter.defaultModel,
     instructions,
     contentHash,

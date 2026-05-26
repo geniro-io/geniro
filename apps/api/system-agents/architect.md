@@ -4,6 +4,7 @@ name: Architect
 description: A software architect agent that designs systems, evaluates trade-offs, and produces implementation plans.
 tools:
   - files-tool
+  - gh-tool|{"readOnly":true}
   - subagents-tool
 ---
 

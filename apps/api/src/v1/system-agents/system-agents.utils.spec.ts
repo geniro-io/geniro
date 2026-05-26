@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   computeContentHash,
   parseSystemAgentFile,
+  parseToolEntry,
   SystemAgentFrontmatterSchema,
 } from './system-agents.utils';
 
@@ -115,6 +116,32 @@ describe('SystemAgentFrontmatterSchema', () => {
   });
 });
 
+describe('parseToolEntry', () => {
+  it('parses a plain tool ID without config', () => {
+    expect(parseToolEntry('files-tool')).toEqual({ id: 'files-tool' });
+  });
+
+  it('parses a tool ID with JSON config after pipe delimiter', () => {
+    expect(parseToolEntry('gh-tool|{"readOnly":true}')).toEqual({
+      id: 'gh-tool',
+      config: { readOnly: true },
+    });
+  });
+
+  it('parses config with multiple properties', () => {
+    expect(
+      parseToolEntry('gh-tool|{"readOnly":true,"additionalLabels":["bug"]}'),
+    ).toEqual({
+      id: 'gh-tool',
+      config: { readOnly: true, additionalLabels: ['bug'] },
+    });
+  });
+
+  it('throws on invalid JSON after pipe', () => {
+    expect(() => parseToolEntry('gh-tool|{invalid}')).toThrow();
+  });
+});
+
 describe('parseSystemAgentFile', () => {
   it('parses a valid .md file into a SystemAgentDefinition', () => {
     const definition = parseSystemAgentFile('engineer.md', VALID_FILE_CONTENT);
@@ -122,7 +149,10 @@ describe('parseSystemAgentFile', () => {
     expect(definition.id).toBe('engineer');
     expect(definition.name).toBe('Engineer');
     expect(definition.description).toBe('A software engineer agent.');
-    expect(definition.tools).toEqual(['shell-tool', 'files-tool']);
+    expect(definition.tools).toEqual([
+      { id: 'shell-tool' },
+      { id: 'files-tool' },
+    ]);
     expect(definition.defaultModel).toBeNull();
     expect(definition.templateId).toBe('system-agent-engineer');
     expect(definition.contentHash).toMatch(/^[a-f0-9]{64}$/);

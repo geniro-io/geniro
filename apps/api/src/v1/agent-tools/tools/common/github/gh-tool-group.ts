@@ -29,8 +29,17 @@ export enum GhToolType {
   IssueComment = 'issue_comment',
 }
 
+const READ_ONLY_TOOLS: ReadonlySet<GhToolType> = new Set([
+  GhToolType.Clone,
+  GhToolType.PrRead,
+  GhToolType.PrComment,
+  GhToolType.Issue,
+  GhToolType.IssueComment,
+]);
+
 export type GhToolGroupConfig = GhBaseToolConfig & {
   tools?: GhToolType[];
+  readOnly?: boolean;
   /**
    * Labels that will always be applied when creating PRs via `gh_pr_create`.
    * These are merged with any labels passed at invocation time.
@@ -55,9 +64,20 @@ export class GhToolGroup extends BaseToolGroup<GhToolGroupConfig> {
   }
 
   public getDetailedInstructions(
-    _config: GhToolGroupConfig,
+    config: GhToolGroupConfig,
     _lgConfig?: ExtendedLangGraphRunnableConfig,
   ): string {
+    if (config.readOnly) {
+      return dedent`
+        ## GitHub Tools — Read-Only Mode
+
+        You have read-only access to the GitHub repository. Use \`gh_clone\` to clone and inspect code,
+        \`gh_pr_read\` to review pull requests, and the issue/comment tools to read issues and discussions.
+
+        You cannot create branches, commit, push, or open pull requests.
+      `;
+    }
+
     return dedent`
       ## Git Workflow — Required Tool Order
 
@@ -91,7 +111,7 @@ export class GhToolGroup extends BaseToolGroup<GhToolGroupConfig> {
     config: GhToolGroupConfig,
     lgConfig?: ExtendedLangGraphRunnableConfig,
   ): BuiltAgentTool[] {
-    const selectedTools = config.tools ?? [
+    let selectedTools = config.tools ?? [
       GhToolType.Clone,
       GhToolType.Commit,
       GhToolType.Branch,
@@ -102,6 +122,10 @@ export class GhToolGroup extends BaseToolGroup<GhToolGroupConfig> {
       GhToolType.Issue,
       GhToolType.IssueComment,
     ];
+
+    if (config.readOnly) {
+      selectedTools = selectedTools.filter((t) => READ_ONLY_TOOLS.has(t));
+    }
 
     const tools: BuiltAgentTool[] = [];
 

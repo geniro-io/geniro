@@ -209,6 +209,59 @@ describe('GhToolGroup', () => {
       );
     });
 
+    it('should filter to read-only tools when readOnly is true', () => {
+      const mockCloneTool = { name: 'gh_clone' } as DynamicStructuredTool;
+      const mockPrReadTool = { name: 'gh_pr_read' } as DynamicStructuredTool;
+      const mockPrCommentTool = {
+        name: 'gh_pr_comment',
+      } as DynamicStructuredTool;
+      const mockIssueTool = { name: 'gh_issue' } as DynamicStructuredTool;
+      const mockIssueCommentTool = {
+        name: 'gh_issue_comment',
+      } as DynamicStructuredTool;
+
+      mockGhCloneTool.build = vi.fn().mockReturnValue(mockCloneTool);
+      mockGhPrReadTool.build = vi.fn().mockReturnValue(mockPrReadTool);
+      mockGhPrCommentTool.build = vi.fn().mockReturnValue(mockPrCommentTool);
+      mockGhIssueManageTool.build = vi.fn().mockReturnValue(mockIssueTool);
+      mockGhIssueCommentTool.build = vi
+        .fn()
+        .mockReturnValue(mockIssueCommentTool);
+
+      const config: GhToolGroupConfig = {
+        runtimeProvider: { provide: vi.fn() } as any,
+        resolveTokenForOwner: vi.fn().mockResolvedValue('ghp_test_token'),
+        readOnly: true,
+      };
+
+      const result = toolGroup.buildTools(config);
+
+      expect(result.tools).toEqual([
+        mockCloneTool,
+        mockPrReadTool,
+        mockPrCommentTool,
+        mockIssueTool,
+        mockIssueCommentTool,
+      ]);
+      expect(mockGhCommitTool.build).not.toHaveBeenCalled();
+      expect(mockGhBranchTool.build).not.toHaveBeenCalled();
+      expect(mockGhPushTool.build).not.toHaveBeenCalled();
+      expect(mockGhCreatePullRequestTool.build).not.toHaveBeenCalled();
+    });
+
+    it('should return read-only instructions when readOnly is true', () => {
+      const config: GhToolGroupConfig = {
+        runtimeProvider: { provide: vi.fn() } as any,
+        resolveTokenForOwner: vi.fn().mockResolvedValue('ghp_test_token'),
+        readOnly: true,
+      };
+
+      const result = toolGroup.buildTools(config);
+
+      expect(result.instructions).toContain('Read-Only Mode');
+      expect(result.instructions).not.toContain('Required Tool Order');
+    });
+
     it('should build all default tools when tools property is omitted', () => {
       const mockCloneTool = { name: 'gh_clone' } as DynamicStructuredTool;
       const mockCommitTool = { name: 'gh_commit' } as DynamicStructuredTool;

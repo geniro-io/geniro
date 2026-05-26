@@ -101,7 +101,7 @@ export class SystemAgentTemplateFactory {
       readonly schema = schema;
       readonly systemAgentId = def.id;
       readonly systemAgentContentHash = def.contentHash;
-      readonly systemAgentPredefinedTools = def.tools;
+      readonly systemAgentPredefinedTools = def.tools.map((t) => t.id);
 
       readonly inputs = [
         {
@@ -197,7 +197,9 @@ export class SystemAgentTemplateFactory {
             );
 
             predefinedHandles.length = 0;
-            for (const toolId of def.tools) {
+            for (const toolEntry of def.tools) {
+              const toolId = toolEntry.id;
+
               if (manualToolTemplateIds.has(toolId)) {
                 continue;
               }
@@ -243,7 +245,9 @@ export class SystemAgentTemplateFactory {
 
               let defaultConfig: unknown;
               try {
-                defaultConfig = toolTemplate.schema.parse({});
+                defaultConfig = toolTemplate.schema.parse(
+                  toolEntry.config ?? {},
+                );
               } catch (err) {
                 logger.warn(
                   `Predefined tool '${toolId}' has no parseable default config — skipping: ${String(err)}`,

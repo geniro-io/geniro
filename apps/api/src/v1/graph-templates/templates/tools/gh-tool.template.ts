@@ -17,12 +17,12 @@ import { ToolNodeBaseTemplate } from '../base-node.template';
 
 export const GhToolTemplateSchema = z
   .object({
-    cloneOnly: z
+    readOnly: z
       .boolean()
       .default(false)
       .optional()
       .describe(
-        'When true, expose only gh_clone; otherwise expose all GH tools',
+        'When true, expose only read-only GH tools (clone, PR read, issues, comments); hide write tools (commit, branch, push, PR create)',
       ),
     additionalLabels: z
       .array(z.string().min(1))
@@ -182,9 +182,6 @@ export class GhToolTemplate extends ToolNodeBaseTemplate<
         }
 
         const parsedConfig = GhToolTemplateSchema.parse(config);
-        const tools: GhToolType[] | undefined = parsedConfig.cloneOnly
-          ? [GhToolType.Clone]
-          : undefined;
         const additionalLabels = parsedConfig.additionalLabels?.length
           ? parsedConfig.additionalLabels
           : undefined;
@@ -192,7 +189,7 @@ export class GhToolTemplate extends ToolNodeBaseTemplate<
         const { tools: builtTools, instructions } = this.ghToolGroup.buildTools(
           {
             runtimeProvider: runtimeNode.instance,
-            tools,
+            readOnly: parsedConfig.readOnly,
             additionalLabels,
             resolveTokenForOwner: ghResource.resolveToken,
           },
