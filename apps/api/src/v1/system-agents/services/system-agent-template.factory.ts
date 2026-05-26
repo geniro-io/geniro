@@ -116,6 +116,11 @@ export class SystemAgentTemplateFactory {
         { type: 'kind' as const, value: NodeKind.Tool, multiple: true },
         { type: 'kind' as const, value: NodeKind.Mcp, multiple: true },
         { type: 'kind' as const, value: NodeKind.Runtime, multiple: false },
+        {
+          type: 'kind' as const,
+          value: NodeKind.Resource,
+          multiple: true,
+        },
         { type: 'kind' as const, value: NodeKind.Instruction, multiple: true },
       ] as const;
 
@@ -216,16 +221,30 @@ export class SystemAgentTemplateFactory {
               }
 
               let unsatisfiable = false;
+              const resolvedOutputNodeIds = new Set(runtimeNodeIds);
+
               for (const output of toolTemplate.outputs as readonly NodeConnection[]) {
                 if (output.required !== true) {
                   continue;
                 }
                 if (output.type === 'template') {
-                  logger.warn(
-                    `Predefined tool '${toolId}' requires a template output connection that cannot be satisfied — skipping`,
-                  );
-                  unsatisfiable = true;
-                  break;
+                  const matchingIds =
+                    graphRegistry.filterNodesByTemplate(
+                      graphId,
+                      outputNodeIds,
+                      output.value,
+                    );
+                  if (matchingIds.length === 0) {
+                    logger.warn(
+                      `Predefined tool '${toolId}' requires a '${output.value}' template connection that is not connected — skipping`,
+                    );
+                    unsatisfiable = true;
+                    break;
+                  }
+                  for (const nid of matchingIds) {
+                    resolvedOutputNodeIds.add(nid);
+                  }
+                  continue;
                 }
                 if (
                   output.type === 'kind' &&
@@ -259,7 +278,7 @@ export class SystemAgentTemplateFactory {
               const syntheticParams = {
                 config: defaultConfig,
                 inputNodeIds: new Set<string>(),
-                outputNodeIds: new Set(runtimeNodeIds),
+                outputNodeIds: resolvedOutputNodeIds,
                 metadata: { ...params.metadata, nodeId: syntheticNodeId },
               } as GraphNode<z.ZodTypeAny>;
 

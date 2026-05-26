@@ -86,6 +86,7 @@ describe('SystemAgentTemplateFactory', () => {
     mockGraphRegistry = {
       getNode: vi.fn().mockReturnValue(undefined),
       filterNodesByType: vi.fn().mockReturnValue([]),
+      filterNodesByTemplate: vi.fn().mockReturnValue([]),
     } as unknown as GraphRegistry;
 
     const templateRegistryValue = {
@@ -156,6 +157,7 @@ describe('SystemAgentTemplateFactory', () => {
         { type: 'kind', value: NodeKind.Tool, multiple: true },
         { type: 'kind', value: NodeKind.Mcp, multiple: true },
         { type: 'kind', value: NodeKind.Runtime, multiple: false },
+        { type: 'kind', value: NodeKind.Resource, multiple: true },
         { type: 'kind', value: NodeKind.Instruction, multiple: true },
       ]);
     });
@@ -707,6 +709,9 @@ describe('SystemAgentTemplateFactory', () => {
         },
       );
 
+      // No github-resource node connected → unsatisfiable
+      vi.mocked(mockGraphRegistry.filterNodesByTemplate).mockReturnValue([]);
+
       const template = factory.createTemplate(ENGINEER_DEFINITION);
       const handle = await template.create();
       const params: GraphNode<typeof baseConfig> = {
@@ -719,6 +724,55 @@ describe('SystemAgentTemplateFactory', () => {
       await handle.configure(params, instance);
 
       expect(shellMock.template.create).not.toHaveBeenCalled();
+    });
+
+    it('satisfies required template dependency when matching resource node is connected', async () => {
+      const ghToolMock = createMockToolTemplate({
+        id: 'shell-tool',
+        outputs: [
+          {
+            type: 'template',
+            value: 'github-resource',
+            required: true,
+            multiple: false,
+          },
+        ],
+        tools: [{ name: 'gh-clone' }],
+      });
+
+      vi.mocked(mockTemplateRegistry.getTemplate).mockImplementation(
+        (id: string) => {
+          if (id === 'shell-tool') {
+            return ghToolMock.template as unknown as ReturnType<
+              typeof mockTemplateRegistry.getTemplate
+            >;
+          }
+          return undefined;
+        },
+      );
+
+      vi.mocked(mockGraphRegistry.filterNodesByTemplate).mockImplementation(
+        (_gid, _nodes, templateId) =>
+          templateId === 'github-resource' ? ['gh-resource-1'] : [],
+      );
+
+      const template = factory.createTemplate(ENGINEER_DEFINITION);
+      const handle = await template.create();
+      const params: GraphNode<typeof baseConfig> = {
+        config: baseConfig,
+        inputNodeIds: new Set(),
+        outputNodeIds: new Set(['gh-resource-1']),
+        metadata,
+      };
+      const instance = await handle.provide(params);
+      await handle.configure(params, instance);
+
+      expect(ghToolMock.template.create).toHaveBeenCalled();
+      expect(ghToolMock.handle.provide).toHaveBeenCalled();
+
+      const provideCall = vi.mocked(ghToolMock.handle.provide).mock.calls[0];
+      const syntheticParams = provideCall![0] as GraphNode<unknown>;
+      expect(syntheticParams.outputNodeIds).toContain('gh-resource-1');
     });
 
     it('skips predefined tool with unsatisfiable required non-Runtime kind dependency', async () => {

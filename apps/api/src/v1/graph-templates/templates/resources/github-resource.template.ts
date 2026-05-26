@@ -7,7 +7,7 @@ import {
   GithubResource,
   IGithubResourceOutput,
 } from '../../../graph-resources/services/github-resource';
-import type { GraphNode } from '../../../graphs/graphs.types';
+import { type GraphNode, NodeKind } from '../../../graphs/graphs.types';
 import { RegisterTemplate } from '../../decorators/register-template.decorator';
 import { ResourceNodeBaseTemplate } from '../base-node.template';
 
@@ -48,6 +48,11 @@ export class GithubResourceTemplate extends ResourceNodeBaseTemplate<
     {
       type: 'template',
       value: 'gh-tool',
+      multiple: true,
+    },
+    {
+      type: 'kind',
+      value: NodeKind.SimpleAgent,
       multiple: true,
     },
   ] as const;
