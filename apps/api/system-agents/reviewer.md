@@ -4,6 +4,7 @@ name: Reviewer
 description: A code review agent that analyzes code for bugs, security issues, and quality problems.
 tools:
   - files-tool
+  - shell-tool
   - gh-tool
   - subagents-tool
 ---
