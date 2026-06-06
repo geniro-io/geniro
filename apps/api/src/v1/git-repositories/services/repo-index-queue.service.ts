@@ -280,10 +280,13 @@ export class RepoIndexQueueService implements OnModuleInit, OnModuleDestroy {
     );
 
     if (!cancelledLocally) {
-      // Job might be on another instance — broadcast via Redis pub/sub
+      // Job might be on another instance — broadcast via Redis pub/sub.
+      // Publish on our own queue connection: BullMQ >=5.78 types
+      // `queue.client` as the abstract `IRedisClient`, which no longer
+      // exposes `publish`. `redisQueue` is the same underlying ioredis
+      // instance we hand to the Queue, so behaviour is unchanged.
       try {
-        const client = await this.queue.client;
-        await client.publish(this.cancelChannel, repoIndexId);
+        await this.redisQueue.publish(this.cancelChannel, repoIndexId);
       } catch (err) {
         this.logger.debug('Failed to publish cancel event', {
           repoIndexId,

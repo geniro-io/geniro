@@ -14,16 +14,16 @@
     }
   },
   "dependencies": {
-    "@hey-api/openapi-ts": "^0.97.0",
-    "@nestjs/common": "^11.1.19",
+    "@hey-api/openapi-ts": "^0.98.1",
+    "@nestjs/common": "^11.1.24",
     "ajv": "^8.20.0",
     "ajv-formats": "^3.0.1",
-    "cypress": "^15.14.2",
+    "cypress": "^15.16.0",
     "reflect-metadata": "^0.2.2"
   },
   "devDependencies": {
-    "@types/node": "^25.6.0",
-    "eslint": "^10.3.0",
+    "@types/node": "^25.9.2",
+    "eslint": "^10.4.1",
     "typescript": "^6.0.3"
   },
   "main": "dist/index.js",
