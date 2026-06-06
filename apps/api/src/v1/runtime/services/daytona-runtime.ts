@@ -102,8 +102,10 @@ export class DaytonaRuntime extends BaseRuntime {
         apiUrl: config.apiUrl || undefined,
         target: config.target || undefined,
       });
-      // Lightweight call — fetch 1 sandbox to verify API connectivity
-      await daytona.list({}, 1, 1);
+      // Lightweight call — fetch at most 1 sandbox to verify API
+      // connectivity. Since SDK 0.18 `list` returns an async iterator;
+      // pulling the first page is what triggers the HTTP round-trip.
+      await daytona.list({ limit: 1 }).next();
       return { healthy: true };
     } catch (error) {
       return {

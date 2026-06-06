@@ -20,15 +20,10 @@ vi.mock('@mikro-orm/postgresql', async (importOriginal) => {
 
 const mockOrm = { em: {} } as unknown as MikroORM;
 
-const mockRedisClient = {
-  publish: vi.fn().mockResolvedValue(1),
-};
-
 const mockQueue = {
   add: vi.fn().mockResolvedValue(undefined),
   close: vi.fn().mockResolvedValue(undefined),
   getJob: vi.fn().mockResolvedValue(null),
-  client: Promise.resolve(mockRedisClient),
 };
 
 const mockWorker = {
@@ -37,10 +32,13 @@ const mockWorker = {
   cancelJob: vi.fn().mockReturnValue(true),
 };
 
+// `redisQueue` (an ioredis instance) is what the service publishes cancel
+// events on — BullMQ >=5.78 no longer exposes `publish` on `queue.client`.
 const mockRedis = {
   quit: vi.fn().mockResolvedValue(undefined),
   on: vi.fn(),
   subscribe: vi.fn().mockResolvedValue(undefined),
+  publish: vi.fn().mockResolvedValue(1),
 };
 
 const mockLogger = {
@@ -273,7 +271,7 @@ describe('RepoIndexQueueService', () => {
         'remote-job-id',
         'Repository deleted',
       );
-      expect(mockRedisClient.publish).toHaveBeenCalledWith(
+      expect(mockRedis.publish).toHaveBeenCalledWith(
         expect.stringContaining('repo-index-cancel:'),
         'remote-job-id',
       );
@@ -299,7 +297,7 @@ describe('RepoIndexQueueService', () => {
         'local-job-id',
         'Repository deleted',
       );
-      expect(mockRedisClient.publish).not.toHaveBeenCalled();
+      expect(mockRedis.publish).not.toHaveBeenCalled();
     });
 
     it('publishes to Redis when worker.cancelJob returns false', async () => {
@@ -311,7 +309,7 @@ describe('RepoIndexQueueService', () => {
         'remote-job-id',
         'Repository deleted',
       );
-      expect(mockRedisClient.publish).toHaveBeenCalledWith(
+      expect(mockRedis.publish).toHaveBeenCalledWith(
         expect.stringContaining('repo-index-cancel:'),
         'remote-job-id',
       );
@@ -319,7 +317,7 @@ describe('RepoIndexQueueService', () => {
 
     it('logs debug and does not throw when Redis publish fails', async () => {
       mockWorker.cancelJob.mockReturnValue(false);
-      mockRedisClient.publish.mockRejectedValueOnce(
+      mockRedis.publish.mockRejectedValueOnce(
         new Error('Redis connection lost'),
       );
 

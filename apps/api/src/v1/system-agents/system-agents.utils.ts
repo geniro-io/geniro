@@ -2,6 +2,7 @@ import { createHash } from 'crypto';
 import matter from 'gray-matter';
 import { z } from 'zod';
 
+import { SystemAgentResponseDto } from './dto/system-agents.dto';
 import type {
   SystemAgentDefinition,
   SystemAgentToolEntry,
@@ -59,5 +60,26 @@ export function parseSystemAgentFile(
     instructions,
     contentHash,
     templateId,
+  };
+}
+
+/**
+ * Map the internal {@link SystemAgentDefinition} to its public response shape.
+ * `tools` is exposed as the list of tool ids (`SystemAgentToolEntry.id`) — the
+ * per-tool `config` parsed from frontmatter is an internal detail used to build
+ * the agent and is intentionally not part of the API contract.
+ */
+export function toSystemAgentResponse(
+  definition: SystemAgentDefinition,
+): SystemAgentResponseDto {
+  return {
+    id: definition.id,
+    templateId: definition.templateId,
+    name: definition.name,
+    description: definition.description,
+    tools: definition.tools.map((tool) => tool.id),
+    defaultModel: definition.defaultModel,
+    instructions: definition.instructions,
+    contentHash: definition.contentHash,
   };
 }

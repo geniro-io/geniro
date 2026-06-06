@@ -18,12 +18,29 @@ export abstract class BaseDao<T extends object> {
     ) as SqlEntityRepository<T>;
   }
 
+  /**
+   * Forward find options to `find`/`findOne` without the `using` (index-hint)
+   * field. MikroORM 7.1 infers the repository's `Using` type parameter from
+   * `options.using`; for this base DAO's generic `T` that resolves to
+   * `IndexName<T>`, which turns the `where` parameter into an `IndexFilterQuery`
+   * conditional that no longer accepts a plain `FilterQuery<T>`. These helpers
+   * never issue index hints, so dropping the field keeps `Using` at its `never`
+   * default and lets `where` stay strongly typed.
+   */
+  private toFindOptions(
+    options?: FindOptions<T, never, keyof T & string>,
+  ): Omit<FindOptions<T>, 'using'> | undefined {
+    // Widen the field-selection generic back to `never` (these helpers always
+    // return fully-loaded `T`) and drop `using` — see the doc comment above.
+    return options as Omit<FindOptions<T>, 'using'> | undefined;
+  }
+
   async getAll(
     where: FilterQuery<T>,
     options?: FindOptions<T, never, keyof T & string>,
     txEm?: EntityManager,
   ): Promise<T[]> {
-    return await this.getRepo(txEm).find(where, options as FindOptions<T>);
+    return await this.getRepo(txEm).find(where, this.toFindOptions(options));
   }
 
   async getOne(
@@ -31,7 +48,7 @@ export abstract class BaseDao<T extends object> {
     options?: FindOptions<T, never, keyof T & string>,
     txEm?: EntityManager,
   ): Promise<T | null> {
-    return await this.getRepo(txEm).findOne(where, options as FindOptions<T>);
+    return await this.getRepo(txEm).findOne(where, this.toFindOptions(options));
   }
 
   async getById(id: string, txEm?: EntityManager): Promise<T | null> {

@@ -228,12 +228,11 @@ export class SystemAgentTemplateFactory {
                   continue;
                 }
                 if (output.type === 'template') {
-                  const matchingIds =
-                    graphRegistry.filterNodesByTemplate(
-                      graphId,
-                      outputNodeIds,
-                      output.value,
-                    );
+                  const matchingIds = graphRegistry.filterNodesByTemplate(
+                    graphId,
+                    outputNodeIds,
+                    output.value,
+                  );
                   if (matchingIds.length === 0) {
                     logger.warn(
                       `Predefined tool '${toolId}' requires a '${output.value}' template connection that is not connected — skipping`,

@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
+import type { SystemAgentDefinition } from './system-agents.types';
 import {
   computeContentHash,
   parseSystemAgentFile,
   parseToolEntry,
   SystemAgentFrontmatterSchema,
+  toSystemAgentResponse,
 } from './system-agents.utils';
 
 const VALID_FILE_CONTENT = `---
@@ -190,5 +192,47 @@ tools: []
 Body.
 `;
     expect(() => parseSystemAgentFile('bad.md', invalidContent)).toThrow();
+  });
+});
+
+describe('toSystemAgentResponse', () => {
+  const definition: SystemAgentDefinition = {
+    id: 'engineer',
+    name: 'Engineer',
+    description: 'A software engineer agent.',
+    tools: [
+      { id: 'shell-tool' },
+      { id: 'gh-tool', config: { readOnly: true } },
+    ],
+    defaultModel: 'gpt-4o',
+    instructions: 'You are a senior software engineer.',
+    contentHash: 'a'.repeat(64),
+    templateId: 'system-agent-engineer',
+  };
+
+  it('exposes tools as their ids, dropping the internal config', () => {
+    expect(toSystemAgentResponse(definition).tools).toEqual([
+      'shell-tool',
+      'gh-tool',
+    ]);
+  });
+
+  it('maps all other fields through unchanged', () => {
+    expect(toSystemAgentResponse(definition)).toEqual({
+      id: 'engineer',
+      templateId: 'system-agent-engineer',
+      name: 'Engineer',
+      description: 'A software engineer agent.',
+      tools: ['shell-tool', 'gh-tool'],
+      defaultModel: 'gpt-4o',
+      instructions: 'You are a senior software engineer.',
+      contentHash: 'a'.repeat(64),
+    });
+  });
+
+  it('returns an empty tools array when the agent has no tools', () => {
+    expect(toSystemAgentResponse({ ...definition, tools: [] }).tools).toEqual(
+      [],
+    );
   });
 });
