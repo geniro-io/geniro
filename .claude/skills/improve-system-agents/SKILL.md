@@ -66,6 +66,13 @@ defaultModel: null        # Optional model override
 
 Tools listed in `tools:` are automatically instantiated and their instructions injected. Users can also manually connect additional tools via the graph editor, which override predefined tools of the same template ID.
 
+#### Tool grants vs. the body — check on every rewrite (but FLAG, don't silently edit frontmatter)
+
+This skill rewrites the **body**, not the frontmatter (see "When NOT to use"). But you must still read the frontmatter and surface mismatches for a human to resolve:
+
+- **Read-only is prompt-enforced, not grant-enforced.** `files-tool` always includes edit actions; `shell-tool` can mutate. If the body claims the agent is "read-only" / does "no technical work", the frontmatter *should* pin the grant to match where a flag exists — `files-tool|{"includeEditActions":false}`, `gh-tool|{"readOnly":true}` — and drop `shell-tool` unless the body gives it explicit read-only orchestration. Where a write grant is genuinely needed (an implementation coordinator running verification or applying small registration edits), it should stay, with a one-clause self-aware note in the body that the restraint is prompt-enforced. Never reword a read-only claim away just because the grant is write-capable — flag the grant instead.
+- **Grants must match body dependencies.** Every capability the body invokes must be in `tools:` or be a core tool (`finish`, `wait_for`). If the body relies on a tool that is neither (e.g. references the clone / `agentInstructions` flow without `gh-tool`, or coordinates a team of agents without `agent-communication-tool`), that is a grant-vs-body mismatch. Surface it — never silently delete behavior the body depends on to "resolve" it.
+
 ### Tool Catalog (all available tool template IDs)
 
 Each tool template injects its own description and usage guidance at runtime. The markdown body should **never** describe what a tool does — but it **should** include cross-tool orchestration patterns relevant to the agent's connected tools.
@@ -87,7 +94,7 @@ Below is the complete catalog. When rewriting, check the agent's `tools:` field 
 | `shell-tool` | Execute shell commands in sandbox | Run install/build/test/lint commands from the repository's instruction file. Use for verification after code changes. Prefer project scripts over ad-hoc commands. |
 | `gh-tool` | GitHub operations (clone, branch, commit, push, PR) | Sequential dependency chain: clone → branch → implement → commit → push → PR. **Push must complete before PR creation** — never parallelize these two. Read the `agentInstructions` field from clone output for repo conventions. |
 | `knowledge-tools` | Knowledge base search and retrieval | Search the knowledge base **before** starting non-trivial work (code changes, research, design). Follow the pattern: search docs → search chunks → get specific chunks. Skip for simple questions that don't need project context. Don't re-search within the same conversation unless the topic changed significantly. |
-| `subagents-tool` | Spawn autonomous subagents | Delegate research-heavy tasks to save main context window. **Always parallelize independent subagent calls** — never chain them sequentially when they don't depend on each other. Three types: `system:explorer` (read-only, cheap), `system:simple` (full access, small context), `system:smart` (full access, same model). Give subagents maximum context — they start with a blank window. |
+| `subagents-tool` | Spawn autonomous subagents | Delegate research-heavy tasks to save main context window. **Always parallelize independent subagent calls** — never chain them sequentially when they don't depend on each other. **Four tiers** (verified in `apps/api/src/v1/subagents/subagent-definitions.ts`): `system:explorer` (read-only, small/fast model — default for research), `system:smart-explorer` (read-only, parent/large model — deep review, audits, validating findings), `system:simple` (full access, small model, 70k-token context — small mechanical edits), `system:smart` (full access, parent/large model — complex changes). Read-only tiers = explorer + smart-explorer; write-capable = simple + smart. Give subagents maximum context — they start with a blank window. |
 | `agent-communication-tool` | Send messages to connected agents | Trust agent responses — **do not re-explore files** they already analyzed. If the response includes an `exploredFiles` list, skip reading those files. If details are missing, ask the same agent again rather than re-investigating yourself. |
 | `web-search-tool` | Web search for current information | Use to research best practices, verify API documentation, or find solutions for unfamiliar technologies. Search before making assumptions about external APIs or libraries. |
 
@@ -195,7 +202,7 @@ TOOL ORCHESTRATION CATALOG:
 - shell-tool: Run install/build/test/lint from the repository's instruction file. Use for verification after code changes. Prefer project scripts over ad-hoc commands.
 - gh-tool: Clone → branch → implement → commit → push → PR (sequential chain). Push must complete before PR creation. Read agentInstructions from clone output for repo conventions.
 - knowledge-tools: Search knowledge base BEFORE starting non-trivial work. Pattern: search docs → search chunks → get chunks. Skip for simple questions. Don't re-search same topic within a conversation.
-- subagents-tool: Delegate research to save context. ALWAYS parallelize independent subagent calls. Three types: explorer (read-only, cheap), simple (small tasks), smart (complex reasoning). Give subagents maximum context — they start blank.
+- subagents-tool: Delegate research to save context. ALWAYS parallelize independent subagent calls. FOUR tiers — system:explorer (read-only, small/fast model), system:smart-explorer (read-only, parent/large model — deep review/validation), system:simple (full access, small model, 70k ctx), system:smart (full access, parent/large model). Read-only = explorer + smart-explorer; write-capable = simple + smart. system:smart-explorer IS a valid tier — never "correct" it away. Give subagents maximum context — they start blank.
 - agent-communication-tool: Trust agent responses — don't re-explore files they analyzed. If response includes exploredFiles, skip reading those. Ask the same agent again if details are missing.
 - web-search-tool: Research best practices and verify API docs before making assumptions about external technologies.
 - finish (core): All output goes in the completion message — not in intermediate messages. Call once when done, never alongside other tools.
@@ -263,6 +270,8 @@ TOOL ORCHESTRATION CATALOG:
 - Instructions must be INDEPENDENT — must not assume specific workflows or other agents exist
 - Tool descriptions are injected separately at runtime — the markdown body focuses on role, approach, and constraints
 - Reference "the repository's instruction file" or "the agentInstructions field from gh_clone" rather than specific filenames (CLAUDE.md) or commands (pnpm run full-check)
+- Subagent tiers: the four real tiers are system:explorer and system:smart-explorer (read-only) and system:simple and system:smart (write-capable). system:smart-explorer IS valid — never treat it as an error or "correct" it away. Never invent a tier name that is not one of these four.
+- Read-only is prompt-enforced, not grant-enforced. You edit only the BODY, so if a "read-only" claim sits next to a write-capable grant, keep the claim and leave a note that the discipline is the agent's to keep — do NOT reword the read-only claim away, and do NOT touch the frontmatter (flag grant issues for the human instead).
 
 **For Instruction Blocks Specifically**
 - These are supplementary instruction sets appended to an agent's system prompt
@@ -308,7 +317,9 @@ You are a prompt engineering reviewer. Evaluate the rewritten agent definition b
 9. User's specific request addressed: {improvement_request or "(none)"}
 10. For system agents: no repo-specific commands, filenames, or paths
 11. INDEPENDENCE: no references to specific agent roles (architect, reviewer, manager), no workflow-specific sections (architect spec handling, reviewer feedback, subagent delegation), no assumptions about other agents existing in the graph. The agent must work standalone.
-12. Overall quality strictly better than the original
+12. Subagent tiers named in the body are valid — only `system:explorer`, `system:smart-explorer` (read-only), `system:simple`, `system:smart` (write-capable). `system:smart-explorer` is valid; flag any other tier name and never remove `smart-explorer` as if it were an error.
+13. Grant-vs-body consistency surfaced (not silently mutated): any capability the body relies on that is not in frontmatter `tools:` or a core tool (`finish`/`wait_for`) is flagged, and any "read-only" claim sitting next to a write-capable grant is flagged. Read-only is prompt-enforced, not grant-enforced.
+14. Overall quality strictly better than the original
 
 === YOUR OUTPUT ===
 Verdict: PASS or REVISE

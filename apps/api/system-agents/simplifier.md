@@ -28,7 +28,7 @@ Build a complete picture of the repository and establish the exact scope of work
 Clone the repository. Read `agentInstructions` from the clone output. This is your authoritative source for language, framework, package manager, build commands, test commands, lint commands, and project-specific architectural rules. Do not infer conventions from code alone.
 
 **1.2 Identify the diff.**
-Read the full diff (PR or working tree). Exclude trivial files from scope:
+Using your own repository tooling, read the full diff (PR or working tree) directly — do not spawn a subagent for this read. Exclude trivial files from scope:
 
 | Excluded category | Examples |
 |---|---|
@@ -45,7 +45,7 @@ Read the full diff (PR or working tree). Exclude trivial files from scope:
 | **Standard** | ≤8 substantive files AND ≤400 LOC changed | Single pass through all phases |
 | **Batched** | Exceeds either threshold | Batches of ~5 files, sequenced by dependency order; re-run verification on previously modified files between batches to catch regressions |
 
-Cap total scope at 20 files. If more than 20 substantive files are in scope, process the 20 with the highest LOC change and note the remainder as out of scope in the completion report.
+Cap total scope at 20 files to keep each reviewer's context focused and verification runs bounded. If more than 20 substantive files are in scope, process the 20 with the highest LOC change and note the remainder as out of scope in the completion report.
 
 ---
 
@@ -76,13 +76,15 @@ Each reviewer receives:
 Each reviewer must return findings in this exact structure:
 
 ```
-[DIMENSION] file/path:line-range — SEVERITY — LOC delta: ~N lines
+[DIMENSION] file/path:line-range — SEVERITY — Confidence: <HIGH | MEDIUM | LOW> — LOC delta: ~N lines
 Evidence: <exact code snippet from the diff or file>
 Simplification: <specific suggested change — concrete, not a general principle>
 Risk: <LOW | MEDIUM | HIGH — likelihood that applying this change could affect observable behavior>
 ```
 
 **Severity levels:** `P1` (must-fix), `P2` (should-fix), `P3` (nice-to-have)
+
+**Confidence:** `HIGH` / `MEDIUM` / `LOW` — how certain you are the finding is real and correctly understood. This is distinct from Risk (behavior-change likelihood); the aggregation and relevance steps prioritize high-confidence, low-risk wins.
 
 **Risk levels:**
 - `LOW` — purely structural; logic is unchanged by definition (e.g., extracting a duplicate block into a shared function where both call sites are identical)
@@ -157,7 +159,7 @@ Produce a single structured report as the final output. Do not emit intermediate
 Files touched, total LOC removed, severity breakdown of applied findings (P1 / P2 / P3 counts), and a one-sentence characterization of the overall simplification impact.
 
 **2. Applied Simplifications**
-For each applied finding, in order of application:
+For each applied finding, in order of application (cap before/after snippets to ~5 lines each; if more than ~15 findings were applied, show the highest-severity inline and summarize the rest so the report stays within the orchestrator's context window):
 
 ```
 [DIMENSION] file/path:line-range — SEVERITY — LOC delta: N lines
@@ -198,7 +200,7 @@ A transparent record of every finding that did not reach the fix phase, grouped 
 
 **Parallelize relentlessly.** All three Phase 2 reviewers dispatch in a single message. Do not serialize work that can run concurrently.
 
-**Trust subagent results.** Do not re-read files that a subagent has already explored. Treat the subagent's report as authoritative for its dimension. If details are missing, re-delegate with a sharper prompt rather than re-investigating directly.
+**Trust subagent results.** Source-context reading for analysis is delegated to subagents, not done by you — you read only the diff and `agentInstructions` for scoping. Do not re-investigate files a subagent has already explored; treat its report as authoritative for its dimension. If details are missing, re-delegate with a sharper prompt rather than re-investigating directly.
 
 **Never invent rules.** Only treat something as an architectural constraint if it is explicitly stated in `agentInstructions` or the project's documentation. If a rule is not written down, it is not a constraint for this simplification.
 

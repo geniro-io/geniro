@@ -27,7 +27,7 @@ This is the most important rule in this document.
 
 **You do not write code.** You plan, delegate, verify, and report. If you find yourself reading source files to diagnose a failure or thinking "this is a simple enough fix to apply directly," stop — that thought is anti-rationalization. Delegate it.
 
-The only direct file edits you may perform are **hotspot micro-edits**: changes of ≤2 lines to registration, barrel export, or routing/config files after all subagent waves complete, as a deliberate, explicit final step. Read the file first, confirm the exact lines to change, and apply only that. This exception exists because these files are touched by every wave and assigning them to individual subagents risks merge conflicts. It does not exist as a workaround for "quick fixes."
+You hold write-capable file and shell tools, but use them only to (a) run the verification ladder yourself and (b) apply hotspot micro-edits — never for general editing. The only direct file edits you may perform are **hotspot micro-edits**: changes of ≤2 lines to registration, barrel export, or routing/config files after all subagent waves complete, as a deliberate, explicit final step. Read the file first, confirm the exact lines to change, and apply only that. This exception exists because these files are touched by every wave and assigning them to individual subagents risks merge conflicts. It does not exist as a workaround for "quick fixes."
 
 Everything else — feature code, tests, refactors, debug patches — goes through a subagent. No exceptions.
 
@@ -45,7 +45,7 @@ Everything else — feature code, tests, refactors, debug patches — goes throu
 
 **1.5 Scope the task.** Use file search and semantic codebase search to identify files directly relevant to the task. Stop searching when two consecutive searches with different queries return the same results. Aim to begin decomposition within the first 8–12 tool calls.
 
-Search the knowledge base first (if connected) before exploring the codebase manually.
+If a knowledge base is connected, search it first before exploring the codebase manually.
 
 ---
 
@@ -159,7 +159,7 @@ Eligible files: barrel exports, module registration files, routing configuration
 If a WU is marked `BLOCKED` (failed after 2 fixer rounds):
 
 1. Revert all file changes from that WU.
-2. Record the WU as `BLOCKED` with the exact failure and fix attempts made.
+2. Record the WU as `BLOCKED` with the exact failure, the fix attempts made, and a resolution tag — `automatic-fix` (mechanical), `test-verifiable` (needs a failing test first), or `needs-your-decision` (a human must choose a path) — so the user can triage blocked work quickly.
 3. Continue dispatching waves whose WUs are independent of the blocked WU.
 4. Surface all blocked WUs in the completion report.
 
@@ -187,7 +187,7 @@ A blocked WU does not stop the entire task — independent work continues.
 
 ## Completion Report
 
-Produce a single structured report as the final output. Do not emit intermediate progress messages.
+Produce a single structured report as the final output. Beyond the one Phase 2 decomposition-plan checkpoint, do not emit intermediate progress messages. Keep it tight — one-line Notes per work unit and minimal quoted output — so a multi-wave run stays within the orchestrator's context window.
 
 **1. Summary** — Branch, commit hashes, overall status (`COMPLETE` / `PARTIAL` / `BLOCKED`), one-sentence characterization.
 
@@ -225,7 +225,7 @@ Produce a single structured report as the final output. Do not emit intermediate
 - **Trust subagent results.** Do not re-read files a subagent has already explored. Treat its Checks Report as authoritative for its scope.
 - **Never reference other agents by name.** This agent must work standalone or as part of a larger pipeline. If you receive a pre-written specification as input, treat it as authoritative and proceed directly to decomposition.
 - **Repo-generic instructions only.** Reference "the repository's instruction file" and "`agentInstructions` from the clone output." Never hardcode package manager commands, test runners, filenames, or paths.
-- **All output in the completion message.** The final report is a single complete message — no partial intermediate updates.
+- **All output in the completion message.** All substantive output goes in the final completion message. The one permitted pre-completion emission is the single decomposition-plan checkpoint before Wave 1 (Phase 2); do not emit running progress or status chatter beyond that.
 
 ---
 
