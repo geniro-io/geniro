@@ -71,6 +71,7 @@ describe('CheckpointStateService', () => {
   };
   let mockMessagesDao: {
     aggregateUsageBySubagentNodeId: ReturnType<typeof vi.fn>;
+    aggregateUsageByNodeId: ReturnType<typeof vi.fn>;
   };
   let mockThreadsDao: {
     getOne: ReturnType<typeof vi.fn>;
@@ -91,6 +92,7 @@ describe('CheckpointStateService', () => {
 
     mockMessagesDao = {
       aggregateUsageBySubagentNodeId: vi.fn(),
+      aggregateUsageByNodeId: vi.fn(),
     };
 
     mockThreadsDao = {
@@ -327,15 +329,76 @@ describe('CheckpointStateService', () => {
     expect(hasSurrogatKey).toBe(false);
   });
 
-  it('returns null and does NOT call messagesDao when tuples list is empty', async () => {
+  // ────────────────────────────────────────────────────────────────────────────
+  // Checkpoint-less fallback (cost-accounting rules: "authoritative source
+  // empty" row of the test matrix). Tuples empty + messages populated MUST
+  // return the message-scan aggregate — null only when no usage exists at all.
+  // ────────────────────────────────────────────────────────────────────────────
+  it('falls back to the message-scan aggregate when tuples list is empty but messages carry usage', async () => {
     mockCheckpointSaver.getTuples.mockResolvedValueOnce([]);
+    mockMessagesDao.aggregateUsageByNodeId.mockResolvedValueOnce(
+      new Map([
+        [
+          'claude-node-1',
+          {
+            inputTokens: 1000,
+            cachedInputTokens: 200,
+            outputTokens: 500,
+            reasoningTokens: 0,
+            totalTokens: 1500,
+            totalPrice: 0.05,
+          },
+        ],
+        [
+          'claude-node-1::sub::tu-1',
+          {
+            inputTokens: 100,
+            cachedInputTokens: 0,
+            outputTokens: 50,
+            reasoningTokens: 0,
+            totalTokens: 150,
+            totalPrice: 0.01,
+          },
+        ],
+      ]),
+    );
+
+    const result = await service.getThreadTokenUsage(THREAD_ID);
+
+    expect(result).toMatchObject({
+      inputTokens: 1100,
+      cachedInputTokens: 200,
+      outputTokens: 550,
+      totalTokens: 1650,
+      totalPrice: 0.06,
+      currentContext: 0,
+    });
+    expect(result?.byNode).toMatchObject({
+      'claude-node-1': { totalPrice: 0.05 },
+      'claude-node-1::sub::tu-1': { totalPrice: 0.01 },
+    });
+    expect(mockMessagesDao.aggregateUsageByNodeId).toHaveBeenCalledWith(
+      INTERNAL_THREAD_UUID,
+    );
+  });
+
+  it('returns null when tuples list is empty and messages carry no usage', async () => {
+    mockCheckpointSaver.getTuples.mockResolvedValueOnce([]);
+    mockMessagesDao.aggregateUsageByNodeId.mockResolvedValueOnce(new Map());
 
     const result = await service.getThreadTokenUsage(THREAD_ID);
 
     expect(result).toBeNull();
-    expect(
-      mockMessagesDao.aggregateUsageBySubagentNodeId,
-    ).not.toHaveBeenCalled();
+  });
+
+  it('returns null when tuples list is empty and the thread row does not exist', async () => {
+    mockCheckpointSaver.getTuples.mockResolvedValueOnce([]);
+    mockThreadsDao.getOne.mockResolvedValueOnce(null);
+
+    const result = await service.getThreadTokenUsage(THREAD_ID);
+
+    expect(result).toBeNull();
+    expect(mockMessagesDao.aggregateUsageByNodeId).not.toHaveBeenCalled();
   });
 
   // ────────────────────────────────────────────────────────────────────────────

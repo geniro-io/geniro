@@ -62,3 +62,29 @@ model_list:
       drop_params: true
     model_info:
       base_model: minimax/MiniMax-M2.5    # map pricing from LiteLLM DB
+
+  # OpenRouter provider — Anthropic (Claude Agent nodes call these via the
+  # Anthropic /v1/messages passthrough with per-thread virtual keys)
+  - model_name: claude-sonnet-4-6
+    litellm_params:
+      model: openrouter/anthropic/claude-sonnet-4.6
+      api_key: os.environ/OPENROUTER_API_KEY
+      drop_params: true
+    model_info:
+      base_model: claude-sonnet-4-6       # map pricing from LiteLLM DB
+
+  - model_name: claude-haiku-4-5
+    litellm_params:
+      model: openrouter/anthropic/claude-haiku-4.5
+      api_key: os.environ/OPENROUTER_API_KEY
+      drop_params: true
+    model_info:
+      base_model: claude-haiku-4-5        # map pricing from LiteLLM DB
+
+  - model_name: claude-opus-4-8
+    litellm_params:
+      model: openrouter/anthropic/claude-opus-4.8
+      api_key: os.environ/OPENROUTER_API_KEY
+      drop_params: true
+    model_info:
+      base_model: claude-opus-4-8         # map pricing from LiteLLM DB

@@ -12,7 +12,7 @@ import { isEqual } from 'lodash';
 
 import { AppContextStorage } from '../../../auth/app-context-storage';
 import { BaseTrigger } from '../../agent-triggers/services/base-trigger';
-import { SimpleAgent } from '../../agents/services/agents/simple-agent';
+import type { RunnableAgent } from '../../agents/agents.types';
 import { CheckpointStateService } from '../../agents/services/checkpoint-state.service';
 import { TemplateRegistry } from '../../graph-templates/services/template-registry';
 import { NotificationEvent } from '../../notifications/notifications.types';
@@ -634,10 +634,7 @@ export class GraphsService {
       return false;
     }
 
-    const agentNodes = this.graphRegistry.getNodesByType<SimpleAgent>(
-      graphId,
-      NodeKind.SimpleAgent,
-    );
+    const agentNodes = this.graphRegistry.getAgentNodes<RunnableAgent>(graphId);
 
     if (!agentNodes.length) {
       return false;

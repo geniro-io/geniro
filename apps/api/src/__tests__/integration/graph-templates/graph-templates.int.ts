@@ -91,18 +91,26 @@ describe('Graph Templates Integration Tests', () => {
     expect(uniqueNames.size).toBe(templates.length);
   });
 
-  it('exposes manual trigger template that targets simple agents', async () => {
+  it('exposes manual trigger template that targets agent nodes', async () => {
     const manualTrigger = await getTemplateById('manual-trigger');
 
     expect(manualTrigger).toBeDefined();
     expect(manualTrigger?.kind).toBe(NodeKind.Trigger);
     expect(manualTrigger?.inputs).toEqual([]);
+    // Both agent kinds share the 'agent' requiredGroup: the trigger must
+    // connect to at least one agent of EITHER kind (OR-validated).
     expect(manualTrigger?.outputs).toEqual([
       {
         type: 'kind',
         value: NodeKind.SimpleAgent,
         multiple: true,
-        required: true,
+        requiredGroup: 'agent',
+      },
+      {
+        type: 'kind',
+        value: NodeKind.ClaudeAgent,
+        multiple: true,
+        requiredGroup: 'agent',
       },
     ]);
     expect(manualTrigger?.schema).toMatchObject({

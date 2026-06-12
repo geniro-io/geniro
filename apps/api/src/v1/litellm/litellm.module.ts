@@ -6,6 +6,7 @@ import { ModelsController } from './controllers/models.controller';
 import { LiteLlmClient } from './services/litellm.client';
 import { LitellmService } from './services/litellm.service';
 import { LiteLlmAdminService } from './services/litellm-admin.service';
+import { LitellmVirtualKeyService } from './services/litellm-virtual-key.service';
 import { LlmModelsService } from './services/llm-models.service';
 
 @Module({
@@ -15,8 +16,14 @@ import { LlmModelsService } from './services/llm-models.service';
     LiteLlmClient,
     LiteLlmAdminService,
     LitellmService,
+    LitellmVirtualKeyService,
     LlmModelsService,
   ],
-  exports: [LitellmService, LlmModelsService],
+  exports: [
+    LitellmService,
+    LitellmVirtualKeyService,
+    LlmModelsService,
+    LiteLlmClient,
+  ],
 })
 export class LitellmModule {}

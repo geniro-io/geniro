@@ -106,9 +106,9 @@ export const GraphPageHeader: FC<GraphPageHeaderProps> = ({
   onGraphMenuAction,
 }) => {
   return (
-    <header className="flex items-center justify-between px-4 py-2 border-b border-border bg-card flex-shrink-0">
+    <header className="flex items-center justify-between gap-3 px-4 py-2 border-b border-border bg-card flex-shrink-0">
       {/* Left: graph name + version/revision trigger */}
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 min-w-0">
         <Popover
           open={revisionPopoverVisible}
           onOpenChange={(open) => {
@@ -119,17 +119,17 @@ export const GraphPageHeader: FC<GraphPageHeaderProps> = ({
           }}>
           <PopoverTrigger asChild>
             <PickerTrigger>
-              <span className="text-sm font-medium text-foreground">
+              <span className="truncate text-sm font-medium text-foreground">
                 {graphName}
               </span>
               {graph && (
                 <>
-                  <span className="text-xs font-mono text-muted-foreground">
+                  <span className="flex-shrink-0 whitespace-nowrap text-xs font-mono text-muted-foreground">
                     v{displayedVersion}
                   </span>
                   {displayedRevisionMeta && (
                     <Badge
-                      className="text-[11px] px-1.5 py-0 h-4 font-medium"
+                      className="flex-shrink-0 whitespace-nowrap text-[11px] px-1.5 py-0 h-4 font-medium"
                       style={{
                         backgroundColor: displayedRevisionMeta.color,
                         color: '#fff',
@@ -143,11 +143,11 @@ export const GraphPageHeader: FC<GraphPageHeaderProps> = ({
                   )}
                   {lastFailedRevision && (
                     <>
-                      <span className="text-xs font-mono text-muted-foreground">
+                      <span className="flex-shrink-0 whitespace-nowrap text-xs font-mono text-muted-foreground">
                         v{lastFailedRevision.toVersion}
                       </span>
                       <Badge
-                        className="text-[11px] px-1.5 py-0 h-4 font-medium border-0 text-white"
+                        className="flex-shrink-0 whitespace-nowrap text-[11px] px-1.5 py-0 h-4 font-medium border-0 text-white"
                         style={{
                           backgroundColor: REVISION_STATUS_STYLES.failed.color,
                         }}>
@@ -166,7 +166,7 @@ export const GraphPageHeader: FC<GraphPageHeaderProps> = ({
       </div>
 
       {/* Right: status indicators + action buttons */}
-      <div className="flex items-center gap-1.5">
+      <div className="flex items-center gap-1.5 flex-shrink-0">
         {lastFailedRevision && (
           <Tooltip>
             <TooltipTrigger asChild>

@@ -893,6 +893,104 @@ describe('GraphRegistry', () => {
     });
   });
 
+  describe('getAgentNodes / filterAgentNodeIds', () => {
+    const buildAgentGraph = (): CompiledGraph => {
+      const makeNode = (
+        id: string,
+        type: NodeKind,
+        template: string,
+      ): CompiledGraphNode => {
+        const instance = { id };
+        return {
+          id,
+          type,
+          template,
+          instance,
+          config: {},
+          handle: {
+            provide: async () => instance,
+            configure: async () => {},
+            destroy: async () => {},
+          },
+        };
+      };
+
+      return {
+        metadata: {
+          graphId: 'agent-graph',
+          version: '1.0.0',
+          graph_created_by: 'test-user',
+          graph_project_id: 'test-project',
+        },
+        nodes: new Map([
+          [
+            'agent-1',
+            makeNode('agent-1', NodeKind.SimpleAgent, 'simple-agent'),
+          ],
+          [
+            'agent-2',
+            makeNode('agent-2', NodeKind.SimpleAgent, 'simple-agent'),
+          ],
+          // The discriminating member: helpers regressing to SimpleAgent-only
+          // dispatch must fail on this node.
+          [
+            'claude-1',
+            makeNode('claude-1', NodeKind.ClaudeAgent, 'claude-agent'),
+          ],
+          ['tool-1', makeNode('tool-1', NodeKind.Tool, 'shell-tool')],
+          ['runtime-1', makeNode('runtime-1', NodeKind.Runtime, 'runtime')],
+        ]),
+        edges: [],
+        state: {
+          getSnapshots: vi.fn().mockReturnValue([]),
+          handleGraphDestroyed: vi.fn(),
+        } as unknown as CompiledGraph['state'],
+        status: GraphStatus.Running,
+        destroy: vi.fn().mockResolvedValue(undefined),
+      };
+    };
+
+    it('getAgentNodes returns every node whose kind is in AGENT_NODE_KINDS', () => {
+      registry.register('agent-graph', buildAgentGraph());
+
+      const result = registry.getAgentNodes('agent-graph');
+
+      expect(result.map((n) => n.id).sort()).toEqual([
+        'agent-1',
+        'agent-2',
+        'claude-1',
+      ]);
+    });
+
+    it('getAgentNodes returns empty array for non-existent graph', () => {
+      expect(registry.getAgentNodes('missing')).toEqual([]);
+    });
+
+    it('filterAgentNodeIds keeps only agent node ids', () => {
+      registry.register('agent-graph', buildAgentGraph());
+
+      const result = registry.filterAgentNodeIds('agent-graph', [
+        'agent-1',
+        'tool-1',
+        'claude-1',
+        'runtime-1',
+        'unknown-id',
+        'agent-2',
+      ]);
+
+      expect(result).toEqual(['agent-1', 'claude-1', 'agent-2']);
+    });
+
+    it('filterAgentNodeIds accepts a Set and returns empty for missing graph', () => {
+      registry.register('agent-graph', buildAgentGraph());
+
+      expect(
+        registry.filterAgentNodeIds('agent-graph', new Set(['agent-2'])),
+      ).toEqual(['agent-2']);
+      expect(registry.filterAgentNodeIds('missing', ['agent-1'])).toEqual([]);
+    });
+  });
+
   describe('getNodesByTemplate', () => {
     it('should return all nodes matching a template', () => {
       const graphId = 'test-graph';

@@ -79,6 +79,12 @@ export class RuntimeTemplate extends RuntimeNodeBaseTemplate<
       value: NodeKind.SimpleAgent,
       multiple: true,
     },
+    // Claude Agent nodes host their Claude Code session inside this runtime.
+    {
+      type: 'kind',
+      value: NodeKind.ClaudeAgent,
+      multiple: true,
+    },
   ] as const;
 
   constructor(private readonly runtimeProvider: RuntimeProvider) {

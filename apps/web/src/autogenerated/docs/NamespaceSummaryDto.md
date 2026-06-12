@@ -5,6 +5,7 @@
 | Name              | Type       | Description | Notes                  |
 | ----------------- | ---------- | ----------- | ---------------------- |
 | **namespace**     | **string** |             | [default to undefined] |
+| **mode**          | **string** |             | [default to undefined] |
 | **entryCount**    | **number** |             | [default to undefined] |
 | **lastUpdatedAt** | **string** |             | [default to undefined] |
 
@@ -15,6 +16,7 @@ import { NamespaceSummaryDto } from './api';
 
 const instance: NamespaceSummaryDto = {
   namespace,
+  mode,
   entryCount,
   lastUpdatedAt,
 };

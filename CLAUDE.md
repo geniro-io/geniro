@@ -223,11 +223,12 @@ apps/api/src/
 └── __tests__/integration/    # Integration tests (*.int.ts)
 
 packages/
-├── common/      # Logger (Pino+Sentry), custom exception classes, bootstrapper
-├── http-server/ # Fastify setup, Swagger, auth (Keycloak), middleware, request tracing
-├── metrics/     # Prometheus integration
-├── mikroorm/    # MikroORM config wrapper, base entities, NestJS module integration
-└── cypress/     # Cypress helpers + API type generator (cy-generate-api)
+├── common/        # Logger (Pino+Sentry), custom exception classes, bootstrapper
+├── http-server/   # Fastify setup, Swagger, auth (Keycloak), middleware, request tracing
+├── metrics/       # Prometheus integration
+├── mikroorm/      # MikroORM config wrapper, base entities, NestJS module integration
+├── claude-bridge/ # Sandbox-side Claude Agent SDK bridge (JSON-line stdio protocol); the SDK dependency lives ONLY here
+└── cypress/       # Cypress helpers + API type generator (cy-generate-api)
 ```
 
 ### Layered architecture (per feature)
@@ -260,7 +261,7 @@ src/v1/feature-name/
 | Module | Role |
 |---|---|
 | `graphs` | Core: graph CRUD, execution lifecycle, versioning, schema compilation |
-| `agents` | LangGraph-based agent runtime |
+| `agents` | Agent runtimes: LangGraph-based SimpleAgent + sandbox-bridged ClaudeAgent (Claude Agent SDK via `packages/claude-bridge`, no LangGraph/checkpointer) |
 | `agent-tools` | Tool implementations: web search, shell, file ops, GitHub, codebase search |
 | `agent-triggers` | Trigger execution (e.g. manual) |
 | `threads` | Thread/message/checkpoint persistence |

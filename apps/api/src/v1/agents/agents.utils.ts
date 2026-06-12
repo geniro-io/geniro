@@ -14,6 +14,7 @@ import type { UnknownRecord } from 'type-fest';
 import type {
   BaseAgentConfigurable,
   MessageAdditionalKwargs,
+  RunnableAgent,
 } from './agents.types';
 
 function getMessageKwargs(msg: BaseMessage): MessageAdditionalKwargs {
@@ -517,4 +518,24 @@ export function buildReasoningMessage(
   };
 
   return markMessageHideForLlm(msg);
+}
+
+/**
+ * Capability check for the RunnableAgent surface. Used instead of
+ * `instanceof SimpleAgent` so call sites accept any agent kind that
+ * implements the contract (SimpleAgent, ClaudeAgent, ...).
+ */
+export function isRunnableAgent(value: unknown): value is RunnableAgent {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  const candidate = value as Record<string, unknown>;
+  return (
+    typeof candidate['run'] === 'function' &&
+    typeof candidate['runOrAppend'] === 'function' &&
+    typeof candidate['stopThread'] === 'function' &&
+    typeof candidate['subscribe'] === 'function' &&
+    typeof candidate['emit'] === 'function' &&
+    typeof candidate['getGraphNodeMetadata'] === 'function'
+  );
 }

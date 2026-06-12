@@ -3,9 +3,13 @@
  *
  * Verifies the Bug A and Bug B fixes introduced in plan-bugs-ab-thread-stats.md:
  *
- *   Bug A — currentContext reconciled from messages when checkpoint returns null:
- *   - `getThreadTokenUsage` returns null when PgCheckpointSaver.getTuples yields []
- *   - `getThreadUsageStatistics` falls back to Math.max across all message currentContext values
+ *   Bug A — currentContext reconciled from messages when checkpoint is empty:
+ *   - When PgCheckpointSaver.getTuples yields [], `getThreadTokenUsage` falls
+ *     back to the message-scan aggregate (Claude Agent / checkpoint-less
+ *     threads). The fallback cannot reconstruct currentContext (point-in-time)
+ *     and reports 0 for it.
+ *   - `getThreadUsageStatistics` still reconciles via Math.max across all
+ *     message currentContext values (checkpoint authoritative only when populated)
  *   - result.total.currentContext === Math.max across all AI messages (42_000)
  *   - result.byNode is populated entirely from message-scan (not checkpoint)
  *
@@ -328,8 +332,8 @@ describe('Thread usage statistics with empty checkpoint (Bug A + Bug B integrati
 
       // ----------------------------------------------------------------
       // Bug A repro: mock PgCheckpointSaver.getTuples to return [] so
-      // CheckpointStateService.getThreadTokenUsage returns null.
-      // This simulates multi-agent topologies that never write the
+      // CheckpointStateService.getThreadTokenUsage takes the checkpoint-less
+      // path. This simulates multi-agent topologies that never write the
       // empty-NS root checkpoint.
       // ----------------------------------------------------------------
       const checkpointSaver = checkpointStateService[
@@ -337,15 +341,33 @@ describe('Thread usage statistics with empty checkpoint (Bug A + Bug B integrati
       ] as PgCheckpointSaver;
       vi.spyOn(checkpointSaver, 'getTuples').mockResolvedValue([]);
 
-      // Verify the mock is effective — getThreadTokenUsage must return null
+      // Empty tuples + usage-bearing messages → the message-scan fallback
+      // kicks in (checkpoint-less contract). currentContext is point-in-time
+      // and cannot be reconstructed from messages, so the fallback reports 0 —
+      // the Math.max reconciliation in getThreadUsageStatistics (asserted
+      // below) is what restores the message-derived value.
       const checkpointResult = await checkpointStateService.getThreadTokenUsage(
         externalThreadId,
         '',
       );
       expect(
         checkpointResult,
-        'getThreadTokenUsage must return null when getTuples yields [] (Bug A repro prereq)',
-      ).toBeNull();
+        'getThreadTokenUsage must fall back to the message scan when getTuples yields []',
+      ).not.toBeNull();
+      expect(
+        checkpointResult!.currentContext,
+        'message-scan fallback cannot reconstruct currentContext (must be 0)',
+      ).toBe(0);
+      expect(
+        Object.keys(checkpointResult!.byNode ?? {}).sort(),
+        'fallback byNode must carry parent + both surrogate buckets',
+      ).toEqual(
+        [
+          PARENT_NODE_ID,
+          `${PARENT_NODE_ID}::sub::${TOOL_CALL_A}`,
+          `${PARENT_NODE_ID}::sub::${TOOL_CALL_B}`,
+        ].sort(),
+      );
 
       // ----------------------------------------------------------------
       // Build context for getThreadUsageStatistics call

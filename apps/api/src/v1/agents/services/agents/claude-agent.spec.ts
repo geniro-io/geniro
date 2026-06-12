@@ -1,0 +1,434 @@
+import { HumanMessage } from '@langchain/core/messages';
+import { RunnableConfig } from '@langchain/core/runnables';
+import type { DefaultLogger } from '@packages/common';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { mockDeep } from 'vitest-mock-extended';
+
+import { MessageRole } from '../../../graphs/graphs.types';
+import { RequestTokenUsage } from '../../../litellm/litellm.types';
+import type { LiteLlmClient } from '../../../litellm/services/litellm.client';
+import type { LitellmVirtualKeyService } from '../../../litellm/services/litellm-virtual-key.service';
+import type { RuntimeThreadProvider } from '../../../runtime/services/runtime-thread-provider';
+import type { MessagesDao } from '../../../threads/dao/messages.dao';
+import type { ThreadsDao } from '../../../threads/dao/threads.dao';
+import { BaseAgentConfigurable } from '../../agents.types';
+import type { ClaudeBootstrapService } from '../claude/claude-bootstrap.service';
+import type { ClaudeBridgeHandlers } from '../claude/claude-bridge-transport';
+import { ClaudeBridgeTransport } from '../claude/claude-bridge-transport';
+import type { ClaudeKeepaliveService } from '../claude/claude-keepalive.service';
+import { AgentEventType } from './base-agent';
+import { ClaudeAgent, ClaudeAgentSchemaType } from './claude-agent';
+
+const THREAD_ID = 'thread-ext-1';
+
+const AGENT_CONFIG: ClaudeAgentSchemaType = {
+  name: 'Claude',
+  description: 'test agent',
+  instructions: 'be helpful',
+  model: 'claude-sonnet-4-6',
+};
+
+const usage = (totalPrice: number): RequestTokenUsage => ({
+  inputTokens: 100,
+  cachedInputTokens: 0,
+  outputTokens: 50,
+  totalTokens: 150,
+  totalPrice,
+});
+
+/**
+ * Cost-limit enforcement and stop semantics for ClaudeAgent.run — the
+ * decisions that bound LLM spend (pre-turn short-circuit, mid-stream trip,
+ * key budget computation, revoke-always) and the stop/abort races. The
+ * transport is the mocked boundary: tests drive `handlers.*` exactly as the
+ * bridge would.
+ */
+describe('ClaudeAgent', () => {
+  let agent: ClaudeAgent;
+  let events: AgentEventType[];
+
+  let bootstrap: {
+    ensureSessionReady: ReturnType<typeof vi.fn>;
+    isSessionResumable: ReturnType<typeof vi.fn>;
+  };
+  let virtualKeys: {
+    issueThreadKey: ReturnType<typeof vi.fn>;
+    revokeThreadKey: ReturnType<typeof vi.fn>;
+  };
+  let liteLlmClient: { getModelInfo: ReturnType<typeof vi.fn> };
+  let threadsDao: {
+    getOne: ReturnType<typeof vi.fn>;
+    mergeMetadataKey: ReturnType<typeof vi.fn>;
+  };
+  let messagesDao: {
+    aggregateUsageByNodeId: ReturnType<typeof vi.fn>;
+    getAll: ReturnType<typeof vi.fn>;
+  };
+  let runtimeProvider: RuntimeThreadProvider;
+
+  let startSpy: ReturnType<typeof vi.spyOn>;
+  let capturedHandlers: ClaudeBridgeHandlers | undefined;
+  let fakeTransport: {
+    send: ReturnType<typeof vi.fn>;
+    interrupt: ReturnType<typeof vi.fn>;
+    close: ReturnType<typeof vi.fn>;
+  };
+  /** Resolves the mocked ClaudeBridgeTransport.start promise. */
+  let releaseTransportStart: () => void;
+
+  beforeEach(() => {
+    events = [];
+    bootstrap = {
+      ensureSessionReady: vi
+        .fn()
+        .mockResolvedValue({ bridgePath: '/opt/b.mjs', pluginPaths: [] }),
+      isSessionResumable: vi.fn().mockResolvedValue(false),
+    };
+    virtualKeys = {
+      issueThreadKey: vi.fn().mockResolvedValue({ key: 'sk-vkey-test' }),
+      revokeThreadKey: vi.fn().mockResolvedValue(undefined),
+    };
+    liteLlmClient = {
+      getModelInfo: vi.fn().mockResolvedValue({
+        model_info: {
+          input_cost_per_token: 0.000001,
+          output_cost_per_token: 0.000002,
+        },
+      }),
+    };
+    threadsDao = {
+      getOne: vi.fn().mockResolvedValue({ id: 'thread-int-1', metadata: {} }),
+      mergeMetadataKey: vi.fn().mockResolvedValue(undefined),
+    };
+    messagesDao = {
+      aggregateUsageByNodeId: vi.fn().mockResolvedValue(new Map()),
+      getAll: vi.fn().mockResolvedValue([]),
+    };
+    runtimeProvider = {
+      provide: vi.fn().mockResolvedValue({
+        getWorkdir: () => '/workspace',
+      }),
+      getParams: () => ({ runtimeNodeId: 'rt-node-1' }),
+    } as unknown as RuntimeThreadProvider;
+
+    const keepalive = {
+      createToucher: vi.fn().mockReturnValue(vi.fn()),
+    } as unknown as ClaudeKeepaliveService;
+
+    agent = new ClaudeAgent(
+      mockDeep<DefaultLogger>(),
+      bootstrap as unknown as ClaudeBootstrapService,
+      keepalive,
+      virtualKeys as unknown as LitellmVirtualKeyService,
+      liteLlmClient as unknown as LiteLlmClient,
+      threadsDao as unknown as ThreadsDao,
+      messagesDao as unknown as MessagesDao,
+    );
+    agent.setConfig(AGENT_CONFIG);
+    agent.setRuntimeProvider(runtimeProvider);
+    agent.subscribe(async (event) => {
+      events.push(event);
+    });
+
+    fakeTransport = {
+      send: vi.fn(),
+      interrupt: vi.fn(),
+      close: vi.fn(),
+    };
+    capturedHandlers = undefined;
+    startSpy = vi
+      .spyOn(ClaudeBridgeTransport, 'start')
+      .mockImplementation(async (params) => {
+        capturedHandlers = params.handlers;
+        await new Promise<void>((resolve) => {
+          releaseTransportStart = resolve;
+        });
+        return fakeTransport as unknown as ClaudeBridgeTransport;
+      });
+    releaseTransportStart = () => undefined;
+  });
+
+  afterEach(() => {
+    startSpy.mockRestore();
+  });
+
+  const runnableConfig = (
+    costLimitUsd?: number,
+  ): RunnableConfig<BaseAgentConfigurable> => ({
+    configurable: {
+      thread_id: THREAD_ID,
+      graph_id: 'g-1',
+      node_id: 'claude-1',
+      ...(costLimitUsd !== undefined && {
+        effective_cost_limit_usd: costLimitUsd,
+      }),
+    } as BaseAgentConfigurable,
+  });
+
+  /**
+   * run() → transport start resolves → bridge sent the start frame. Returns
+   * the run promise WRAPPED in an object — returning it bare would make
+   * `await startRunAndOpenBridge()` unwrap the thenable and block on the
+   * whole run.
+   */
+  const startRunAndOpenBridge = async (
+    costLimitUsd?: number,
+  ): Promise<{ runPromise: ReturnType<ClaudeAgent['run']> }> => {
+    const runPromise = agent.run(
+      THREAD_ID,
+      [new HumanMessage('hi')],
+      undefined,
+      runnableConfig(costLimitUsd),
+    );
+    await vi.waitFor(() => expect(startSpy).toHaveBeenCalled());
+    releaseTransportStart();
+    await vi.waitFor(() => expect(fakeTransport.send).toHaveBeenCalled());
+    return { runPromise };
+  };
+
+  const sentStartFrame = () =>
+    fakeTransport.send.mock.calls[0]![0] as {
+      options: { prompt: string; resume?: string };
+    };
+
+  const stopEvents = () =>
+    events.filter((e) => e.type === 'stop') as Extract<
+      AgentEventType,
+      { type: 'stop' }
+    >[];
+  const runEvents = () =>
+    events.filter((e) => e.type === 'run') as Extract<
+      AgentEventType,
+      { type: 'run' }
+    >[];
+
+  it('short-circuits before starting the session when prior spend already meets the limit', async () => {
+    messagesDao.aggregateUsageByNodeId.mockResolvedValue(
+      new Map([['claude-1', usage(1.5)]]),
+    );
+
+    const output = await agent.run(
+      THREAD_ID,
+      [new HumanMessage('hi')],
+      undefined,
+      runnableConfig(1),
+    );
+
+    expect(output.messages).toEqual([]);
+    expect(startSpy).not.toHaveBeenCalled();
+    expect(virtualKeys.issueThreadKey).not.toHaveBeenCalled();
+    expect(stopEvents()).toHaveLength(1);
+    expect(stopEvents()[0]!.data).toMatchObject({
+      stopReason: 'cost_limit',
+      stopCostUsd: 1.5,
+    });
+    // No success 'run' event — the thread transitions to Stopped, not Done.
+    expect(runEvents()).toHaveLength(0);
+  });
+
+  it('issues a model-scoped key with the remaining budget, clamped to the 1-cent floor', async () => {
+    messagesDao.aggregateUsageByNodeId.mockResolvedValue(
+      new Map([['claude-1', usage(0.999)]]),
+    );
+
+    const { runPromise } = await startRunAndOpenBridge(1);
+    capturedHandlers!.onDone('sess-1');
+    await runPromise;
+
+    expect(virtualKeys.issueThreadKey).toHaveBeenCalledWith(
+      expect.objectContaining({
+        budgetUsd: 0.01,
+        models: ['claude-sonnet-4-6', 'claude-haiku-4-5'],
+      }),
+    );
+  });
+
+  it('interrupts the session mid-stream when accumulated price trips the limit, after persisting the tripping message', async () => {
+    messagesDao.aggregateUsageByNodeId.mockResolvedValue(
+      new Map([['claude-1', usage(0.95)]]),
+    );
+
+    const { runPromise } = await startRunAndOpenBridge(1);
+
+    // Assistant message worth $0.25: 0.95 + 0.25 ≥ 1 → in-stream trip.
+    // (rates: 100k input @ 1e-6 = $0.1, 75k output @ 2e-6 = $0.15)
+    capturedHandlers!.onSdkMessage({
+      type: 'assistant',
+      session_id: 'sess-1',
+      parent_tool_use_id: null,
+      message: {
+        id: 'm-1',
+        model: 'claude-sonnet-4-6',
+        content: [{ type: 'text', text: 'expensive thought' }],
+        usage: { input_tokens: 100_000, output_tokens: 75_000 },
+      },
+    });
+    await vi.waitFor(() => expect(fakeTransport.interrupt).toHaveBeenCalled());
+    capturedHandlers!.onAborted('sess-1');
+    const output = await runPromise;
+
+    expect(fakeTransport.interrupt).toHaveBeenCalledTimes(1);
+    // Persist-before-stop: the tripping assistant message is in the output
+    // (it streamed/persisted before the stop fired).
+    expect(output.messages.some((m) => m.content === 'expensive thought')).toBe(
+      true,
+    );
+    expect(stopEvents()).toHaveLength(1);
+    expect(stopEvents()[0]!.data.stopReason).toBe('cost_limit');
+    expect(stopEvents()[0]!.data.stopCostUsd).toBeCloseTo(1.2);
+    expect(runEvents()).toHaveLength(0);
+  });
+
+  it('never sends start when the thread was stopped during bootstrap (abort-before-start)', async () => {
+    const runPromise = agent.run(
+      THREAD_ID,
+      [new HumanMessage('hi')],
+      undefined,
+      runnableConfig(),
+    );
+    await vi.waitFor(() => expect(startSpy).toHaveBeenCalled());
+
+    // Stop lands while ClaudeBridgeTransport.start is still pending.
+    await agent.stopThread(THREAD_ID, 'user stop');
+    releaseTransportStart();
+    const output = await runPromise;
+
+    expect(fakeTransport.send).not.toHaveBeenCalled();
+    expect(fakeTransport.close).toHaveBeenCalled();
+    expect(output.messages).toEqual([]);
+    // stopThread emitted the stop event; no success 'run' event may follow.
+    expect(stopEvents()).toHaveLength(1);
+    expect(runEvents()).toHaveLength(0);
+  });
+
+  it('suppresses the success run event when a stop races the natural end of the turn', async () => {
+    const { runPromise } = await startRunAndOpenBridge();
+
+    await agent.stopThread(THREAD_ID, 'user stop');
+    // The bridge already finished the turn: outcome is 'done', not 'aborted'.
+    capturedHandlers!.onDone('sess-1');
+    await runPromise;
+
+    expect(runEvents()).toHaveLength(0);
+  });
+
+  it('revokes the virtual key on success and persists the session id', async () => {
+    const { runPromise } = await startRunAndOpenBridge();
+    capturedHandlers!.onDone('sess-42');
+    await runPromise;
+
+    expect(virtualKeys.revokeThreadKey).toHaveBeenCalledWith('sk-vkey-test');
+    expect(threadsDao.mergeMetadataKey).toHaveBeenCalledWith(
+      'thread-int-1',
+      'claudeSessions',
+      { 'claude-1': 'sess-42' },
+    );
+    expect(runEvents()).toHaveLength(1);
+    expect(runEvents()[0]!.data.error).toBeUndefined();
+  });
+
+  it('persists the session id when the thread row is created after the run begins (first turn of a fresh thread)', async () => {
+    // The invoke/message events that create the thread row are emitted and
+    // handled asynchronously, so on the FIRST turn of a brand-new thread the
+    // start-of-run getOne can return null while the row exists by the time the
+    // bridge finishes. getOne returns null at run-start, then the persisted
+    // row on every subsequent lookup.
+    threadsDao.getOne
+      .mockResolvedValueOnce(null)
+      .mockResolvedValue({ id: 'thread-int-1', metadata: {} });
+
+    const { runPromise } = await startRunAndOpenBridge();
+    capturedHandlers!.onDone('sess-late');
+    await runPromise;
+
+    // The session id must be persisted under the now-existing row so the next
+    // turn can resume instead of replaying the whole transcript.
+    expect(threadsDao.mergeMetadataKey).toHaveBeenCalledWith(
+      'thread-int-1',
+      'claudeSessions',
+      { 'claude-1': 'sess-late' },
+    );
+  });
+
+  it('revokes the virtual key when the bridge fails fatally', async () => {
+    const { runPromise } = await startRunAndOpenBridge();
+    capturedHandlers!.onFatal('bridge exploded');
+
+    await expect(runPromise).rejects.toMatchObject({
+      errorCode: 'CLAUDE_BRIDGE_FAILED',
+    });
+    expect(virtualKeys.revokeThreadKey).toHaveBeenCalledWith('sk-vkey-test');
+    expect(runEvents()).toHaveLength(1);
+    expect(runEvents()[0]!.data.error).toBeDefined();
+  });
+
+  it('resumes the node-scoped session when the transcript is still on the container', async () => {
+    threadsDao.getOne.mockResolvedValue({
+      id: 'thread-int-1',
+      metadata: { claudeSessions: { 'claude-1': 'sess-old' } },
+    });
+    bootstrap.isSessionResumable.mockResolvedValue(true);
+
+    const { runPromise } = await startRunAndOpenBridge();
+    capturedHandlers!.onDone('sess-old');
+    await runPromise;
+
+    expect(bootstrap.isSessionResumable).toHaveBeenCalledWith(
+      expect.anything(),
+      'sess-old',
+    );
+    expect(sentStartFrame().options.resume).toBe('sess-old');
+    expect(sentStartFrame().options.prompt).not.toContain(
+      '<conversation-history>',
+    );
+  });
+
+  it('replays only THIS node history (tail-truncated) when the session is not resumable', async () => {
+    threadsDao.getOne.mockResolvedValue({
+      id: 'thread-int-1',
+      metadata: { claudeSessions: { 'claude-1': 'sess-gone' } },
+    });
+    bootstrap.isSessionResumable.mockResolvedValue(false);
+    // One short head row + one row longer than the 8000-char replay cap:
+    // truncation keeps the TAIL, so the head must be cut from the prompt.
+    messagesDao.getAll.mockResolvedValue([
+      { role: MessageRole.Human, message: { content: 'earlier question' } },
+      { role: MessageRole.AI, message: { content: 'z'.repeat(9_000) } },
+    ]);
+
+    const { runPromise } = await startRunAndOpenBridge();
+    capturedHandlers!.onDone('sess-new');
+    await runPromise;
+
+    // The replay query is node-scoped — other agents' rows on a shared root
+    // thread (and ::sub:: surrogates) never enter this node's replay.
+    expect(messagesDao.getAll).toHaveBeenCalledWith(
+      expect.objectContaining({ nodeId: 'claude-1' }),
+      expect.anything(),
+    );
+    const prompt = sentStartFrame().options.prompt;
+    expect(prompt.startsWith('<conversation-history>')).toBe(true);
+    expect(prompt).toContain('zzzz');
+    expect(prompt).not.toContain('earlier question');
+    expect(sentStartFrame().options.resume).toBeUndefined();
+  });
+
+  it('rejects concurrent runs on the same thread', async () => {
+    const runPromise = agent.run(
+      THREAD_ID,
+      [new HumanMessage('hi')],
+      undefined,
+      runnableConfig(),
+    );
+    await vi.waitFor(() => expect(startSpy).toHaveBeenCalled());
+
+    await expect(
+      agent.runOrAppend(THREAD_ID, [new HumanMessage('more')]),
+    ).rejects.toMatchObject({ errorCode: 'THREAD_ALREADY_RUNNING' });
+
+    releaseTransportStart();
+    await vi.waitFor(() => expect(fakeTransport.send).toHaveBeenCalled());
+    capturedHandlers!.onDone('sess-1');
+    await runPromise;
+  });
+});

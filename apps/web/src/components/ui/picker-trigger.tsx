@@ -10,7 +10,7 @@ const PickerTrigger = React.forwardRef<
   <button
     ref={ref}
     className={cn(
-      'flex items-center gap-2 px-3 py-1.5 rounded-lg bg-muted hover:bg-muted/80 transition-colors outline-none focus:ring-2 focus:ring-ring',
+      'flex min-w-0 items-center gap-2 px-3 py-1.5 rounded-lg bg-muted hover:bg-muted/80 transition-colors outline-none focus:ring-2 focus:ring-ring',
       className,
     )}
     {...props}>

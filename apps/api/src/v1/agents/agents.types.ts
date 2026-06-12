@@ -1,11 +1,17 @@
 import { BaseMessage } from '@langchain/core/messages';
+import type { RunnableConfig } from '@langchain/core/runnables';
 
+import type { GraphExecutionMetadata } from '../graphs/graphs.types';
 import type {
   MessageTokenUsage,
   RequestTokenUsage,
 } from '../litellm/litellm.types';
 import type { ModelPreferences } from '../user-preferences/user-preferences.types';
-import type { BaseAgent } from './services/agents/base-agent';
+import type {
+  AgentEventType,
+  AgentOutput,
+  BaseAgent,
+} from './services/agents/base-agent';
 
 /**
  * Message metadata stored in `BaseMessage.additional_kwargs`.
@@ -169,3 +175,32 @@ export type BaseAgentConfigurable = {
   // construct the configurable explicitly with server-side values only.
   [key: string]: unknown;
 };
+
+/**
+ * The runtime surface every graph-node agent kind exposes to the rest of the
+ * platform (triggers, thread resume, stop fan-out, inter-agent communication,
+ * graph-state listeners). Extracted from SimpleAgent's formerly duck-typed
+ * surface so new agent kinds (e.g. ClaudeAgent) plug into the same call sites
+ * without `instanceof` checks. Node kinds whose instances implement this live
+ * in `AGENT_NODE_KINDS` (graphs.types.ts) — keep the two in sync.
+ */
+export interface RunnableAgent<TSchema = unknown> {
+  run(
+    threadId: string,
+    messages: BaseMessage[],
+    config?: TSchema,
+    runnableConfig?: RunnableConfig<BaseAgentConfigurable>,
+  ): Promise<AgentOutput>;
+  runOrAppend(
+    threadId: string,
+    messages: BaseMessage[],
+    config?: TSchema,
+    runnableConfig?: RunnableConfig<BaseAgentConfigurable>,
+  ): Promise<AgentOutput>;
+  stopThread(threadId: string, reason?: string): Promise<boolean>;
+  subscribe(callback: (event: AgentEventType) => Promise<void>): () => void;
+  emit(event: AgentEventType): void;
+  getGraphNodeMetadata(
+    meta: GraphExecutionMetadata,
+  ): Record<string, unknown> | undefined;
+}

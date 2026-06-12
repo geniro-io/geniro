@@ -65,6 +65,9 @@ function inferNodeType(
   if (normalized === 'simpleagent') {
     return 'simpleAgent';
   }
+  if (normalized === 'claudeagent') {
+    return 'claudeAgent';
+  }
   if (normalized === 'trigger') {
     return 'trigger';
   }

@@ -2,7 +2,12 @@ import { Injectable } from '@nestjs/common';
 import { DefaultLogger } from '@packages/common';
 
 import { environment } from '../../../environments';
-import { LiteLLMModelInfo } from '../litellm.types';
+import {
+  LiteLLMGeneratedKey,
+  LiteLLMKeyGenerateParams,
+  LiteLLMKeyInfo,
+  LiteLLMModelInfo,
+} from '../litellm.types';
 
 @Injectable()
 export class LiteLlmClient {
@@ -100,6 +105,53 @@ export class LiteLlmClient {
         error: sanitizedError,
       };
     }
+  }
+
+  async generateKey(
+    params: LiteLLMKeyGenerateParams,
+  ): Promise<LiteLLMGeneratedKey> {
+    const body: Record<string, unknown> = {
+      key_alias: params.keyAlias,
+    };
+    if (params.maxBudgetUsd !== undefined) {
+      body['max_budget'] = params.maxBudgetUsd;
+    }
+    if (params.models?.length) {
+      body['models'] = params.models;
+    }
+    if (params.duration) {
+      body['duration'] = params.duration;
+    }
+    if (params.metadata) {
+      body['metadata'] = params.metadata;
+    }
+    return await this.request('/key/generate', { method: 'POST', body });
+  }
+
+  async updateKeyBudget(key: string, maxBudgetUsd: number): Promise<unknown> {
+    return await this.request('/key/update', {
+      method: 'POST',
+      body: { key, max_budget: maxBudgetUsd },
+    });
+  }
+
+  async deleteKeys(keys: string[]): Promise<unknown> {
+    return await this.request('/key/delete', {
+      method: 'POST',
+      body: { keys },
+    });
+  }
+
+  /**
+   * Reserved for M2 spend verification / key GC audits (no production caller
+   * yet). Before wiring a caller, switch to the POST `/key/info` body form —
+   * a key in the query string can surface in proxy access logs.
+   */
+  async getKeyInfo(key: string): Promise<LiteLLMKeyInfo> {
+    const response = await this.request<{ info: LiteLLMKeyInfo }>(
+      `/key/info?key=${encodeURIComponent(key)}`,
+    );
+    return response.info;
   }
 
   async listCredentials(): Promise<{ credential_name: string }[]> {

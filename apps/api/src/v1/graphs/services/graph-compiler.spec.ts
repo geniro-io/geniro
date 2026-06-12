@@ -826,4 +826,153 @@ describe('GraphCompiler', () => {
       );
     });
   });
+
+  describe('requiredGroup validation (OR-groups)', () => {
+    // Trigger requires at least one agent of EITHER kind — exactly the rule
+    // shape manual-trigger / github-issues-trigger ship with.
+    const triggerTemplate = {
+      kind: NodeKind.Trigger,
+      inputs: [] as NodeConnection[],
+      outputs: [
+        {
+          type: 'kind',
+          value: NodeKind.SimpleAgent,
+          requiredGroup: 'agent',
+          multiple: true,
+        },
+        {
+          type: 'kind',
+          value: NodeKind.ClaudeAgent,
+          requiredGroup: 'agent',
+          multiple: true,
+        },
+      ] as NodeConnection[],
+    };
+    const agentInputs = [
+      { type: 'kind', value: NodeKind.Trigger, multiple: true },
+    ] as NodeConnection[];
+    const simpleAgentTemplate = {
+      kind: NodeKind.SimpleAgent,
+      inputs: agentInputs,
+      outputs: [] as NodeConnection[],
+    };
+    const claudeAgentTemplate = {
+      kind: NodeKind.ClaudeAgent,
+      inputs: agentInputs,
+      outputs: [] as NodeConnection[],
+    };
+
+    const registerTemplates = () => {
+      vi.mocked(templateRegistry.getTemplate).mockImplementation(
+        (id: string) => {
+          if (id === 'trigger-t') {
+            return triggerTemplate as never;
+          }
+          if (id === 'simple-agent-t') {
+            return simpleAgentTemplate as never;
+          }
+          if (id === 'claude-agent-t') {
+            return claudeAgentTemplate as never;
+          }
+          return undefined as never;
+        },
+      );
+    };
+
+    const expectMissingRequired = (schema: GraphSchemaType) => {
+      try {
+        compiler.validateSchema(schema);
+        expect.fail('expected MISSING_REQUIRED_CONNECTION');
+      } catch (error) {
+        expect(error).toBeInstanceOf(BadRequestException);
+        expect((error as { errorCode?: string }).errorCode).toBe(
+          'MISSING_REQUIRED_CONNECTION',
+        );
+      }
+    };
+
+    it('rejects a trigger with no agent connection at all', () => {
+      registerTemplates();
+      expectMissingRequired({
+        nodes: [{ id: 'tr', template: 'trigger-t', config: {} }],
+        edges: [],
+      });
+    });
+
+    it('accepts the group satisfied by the FIRST member kind (simpleAgent only)', () => {
+      registerTemplates();
+      expect(() =>
+        compiler.validateSchema({
+          nodes: [
+            { id: 'tr', template: 'trigger-t', config: {} },
+            { id: 'ag', template: 'simple-agent-t', config: {} },
+          ],
+          edges: [{ from: 'tr', to: 'ag' }],
+        }),
+      ).not.toThrow();
+    });
+
+    it('accepts the group satisfied by the SECOND member kind only (claudeAgent — the discriminating case)', () => {
+      registerTemplates();
+      expect(() =>
+        compiler.validateSchema({
+          nodes: [
+            { id: 'tr', template: 'trigger-t', config: {} },
+            { id: 'ag', template: 'claude-agent-t', config: {} },
+          ],
+          edges: [{ from: 'tr', to: 'ag' }],
+        }),
+      ).not.toThrow();
+    });
+
+    it('names every group option in the rejection message', () => {
+      registerTemplates();
+      try {
+        compiler.validateSchema({
+          nodes: [{ id: 'tr', template: 'trigger-t', config: {} }],
+          edges: [],
+        });
+        expect.fail('expected MISSING_REQUIRED_CONNECTION');
+      } catch (error) {
+        const message = (error as Error).message;
+        expect(message).toContain("kind 'simpleAgent'");
+        expect(message).toContain("kind 'claudeAgent'");
+      }
+    });
+
+    it('still enforces per-rule required:true alongside a satisfied group', () => {
+      const triggerWithRequired = {
+        ...triggerTemplate,
+        outputs: [
+          ...triggerTemplate.outputs,
+          {
+            type: 'kind',
+            value: NodeKind.Runtime,
+            required: true,
+            multiple: false,
+          },
+        ] as NodeConnection[],
+      };
+      vi.mocked(templateRegistry.getTemplate).mockImplementation(
+        (id: string) => {
+          if (id === 'trigger-t') {
+            return triggerWithRequired as never;
+          }
+          if (id === 'claude-agent-t') {
+            return claudeAgentTemplate as never;
+          }
+          return undefined as never;
+        },
+      );
+
+      // Agent group satisfied, but the required Runtime edge is missing.
+      expectMissingRequired({
+        nodes: [
+          { id: 'tr', template: 'trigger-t', config: {} },
+          { id: 'ag', template: 'claude-agent-t', config: {} },
+        ],
+        edges: [{ from: 'tr', to: 'ag' }],
+      });
+    });
+  });
 });

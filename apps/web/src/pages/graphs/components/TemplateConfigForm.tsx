@@ -59,6 +59,14 @@ import { API_URL } from '../../../config';
 import type { SchemaProperty } from '../types';
 import { getSchemaTypeName } from '../utils/schemaUtils';
 import { ArrayTagInput } from './ArrayTagInput';
+import {
+  RjsfAddButton,
+  RjsfArrayFieldItemTemplate,
+  RjsfArrayFieldTemplate,
+  RjsfMoveDownButton,
+  RjsfMoveUpButton,
+  RjsfRemoveButton,
+} from './RjsfArrayTemplates';
 
 type FormData = Record<string, unknown>;
 type UiSchemaShape = UiSchema<FormData, RJSFSchema, FormContext>;
@@ -130,6 +138,18 @@ const buildUiSchema = (schema: RJSFSchema): UiSchemaShape => {
     return undefined;
   };
 
+  // Type of an array's items, when items is a single object schema (not a
+  // tuple). The `arrayAsTextarea` tag widget only handles `string[]`; an
+  // object-array (e.g. plugins) must fall through to RJSF's native nested
+  // array editor or it silently saves bare strings the backend rejects.
+  const getArrayItemTypeName = (prop: SchemaProperty): string | undefined => {
+    const items = (prop as { items?: unknown }).items;
+    if (!items || typeof items !== 'object' || Array.isArray(items)) {
+      return undefined;
+    }
+    return getSchemaTypeName(items as SchemaProperty);
+  };
+
   for (const [key, propUnknown] of Object.entries(
     props as Record<string, unknown>,
   )) {
@@ -163,7 +183,11 @@ const buildUiSchema = (schema: RJSFSchema): UiSchemaShape => {
 
     const typeName = getSchemaTypeName(prop);
 
-    if (typeName === 'array' && prop['x-ui:secret-multi-select'] !== true) {
+    if (
+      typeName === 'array' &&
+      prop['x-ui:secret-multi-select'] !== true &&
+      getArrayItemTypeName(prop) !== 'object'
+    ) {
       fieldUi['ui:field'] = 'arrayAsTextarea';
     }
 
@@ -1080,6 +1104,18 @@ const RJSF_TEMPLATES: RjsfTemplates = {
   BaseInputTemplate: RjsfBaseInputTemplate,
   ObjectFieldTemplate: RjsfObjectFieldTemplate,
   FieldTemplate: RjsfFieldTemplate,
+  ArrayFieldTemplate: RjsfArrayFieldTemplate,
+  ArrayFieldItemTemplate: RjsfArrayFieldItemTemplate,
+  // Partial override — @rjsf/core (Form.js) deep-merges ButtonTemplates with its
+  // defaults, so the omitted Clear/Submit/Copy buttons keep their built-ins.
+  // Only the buttons reachable in this app are restyled (copyable arrays are not
+  // used here; the default Copy stays a glyphicon until a schema opts into it).
+  ButtonTemplates: {
+    AddButton: RjsfAddButton,
+    RemoveButton: RjsfRemoveButton,
+    MoveUpButton: RjsfMoveUpButton,
+    MoveDownButton: RjsfMoveDownButton,
+  },
 } as unknown as RjsfTemplates;
 
 const RJSF_WIDGETS: RjsfWidgets = {

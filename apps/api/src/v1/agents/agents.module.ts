@@ -10,9 +10,12 @@ import { GraphCheckpointsDao } from './dao/graph-checkpoints.dao';
 import { GraphCheckpointsWritesDao } from './dao/graph-checkpoints-writes.dao';
 import { GraphCheckpointEntity } from './entity/graph-chekpoints.entity';
 import { GraphCheckpointWritesEntity } from './entity/graph-chekpoints-writes.entity';
+import { ClaudeAgent } from './services/agents/claude-agent';
 import { SimpleAgent } from './services/agents/simple-agent';
 import { SubAgent } from './services/agents/sub-agent';
 import { CheckpointStateService } from './services/checkpoint-state.service';
+import { ClaudeBootstrapService } from './services/claude/claude-bootstrap.service';
+import { ClaudeKeepaliveService } from './services/claude/claude-keepalive.service';
 import { PgCheckpointSaver } from './services/pg-checkpoint-saver';
 
 @Module({
@@ -27,6 +30,9 @@ import { PgCheckpointSaver } from './services/pg-checkpoint-saver';
   controllers: [],
   providers: [
     SimpleAgent,
+    ClaudeAgent,
+    ClaudeBootstrapService,
+    ClaudeKeepaliveService,
     SubAgent,
     PgCheckpointSaver,
     CheckpointStateService,

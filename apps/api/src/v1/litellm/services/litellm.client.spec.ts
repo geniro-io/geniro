@@ -269,4 +269,96 @@ describe('LiteLlmClient', () => {
       expect(fetchMock).toHaveBeenCalledTimes(2);
     });
   });
+
+  describe('key management', () => {
+    it('generateKey posts alias, budget, duration and metadata to /key/generate', async () => {
+      const fetchMock = stubFetch({
+        ok: true,
+        json: vi.fn().mockResolvedValue({ key: 'sk-virtual', expires: null }),
+      });
+
+      const result = await client.generateKey({
+        keyAlias: 'geniro-thread-t1',
+        maxBudgetUsd: 0.5,
+        duration: '168h',
+        metadata: { threadId: 't1' },
+      });
+
+      expect(result).toEqual({ key: 'sk-virtual', expires: null });
+      const call = fetchMock.mock.calls[0]!;
+      expect(call[0]).toBe('http://litellm:4000/key/generate');
+      expect((call[1] as RequestInit).method).toBe('POST');
+      expect(JSON.parse((call[1] as RequestInit).body as string)).toEqual({
+        key_alias: 'geniro-thread-t1',
+        max_budget: 0.5,
+        duration: '168h',
+        metadata: { threadId: 't1' },
+      });
+    });
+
+    it('generateKey omits duration and metadata when not provided', async () => {
+      const fetchMock = stubFetch({
+        ok: true,
+        json: vi.fn().mockResolvedValue({ key: 'sk-virtual' }),
+      });
+
+      await client.generateKey({ keyAlias: 'a', maxBudgetUsd: 1 });
+
+      const body = JSON.parse(
+        (fetchMock.mock.calls[0]![1] as RequestInit).body as string,
+      );
+      expect(body).toEqual({ key_alias: 'a', max_budget: 1 });
+    });
+
+    it('updateKeyBudget posts key and max_budget to /key/update', async () => {
+      const fetchMock = stubFetch({
+        ok: true,
+        json: vi.fn().mockResolvedValue({}),
+      });
+
+      await client.updateKeyBudget('sk-virtual', 0.75);
+
+      const call = fetchMock.mock.calls[0]!;
+      expect(call[0]).toBe('http://litellm:4000/key/update');
+      expect(JSON.parse((call[1] as RequestInit).body as string)).toEqual({
+        key: 'sk-virtual',
+        max_budget: 0.75,
+      });
+    });
+
+    it('deleteKeys posts the keys array to /key/delete', async () => {
+      const fetchMock = stubFetch({
+        ok: true,
+        json: vi.fn().mockResolvedValue({}),
+      });
+
+      await client.deleteKeys(['sk-a', 'sk-b']);
+
+      const call = fetchMock.mock.calls[0]!;
+      expect(call[0]).toBe('http://litellm:4000/key/delete');
+      expect(JSON.parse((call[1] as RequestInit).body as string)).toEqual({
+        keys: ['sk-a', 'sk-b'],
+      });
+    });
+
+    it('getKeyInfo URL-encodes the key and unwraps the info envelope', async () => {
+      const fetchMock = stubFetch({
+        ok: true,
+        json: vi.fn().mockResolvedValue({
+          info: { key_alias: 'geniro-thread-t1', max_budget: 0.5, spend: 0.1 },
+        }),
+      });
+
+      const info = await client.getKeyInfo('sk-virtual/with?chars');
+
+      expect(info).toEqual({
+        key_alias: 'geniro-thread-t1',
+        max_budget: 0.5,
+        spend: 0.1,
+      });
+      expect(fetchMock.mock.calls[0]![0]).toBe(
+        'http://litellm:4000/key/info?key=sk-virtual%2Fwith%3Fchars',
+      );
+    });
+  });
 });

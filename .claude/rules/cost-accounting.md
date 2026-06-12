@@ -52,6 +52,14 @@ Every change to cost-aggregation or display flow MUST cover at minimum:
 
 Parent threads receive `inFlightSubagentPrice: Record<toolCallId, USD>` via `agent.state.update` events during subagent streaming. Frontend folds the sum into `totalPrice` ONLY when `isRunning`; `!isRunning` → ignore (REST is authoritative). WS accumulates `requestTokenUsage` unconditionally on AI messages but MUST NOT accumulate `toolTokenUsage` when the parent tool is a subagent invocation (mirrors REST single-source policy at `apps/api/src/v1/threads/services/threads.service.ts` line ~744). Clear via sentinel-0 per-toolCallId emitted by `ToolExecutorNode` on the subagent `ToolMessage` arrival.
 
+## Bridge-agent (non-LangGraph) cost pipeline — Claude Agent
+
+- Through the LiteLLM Anthropic passthrough, per-assistant-message `usage` is ALL ZEROS — the real turn totals and `total_cost_usd` arrive only with the SDK `result` message. `ClaudeStreamMapper` holds a lag-1 message buffer and stamps the residual turn usage/price onto the last buffered PARENT assistant message BEFORE persistence (insert-only — post-hoc updates are impossible).
+- Invariant: `Σ messages.requestTokenUsage == billed turn totals` for EVERY turn-end shape — success, error_max_turns, abort, bridge death, result-without-usage. Any new turn-end path or frame kind MUST flow through `reconcileTurnUsage` (or emit a synthetic usage-bearing assistant message, as the no-stampable-target path does); usage that lives only in stream state is silently lost from the per-thread rollup.
+- Never stamp a whole-turn residual onto a buffered SDK-subagent (`__subagentCommunication`) message — it would inflate the `::sub::` surrogate bucket and zero the parent. Synthesize a parent-node message instead.
+- Checkpoint-less threads (no LangGraph state machine) read totals via the message-scan fallback in `checkpoint-state.service.getUsageFromMessages`; `null` means "no usage data anywhere", never "0 spend".
+- Exemplar test: `apps/api/src/__tests__/integration/agents/claude-cost-invariant.int.ts` (writer→reader parity through the real persistence handler, parent + 2 subagents with distinct token counts).
+
 ## Storybook harness
 
 Cost-display components SHOULD have a storybook fixture that replays a recorded sequence of thread messages with configurable delays, running through the same `ThreadMessagesView` + `useChatsUsageStats` path used in production. This is how intermittent "numbers jumping" bugs become visible in isolation.

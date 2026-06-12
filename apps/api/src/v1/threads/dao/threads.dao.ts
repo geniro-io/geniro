@@ -98,4 +98,30 @@ export class ThreadsDao extends BaseDao<ThreadEntity> {
     entity.updatedAt = new Date();
     await this.em.flush();
   }
+
+  /**
+   * Atomically merges `patch` into the object held at `metadata[key]`
+   * (creating it when absent) in a single UPDATE — read-modify-write via
+   * updateById would clobber keys written concurrently by other metadata
+   * writers (thread-name generation, sibling agent runs on the same thread).
+   */
+  async mergeMetadataKey(
+    id: string,
+    key: string,
+    patch: Record<string, unknown>,
+    txEm?: EntityManager,
+  ): Promise<void> {
+    const em = txEm ?? this.em;
+    await em
+      .createQueryBuilder(ThreadEntity)
+      .update({
+        metadata: raw(
+          `jsonb_set(coalesce(metadata, '{}'::jsonb), ARRAY[?]::text[], coalesce(metadata -> ?, '{}'::jsonb) || ?::jsonb, true)`,
+          [key, key, JSON.stringify(patch)],
+        ),
+        updatedAt: new Date(),
+      })
+      .where({ id })
+      .execute();
+  }
 }

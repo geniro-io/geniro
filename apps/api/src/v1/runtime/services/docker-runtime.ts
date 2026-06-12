@@ -702,6 +702,9 @@ export class DockerRuntime extends BaseRuntime {
       // Docker-in-Docker (e.g., building images, spawning nested containers)
       // and access host devices.
       Privileged: true,
+      // Sandbox workloads (e.g. the Claude Agent bridge) reach host-published
+      // services (LiteLLM) via host.docker.internal on every Docker backend.
+      ExtraHosts: ['host.docker.internal:host-gateway'],
     };
 
     try {
@@ -1142,6 +1145,23 @@ export class DockerRuntime extends BaseRuntime {
 
     // Use dockerode's native demuxStream - handles 8-byte header format correctly
     this.docker.modem.demuxStream(stream, stdout, stderr);
+
+    // demuxStream only write()s into the targets and never end()s them, so
+    // without explicit propagation a consumer of `stdout` cannot observe the
+    // exec process dying (OOM-kill, container removal) and waits forever.
+    // Mirrors K8sRuntime, which ends its PassThroughs in the status callback.
+    const propagateEnd = () => {
+      // end() on a destroyed stream emits ERR_STREAM_DESTROYED — close()
+      // destroys all three streams before the raw stream's 'close' fires.
+      if (!stdout.destroyed) {
+        stdout.end();
+      }
+      if (!stderr.destroyed) {
+        stderr.end();
+      }
+    };
+    stream.on('end', propagateEnd);
+    stream.on('close', propagateEnd);
 
     return {
       stdin: stream,

@@ -12,11 +12,24 @@ export enum NodeKind {
   Runtime = 'runtime',
   Tool = 'tool',
   SimpleAgent = 'simpleAgent',
+  ClaudeAgent = 'claudeAgent',
   Trigger = 'trigger',
   Resource = 'resource',
   Mcp = 'mcp',
   Instruction = 'instruction',
 }
+
+/**
+ * Node kinds whose compiled instances implement the `RunnableAgent` surface
+ * (run/runOrAppend/stopThread/subscribe/emit/getGraphNodeMetadata). Every
+ * agent-dispatch site (stop fan-out, listener attach, thread resume, trigger
+ * invocation, inter-agent communication) filters by this set instead of a
+ * single kind — add new agent kinds here and they join all of those paths.
+ */
+export const AGENT_NODE_KINDS: ReadonlySet<NodeKind> = new Set([
+  NodeKind.SimpleAgent,
+  NodeKind.ClaudeAgent,
+]);
 
 export enum MessageRole {
   Human = 'human',

@@ -16,6 +16,7 @@ import { TemplatesController } from './controllers/templates.controller';
 import { REGISTER_TEMPLATE_KEY } from './decorators/register-template.decorator';
 import { TemplateRegistry } from './services/template-registry';
 import { TemplatesService } from './services/templates.service';
+import { ClaudeAgentTemplate } from './templates/agents/claude-agent.template';
 import { SimpleAgentTemplate } from './templates/agents/simple-agent.template';
 import { NodeBaseTemplate } from './templates/base-node.template';
 import { CustomInstructionTemplate } from './templates/instructions/custom-instruction.template';
@@ -60,6 +61,7 @@ import { ManualTriggerTemplate } from './templates/triggers/manual-trigger.templ
     WebSearchToolTemplate,
     KnowledgeToolsTemplate,
     SimpleAgentTemplate,
+    ClaudeAgentTemplate,
     GitHubIssuesTriggerTemplate,
     ManualTriggerTemplate,
     GhToolTemplate,

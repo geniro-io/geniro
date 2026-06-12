@@ -107,6 +107,7 @@ describe('AgentCommunicationToolTemplate', () => {
       get: vi.fn(),
       getNode: vi.fn().mockReturnValue(mockAgentNode),
       filterNodesByType: vi.fn().mockReturnValue(['agent-1']),
+      filterAgentNodeIds: vi.fn().mockReturnValue(['agent-1']),
       destroy: vi.fn(),
     } as unknown as GraphRegistry;
 
@@ -196,7 +197,7 @@ describe('AgentCommunicationToolTemplate', () => {
         },
       });
 
-      vi.mocked(mockGraphRegistry.filterNodesByType).mockReturnValue([
+      vi.mocked(mockGraphRegistry.filterAgentNodeIds).mockReturnValue([
         'agent-1',
         'agent-2',
       ]);
