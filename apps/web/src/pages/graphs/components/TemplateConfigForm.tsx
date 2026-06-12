@@ -59,6 +59,14 @@ import { API_URL } from '../../../config';
 import type { SchemaProperty } from '../types';
 import { getSchemaTypeName } from '../utils/schemaUtils';
 import { ArrayTagInput } from './ArrayTagInput';
+import {
+  RjsfAddButton,
+  RjsfArrayFieldItemTemplate,
+  RjsfArrayFieldTemplate,
+  RjsfMoveDownButton,
+  RjsfMoveUpButton,
+  RjsfRemoveButton,
+} from './RjsfArrayTemplates';
 
 type FormData = Record<string, unknown>;
 type UiSchemaShape = UiSchema<FormData, RJSFSchema, FormContext>;
@@ -1096,6 +1104,18 @@ const RJSF_TEMPLATES: RjsfTemplates = {
   BaseInputTemplate: RjsfBaseInputTemplate,
   ObjectFieldTemplate: RjsfObjectFieldTemplate,
   FieldTemplate: RjsfFieldTemplate,
+  ArrayFieldTemplate: RjsfArrayFieldTemplate,
+  ArrayFieldItemTemplate: RjsfArrayFieldItemTemplate,
+  // Partial override — @rjsf/core (Form.js) deep-merges ButtonTemplates with its
+  // defaults, so the omitted Clear/Submit/Copy buttons keep their built-ins.
+  // Only the buttons reachable in this app are restyled (copyable arrays are not
+  // used here; the default Copy stays a glyphicon until a schema opts into it).
+  ButtonTemplates: {
+    AddButton: RjsfAddButton,
+    RemoveButton: RjsfRemoveButton,
+    MoveUpButton: RjsfMoveUpButton,
+    MoveDownButton: RjsfMoveDownButton,
+  },
 } as unknown as RjsfTemplates;
 
 const RJSF_WIDGETS: RjsfWidgets = {

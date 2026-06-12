@@ -140,6 +140,7 @@ import {
   KnowledgeAiSuggestionModal,
   type KnowledgeSuggestionState,
 } from '../knowledge/components/KnowledgeAiSuggestionModal';
+import { RjsfArrayTemplatesSection } from './RjsfArrayTemplatesSection';
 import { WSReplayHarnessSection } from './ws-replay/WSReplayHarnessSection';
 
 /* -------------------------------------------------------------------------- */
@@ -235,6 +236,7 @@ const SECTIONS = [
   { id: 'project-card', label: 'Project Card' },
   { id: 'graph-card', label: 'Graph Card' },
   { id: 'graph-node', label: 'Graph Node' },
+  { id: 'rjsf-array-templates', label: 'RJSF Array Templates' },
   { id: 'knowledge-card', label: 'Knowledge Card' },
   { id: 'knowledge-ai-suggestion', label: 'Knowledge AI Suggestion' },
   { id: 'diff-view', label: 'Diff View' },
@@ -4280,6 +4282,7 @@ export function StorybookPage() {
         <ProjectCardSection />
         <GraphCardSection />
         <GraphNodeSection />
+        <RjsfArrayTemplatesSection />
         <KnowledgeCardSection />
         <KnowledgeAiSuggestionSection />
         <DiffViewSection />
