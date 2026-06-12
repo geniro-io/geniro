@@ -9,11 +9,10 @@
 
 export const BRIDGE_PROTOCOL_VERSION = 1;
 
-/**
- * SDK version installed into sandboxes at session bootstrap.
- * Keep in sync with this package's `@anthropic-ai/claude-agent-sdk` dependency.
- */
-export const CLAUDE_AGENT_SDK_VERSION = '0.3.173';
+// The sandbox SDK version is derived from this package's own dependency range
+// (see `CLAUDE_AGENT_SDK_VERSION` in `index.ts`) — it deliberately does NOT
+// live here, because reading package.json is a runtime concern, not a
+// compile-time protocol shape.
 
 // ---------------------------------------------------------------------------
 // SDK message shapes (structural subset consumed by the host-side mapper)

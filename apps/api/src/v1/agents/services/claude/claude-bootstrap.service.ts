@@ -7,7 +7,11 @@ import {
   CLAUDE_AGENT_SDK_VERSION,
   getBridgeScriptPath,
 } from '@packages/claude-bridge';
-import { BadRequestException, DefaultLogger } from '@packages/common';
+import {
+  BadRequestException,
+  DefaultLogger,
+  InternalException,
+} from '@packages/common';
 
 import { BaseRuntime } from '../../../runtime/services/base-runtime';
 import type { ClaudePluginSource } from './claude-session.types';
@@ -51,28 +55,60 @@ export class ClaudeBootstrapService {
 
     const bridgePath = await this.ensureBridgeInstalled(runtime);
 
-    const pluginPaths: string[] = [];
-    const clonedRepos = new Map<string, string>();
+    if (plugins.length === 0) {
+      return { bridgePath, pluginPaths: [] };
+    }
+
+    const cloneKey = (plugin: ClaudePluginSource): string =>
+      `${plugin.repoUrl}@${plugin.ref ?? ''}`;
+
+    // Clone each unique (repoUrl, ref) pair once, concurrently: repos shared by
+    // several plugin entries collapse to a single clone, and distinct repos no
+    // longer wait on each other's round-trips.
+    const uniqueClones = new Map<string, ClaudePluginSource>();
     for (const plugin of plugins) {
-      // Shared repos clone once per (repoUrl, ref) pair.
-      const cloneKey = `${plugin.repoUrl}@${plugin.ref ?? ''}`;
-      let repoDir = clonedRepos.get(cloneKey);
-      if (!repoDir) {
-        repoDir = await this.ensurePluginRepo(
-          runtime,
-          plugin.repoUrl,
-          plugin.ref,
+      const key = cloneKey(plugin);
+      if (!uniqueClones.has(key)) {
+        uniqueClones.set(key, plugin);
+      }
+    }
+    const clonedRepos = new Map<string, string>();
+    await Promise.all(
+      Array.from(uniqueClones, async ([key, plugin]) => {
+        clonedRepos.set(
+          key,
+          await this.ensurePluginRepo(runtime, plugin.repoUrl, plugin.ref),
         );
-        clonedRepos.set(cloneKey, repoDir);
+      }),
+    );
+
+    // Resolve each plugin's root in entry order (pluginPaths must mirror the
+    // configured order), dedup identical roots, then probe the unique roots
+    // concurrently.
+    const pluginPaths: string[] = [];
+    const rootsToProbe = new Map<string, ClaudePluginSource>();
+    for (const plugin of plugins) {
+      const repoDir = clonedRepos.get(cloneKey(plugin));
+      if (repoDir === undefined) {
+        // Unreachable: every plugin's clone key was populated above.
+        throw new InternalException(
+          'CLAUDE_PLUGIN_CLONE_MISSING',
+          'Plugin repository was not cloned before path resolution',
+        );
       }
       const pluginRoot = plugin.path
         ? `${repoDir}/${plugin.path.replace(/\/+$/, '')}`
         : repoDir;
-      await this.assertPluginRoot(runtime, pluginRoot, plugin);
       if (!pluginPaths.includes(pluginRoot)) {
         pluginPaths.push(pluginRoot);
+        rootsToProbe.set(pluginRoot, plugin);
       }
     }
+    await Promise.all(
+      Array.from(rootsToProbe, ([pluginRoot, plugin]) =>
+        this.assertPluginRoot(runtime, pluginRoot, plugin),
+      ),
+    );
 
     return { bridgePath, pluginPaths };
   }

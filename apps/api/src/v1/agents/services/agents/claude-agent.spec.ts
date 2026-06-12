@@ -327,6 +327,29 @@ describe('ClaudeAgent', () => {
     expect(runEvents()[0]!.data.error).toBeUndefined();
   });
 
+  it('persists the session id when the thread row is created after the run begins (first turn of a fresh thread)', async () => {
+    // The invoke/message events that create the thread row are emitted and
+    // handled asynchronously, so on the FIRST turn of a brand-new thread the
+    // start-of-run getOne can return null while the row exists by the time the
+    // bridge finishes. getOne returns null at run-start, then the persisted
+    // row on every subsequent lookup.
+    threadsDao.getOne
+      .mockResolvedValueOnce(null)
+      .mockResolvedValue({ id: 'thread-int-1', metadata: {} });
+
+    const { runPromise } = await startRunAndOpenBridge();
+    capturedHandlers!.onDone('sess-late');
+    await runPromise;
+
+    // The session id must be persisted under the now-existing row so the next
+    // turn can resume instead of replaying the whole transcript.
+    expect(threadsDao.mergeMetadataKey).toHaveBeenCalledWith(
+      'thread-int-1',
+      'claudeSessions',
+      { 'claude-1': 'sess-late' },
+    );
+  });
+
   it('revokes the virtual key when the bridge fails fatally', async () => {
     const { runPromise } = await startRunAndOpenBridge();
     capturedHandlers!.onFatal('bridge exploded');

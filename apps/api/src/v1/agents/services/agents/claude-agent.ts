@@ -355,7 +355,12 @@ export class ClaudeAgent
 
       const sessionId = mapper.sessionId ?? this.outcomeSessionId(outcome);
       if (sessionId && agentNodeId) {
-        await this.persistSessionId(rootThreadId, agentNodeId, sessionId);
+        await this.persistSessionId(
+          rootThreadId,
+          threadRow?.id,
+          agentNodeId,
+          sessionId,
+        );
       }
       if (mapper.sdkTotalCostUsd !== undefined) {
         this.logger.debug(
@@ -660,20 +665,27 @@ export class ClaudeAgent
 
   private async persistSessionId(
     rootThreadId: string,
+    loadedThreadRowId: string | undefined,
     agentNodeId: string,
     sessionId: string,
   ): Promise<void> {
     try {
-      const threadRow = await this.threadsDao.getOne({
-        externalThreadId: rootThreadId,
-      });
-      if (!threadRow) {
+      // Reuse the row id loaded at the top of run() when it was already present
+      // (avoids a redundant query). On a fresh thread's first turn the invoke
+      // handler creates the row asynchronously, so it can still be absent at run
+      // start — re-query here (post-session), by which point the handler has
+      // committed it. Binding persistence to the start-of-run snapshot would
+      // drop the SDK session id and force a full-history replay on the next turn.
+      const threadRowId =
+        loadedThreadRowId ??
+        (await this.threadsDao.getOne({ externalThreadId: rootThreadId }))?.id;
+      if (!threadRowId) {
         this.logger.debug(
           `Thread row for ${rootThreadId} not found — skipping Claude session persistence`,
         );
         return;
       }
-      await this.threadsDao.mergeMetadataKey(threadRow.id, 'claudeSessions', {
+      await this.threadsDao.mergeMetadataKey(threadRowId, 'claudeSessions', {
         [agentNodeId]: sessionId,
       });
     } catch (error) {

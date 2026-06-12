@@ -13,9 +13,16 @@ export const SMALL_FAST_MODEL_ALIAS = 'claude-haiku-4-5';
  * Strips userinfo (`token@` / `user:token@`) from https URLs before they
  * reach a log line or error message — private-repo clone URLs legitimately
  * embed PATs, and those must never land in Pino/Sentry.
+ *
+ * The authority match is greedy up to the LAST `@`, so a password that itself
+ * contains an unencoded `@` (e.g. `user:p@ss@host`) is redacted whole — a
+ * first-`@` stop would leak the password tail. The scheme match is
+ * case-insensitive: this also redacts git stderr (an untrusted sandbox byte
+ * stream), which can echo an RFC-3986-legal upper/mixed-case `HTTPS://` that
+ * must be stripped the same way.
  */
 export function redactGitUrl(text: string): string {
-  return text.replace(/(https:\/\/)[^@/\s]+@/g, '$1***@');
+  return text.replace(/(https:\/\/)[^/\s]*@/gi, '$1***@');
 }
 
 /**
