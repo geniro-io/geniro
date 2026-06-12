@@ -141,6 +141,62 @@ export class ThreadsService {
     });
   }
 
+  /**
+   * Inserts the thread row if it does not exist yet; NEVER mutates an existing
+   * row. This is the eager-creation primitive for executeTrigger, which runs
+   * AFTER trigger.invokeAgent has resolved. For synchronous executions
+   * (async=false) the agent has already finished by that point and the
+   * agent-event chain (AgentInvokeNotificationHandler →
+   * ThreadUpdateNotificationHandler) may have already persisted a terminal
+   * status (Done/Waiting/NeedMoreInfo/Stopped). An upsert that transitions the
+   * existing row back to Running here would resurrect a finished thread and
+   * strand it in Running forever — the roaming CI-timeout flake. Status
+   * authority over existing rows belongs to the event chain exclusively.
+   */
+  async ensureThreadRow(
+    data: Pick<
+      ThreadEntity,
+      'graphId' | 'createdBy' | 'projectId' | 'externalThreadId'
+    > & {
+      status: typeof ThreadStatus.Running;
+    } & Partial<
+        Pick<
+          ThreadEntity,
+          | 'source'
+          | 'lastRunId'
+          | 'metadata'
+          | 'runningStartedAt'
+          | 'totalRunningMs'
+        >
+      >,
+  ): Promise<ThreadEntity> {
+    // Same timer-invariant guard as upsertRunningThread: a fresh row with a
+    // terminal status + non-null runningStartedAt would corrupt the timer.
+    const statusAtRuntime: string = data.status;
+    if (statusAtRuntime !== ThreadStatus.Running) {
+      throw new InternalException(
+        'UPSERT_REQUIRES_RUNNING_STATUS',
+        `ensureThreadRow requires status=Running; got "${statusAtRuntime}"`,
+      );
+    }
+
+    const inserted = await this.threadDao.insertIfNotExists(data);
+    if (inserted) {
+      return inserted;
+    }
+
+    const existing = await this.threadDao.getOne({
+      externalThreadId: data.externalThreadId,
+    });
+    if (!existing) {
+      throw new InternalException(
+        'UPSERT_ROW_VANISHED',
+        `ensureThreadRow: row vanished between INSERT and SELECT for externalThreadId=${data.externalThreadId}`,
+      );
+    }
+    return existing;
+  }
+
   async getThreads(
     ctx: AppContextStorage,
     query: GetThreadsQueryDto,
