@@ -18,7 +18,7 @@ pnpm run full-check                               # build + lint + unit + integr
 
 Never call `vitest` directly. `pnpm test` (whole monorepo) is forbidden — too coarse. The bulk integration run is hermetic and required by `pnpm full-check`; targeted runs are preferred while iterating.
 
-The integration setup always boots ephemeral Postgres/Redis/Qdrant testcontainers and runs migrations against the base DB before cloning per-worker databases. Files run in parallel (5 workers, each with its own DB clone); within a file, tests still run sequentially.
+The integration setup always boots ephemeral Postgres/Redis/Qdrant testcontainers and runs migrations against the base DB before cloning per-worker databases. Files run in parallel (5 workers locally, 3 on CI — the 4-vCPU runner oversubscribes at 5; each worker has its own DB clone); within a file, tests still run sequentially.
 
 ## Unit Tests (*.spec.ts)
 
