@@ -37,9 +37,9 @@ describe('ClaudeBootstrapService', () => {
   };
 
   describe('plugin repo URL validation', () => {
-    const expectRejected = async (pluginRepoUrl: string) => {
+    const expectRejected = async (repoUrl: string) => {
       await expect(
-        service.ensureSessionReady(runtime, { pluginRepoUrl }),
+        service.ensureSessionReady(runtime, { plugins: [{ repoUrl }] }),
       ).rejects.toMatchObject({ errorCode: 'CLAUDE_PLUGIN_REPO_INVALID' });
     };
 
@@ -80,7 +80,9 @@ describe('ClaudeBootstrapService', () => {
           return { exitCode: 0, fail: false, stderr: '' };
         });
 
-        await service.ensureSessionReady(runtime, { pluginRepoUrl: url });
+        await service.ensureSessionReady(runtime, {
+          plugins: [{ repoUrl: url }],
+        });
 
         const cloneCall = exec.mock.calls.find((c) =>
           String(c[0]?.cmd).includes('git clone'),
@@ -92,13 +94,131 @@ describe('ClaudeBootstrapService', () => {
     );
   });
 
+  describe('plugin path validation', () => {
+    it.each([
+      ['parent traversal', '../../../etc'],
+      ['embedded traversal', 'plugins/../../escape'],
+      ['absolute path', '/etc/passwd'],
+      ['shell metacharacters', "p'; rm -rf /"],
+      ['command substitution', 'p$(id)'],
+      ['leading dash', '-flag'],
+      ['whitespace', 'my plugin'],
+    ])('rejects %s without running any shell command', async (_label, path) => {
+      await expect(
+        service.ensureSessionReady(runtime, {
+          plugins: [{ repoUrl: 'https://github.com/acme/plugins', path }],
+        }),
+      ).rejects.toMatchObject({ errorCode: 'CLAUDE_PLUGIN_REPO_INVALID' });
+      expect(exec).not.toHaveBeenCalled();
+    });
+
+    it('appends a valid subpath to the clone directory in pluginPaths', async () => {
+      mockCloneNeeded();
+
+      const { pluginPaths } = await service.ensureSessionReady(runtime, {
+        plugins: [
+          {
+            repoUrl: 'https://github.com/acme/plugins',
+            path: 'plugins/reviewer/',
+          },
+        ],
+      });
+
+      expect(pluginPaths).toHaveLength(1);
+      expect(pluginPaths[0]).toMatch(/\/plugins\/reviewer$/);
+    });
+  });
+
+  describe('multiple plugins', () => {
+    it('clones a shared repository once and returns one root per plugin', async () => {
+      mockCloneNeeded();
+      const repoUrl = 'https://github.com/acme/marketplace';
+
+      const { pluginPaths } = await service.ensureSessionReady(runtime, {
+        plugins: [
+          { repoUrl, path: 'plugins/alpha' },
+          { repoUrl, path: 'plugins/beta' },
+        ],
+      });
+
+      const cloneCalls = exec.mock.calls.filter((c) =>
+        String(c[0]?.cmd).includes('git clone'),
+      );
+      expect(cloneCalls).toHaveLength(1);
+      expect(pluginPaths).toHaveLength(2);
+      expect(pluginPaths[0]).toMatch(/\/plugins\/alpha$/);
+      expect(pluginPaths[1]).toMatch(/\/plugins\/beta$/);
+    });
+
+    it('clones distinct repositories separately', async () => {
+      mockCloneNeeded();
+
+      const { pluginPaths } = await service.ensureSessionReady(runtime, {
+        plugins: [
+          { repoUrl: 'https://github.com/acme/one' },
+          { repoUrl: 'https://github.com/acme/two', ref: 'v2' },
+        ],
+      });
+
+      const cloneCalls = exec.mock.calls.filter((c) =>
+        String(c[0]?.cmd).includes('git clone'),
+      );
+      expect(cloneCalls).toHaveLength(2);
+      expect(pluginPaths).toHaveLength(2);
+      expect(pluginPaths[0]).not.toBe(pluginPaths[1]);
+    });
+
+    it('dedupes identical plugin entries', async () => {
+      mockCloneNeeded();
+      const plugin = { repoUrl: 'https://github.com/acme/plugins' };
+
+      const { pluginPaths } = await service.ensureSessionReady(runtime, {
+        plugins: [plugin, { ...plugin }],
+      });
+
+      expect(pluginPaths).toHaveLength(1);
+    });
+
+    it('throws CLAUDE_PLUGIN_INVALID when the plugin root has no plugin.json', async () => {
+      exec.mockImplementation(async (params: { cmd: string | string[] }) => {
+        const cmd = Array.isArray(params.cmd)
+          ? params.cmd.join(' && ')
+          : params.cmd;
+        if (cmd.startsWith('test -d')) {
+          return { exitCode: 1, fail: false, stderr: '' };
+        }
+        if (cmd.includes('.claude-plugin/plugin.json')) {
+          return { exitCode: 1, fail: false, stderr: '' };
+        }
+        return { exitCode: 0, fail: false, stderr: '' };
+      });
+
+      await expect(
+        service.ensureSessionReady(runtime, {
+          plugins: [
+            {
+              repoUrl: 'https://x:ghp_SECRET123@github.com/acme/not-a-plugin',
+              path: 'missing',
+            },
+          ],
+        }),
+      ).rejects.toMatchObject({
+        errorCode: 'CLAUDE_PLUGIN_INVALID',
+        // Error message echoes the repo URL — embedded creds must be redacted.
+        message: expect.not.stringContaining('ghp_SECRET123'),
+      });
+    });
+  });
+
   describe('credential redaction in logs', () => {
     it('redacts embedded tokens from the clone log line but not from the exec command', async () => {
       mockCloneNeeded();
       const url =
         'https://x-access-token:ghp_SECRET123@github.com/acme/private';
 
-      await service.ensureSessionReady(runtime, { pluginRepoUrl: url });
+      await service.ensureSessionReady(runtime, {
+        plugins: [{ repoUrl: url }],
+      });
 
       const logLine = vi
         .mocked(logger.log)
@@ -136,7 +256,9 @@ describe('ClaudeBootstrapService', () => {
 
       await expect(
         service.ensureSessionReady(runtime, {
-          pluginRepoUrl: 'https://x:ghp_SECRET123@github.com/acme/private',
+          plugins: [
+            { repoUrl: 'https://x:ghp_SECRET123@github.com/acme/private' },
+          ],
         }),
       ).rejects.toMatchObject({
         errorCode: 'CLAUDE_PLUGIN_CLONE_FAILED',
@@ -154,8 +276,7 @@ describe('ClaudeBootstrapService', () => {
     ])('rejects ref with %s', async (_label, ref) => {
       await expect(
         service.ensureSessionReady(runtime, {
-          pluginRepoUrl: 'https://github.com/acme/plugins',
-          pluginRepoRef: ref,
+          plugins: [{ repoUrl: 'https://github.com/acme/plugins', ref }],
         }),
       ).rejects.toMatchObject({ errorCode: 'CLAUDE_PLUGIN_REPO_INVALID' });
     });
@@ -164,8 +285,9 @@ describe('ClaudeBootstrapService', () => {
       mockCloneNeeded();
 
       await service.ensureSessionReady(runtime, {
-        pluginRepoUrl: 'https://github.com/acme/plugins',
-        pluginRepoRef: 'release/v1.2',
+        plugins: [
+          { repoUrl: 'https://github.com/acme/plugins', ref: 'release/v1.2' },
+        ],
       });
 
       const cloneCall = exec.mock.calls.find((c) =>

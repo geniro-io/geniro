@@ -10,6 +10,7 @@ import {
 import { BadRequestException, DefaultLogger } from '@packages/common';
 
 import { BaseRuntime } from '../../../runtime/services/base-runtime';
+import type { ClaudePluginSource } from './claude-session.types';
 import { CLAUDE_INSTALL_DIR, CLAUDE_PLUGINS_DIR } from './claude-session.types';
 import { redactGitUrl } from './claude-session.utils';
 
@@ -20,13 +21,17 @@ const SAFE_GIT_URL = /^(https:\/\/|git@)[\w@.:/~+-]+$/;
 // Must start with a word character: a leading dash would be parsed as a git
 // option by the `checkout '<ref>'` fallback (e.g. ref = "--force").
 const SAFE_GIT_REF = /^\w[\w./-]*$/;
+// Relative path inside a cloned repo. Character allowlist alone still admits
+// `..` traversal (all chars are word/dot/slash), hence the explicit check at
+// the validation site.
+const SAFE_PLUGIN_PATH = /^\w[\w./-]*$/;
 const SAFE_SESSION_ID = /^[\w-]+$/;
 
 /**
  * Idempotent, per-container session bootstrap for Claude Agent threads:
  * ships the bridge script into the runtime, installs the Agent SDK (which
  * bundles the Claude Code CLI) next to it, and clones the configured plugin
- * repository. All work happens INSIDE the sandbox; the API host never runs
+ * repositories. All work happens INSIDE the sandbox; the API host never runs
  * the SDK. A marker file keyed on protocol + SDK version makes repeat calls
  * on a cached container a single `test -f` exec.
  */
@@ -36,22 +41,85 @@ export class ClaudeBootstrapService {
 
   async ensureSessionReady(
     runtime: BaseRuntime,
-    options: { pluginRepoUrl?: string; pluginRepoRef?: string },
+    options: { plugins?: ClaudePluginSource[] },
   ): Promise<{ bridgePath: string; pluginPaths: string[] }> {
+    const plugins = options.plugins ?? [];
+    // Fail on config errors before any shell command is constructed.
+    for (const plugin of plugins) {
+      this.validatePluginSource(plugin);
+    }
+
     const bridgePath = await this.ensureBridgeInstalled(runtime);
 
     const pluginPaths: string[] = [];
-    if (options.pluginRepoUrl) {
-      pluginPaths.push(
-        await this.ensurePluginRepo(
+    const clonedRepos = new Map<string, string>();
+    for (const plugin of plugins) {
+      // Shared repos clone once per (repoUrl, ref) pair.
+      const cloneKey = `${plugin.repoUrl}@${plugin.ref ?? ''}`;
+      let repoDir = clonedRepos.get(cloneKey);
+      if (!repoDir) {
+        repoDir = await this.ensurePluginRepo(
           runtime,
-          options.pluginRepoUrl,
-          options.pluginRepoRef,
-        ),
-      );
+          plugin.repoUrl,
+          plugin.ref,
+        );
+        clonedRepos.set(cloneKey, repoDir);
+      }
+      const pluginRoot = plugin.path
+        ? `${repoDir}/${plugin.path.replace(/\/+$/, '')}`
+        : repoDir;
+      await this.assertPluginRoot(runtime, pluginRoot, plugin);
+      if (!pluginPaths.includes(pluginRoot)) {
+        pluginPaths.push(pluginRoot);
+      }
     }
 
     return { bridgePath, pluginPaths };
+  }
+
+  private validatePluginSource(plugin: ClaudePluginSource): void {
+    if (!SAFE_GIT_URL.test(plugin.repoUrl)) {
+      throw new BadRequestException(
+        'CLAUDE_PLUGIN_REPO_INVALID',
+        'Plugin repository URL contains unsupported characters',
+      );
+    }
+    if (plugin.ref && !SAFE_GIT_REF.test(plugin.ref)) {
+      throw new BadRequestException(
+        'CLAUDE_PLUGIN_REPO_INVALID',
+        'Plugin repository ref contains unsupported characters',
+      );
+    }
+    if (
+      plugin.path &&
+      (!SAFE_PLUGIN_PATH.test(plugin.path) || plugin.path.includes('..'))
+    ) {
+      throw new BadRequestException(
+        'CLAUDE_PLUGIN_REPO_INVALID',
+        'Plugin path must be a relative path inside the repository without traversal',
+      );
+    }
+  }
+
+  /**
+   * A local SDK plugin is a directory holding `.claude-plugin/plugin.json`.
+   * Probing it here turns a wrong `path` (or a marketplace-only repo) into a
+   * clear config error instead of a session that silently loads nothing.
+   */
+  private async assertPluginRoot(
+    runtime: BaseRuntime,
+    pluginRoot: string,
+    plugin: ClaudePluginSource,
+  ): Promise<void> {
+    const probe = await runtime.exec({
+      cmd: `test -f '${pluginRoot}/.claude-plugin/plugin.json'`,
+    });
+    if (probe.exitCode !== 0) {
+      throw new BadRequestException(
+        'CLAUDE_PLUGIN_INVALID',
+        `No Claude Code plugin at '${plugin.path ?? './'}' in ${redactGitUrl(plugin.repoUrl)} — expected .claude-plugin/plugin.json at the plugin root`,
+      );
+    }
   }
 
   /**

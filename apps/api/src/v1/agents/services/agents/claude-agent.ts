@@ -20,7 +20,10 @@ import {
 import { ClaudeBootstrapService } from '../claude/claude-bootstrap.service';
 import { ClaudeBridgeTransport } from '../claude/claude-bridge-transport';
 import { ClaudeKeepaliveService } from '../claude/claude-keepalive.service';
-import { ClaudeThreadMetadata } from '../claude/claude-session.types';
+import {
+  ClaudePluginSource,
+  ClaudeThreadMetadata,
+} from '../claude/claude-session.types';
 import {
   buildClaudeSessionEnv,
   SMALL_FAST_MODEL_ALIAS,
@@ -34,8 +37,7 @@ export type ClaudeAgentSchemaType = {
   instructions: string;
   model: string;
   maxTurns?: number;
-  pluginRepoUrl?: string;
-  pluginRepoRef?: string;
+  plugins?: ClaudePluginSource[];
 };
 
 type ClaudeActiveRun = {
@@ -221,11 +223,8 @@ export class ClaudeAgent
       const runtime = await runtimeProvider.provide(mergedConfig);
       const { bridgePath, pluginPaths } =
         await this.bootstrap.ensureSessionReady(runtime, {
-          ...(config.pluginRepoUrl !== undefined && {
-            pluginRepoUrl: config.pluginRepoUrl,
-          }),
-          ...(config.pluginRepoRef !== undefined && {
-            pluginRepoRef: config.pluginRepoRef,
+          ...(config.plugins !== undefined && {
+            plugins: config.plugins,
           }),
         });
 

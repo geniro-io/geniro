@@ -42,17 +42,32 @@ export const ClaudeAgentTemplateSchema = z.object({
     .describe(
       'Maximum number of agentic turns the Claude session can execute during a single run.',
     ),
-  pluginRepoUrl: z
-    .string()
+  plugins: z
+    .array(
+      z.object({
+        repoUrl: z
+          .string()
+          .min(1)
+          .describe(
+            'Git repository with the plugin (https://host/repo or git@host:repo).',
+          ),
+        ref: z
+          .string()
+          .optional()
+          .describe(
+            'Branch, tag or commit of the repository (default branch when empty).',
+          ),
+        path: z
+          .string()
+          .optional()
+          .describe(
+            'Path to the plugin root inside the repository — the directory containing .claude-plugin/plugin.json (repository root when empty).',
+          ),
+      }),
+    )
     .optional()
     .describe(
-      'Optional git repository with Claude Code plugins, cloned into the runtime at session start.',
-    ),
-  pluginRepoRef: z
-    .string()
-    .optional()
-    .describe(
-      'Branch, tag or commit of the plugin repository (default branch when empty).',
+      'Claude Code plugins cloned into the runtime and loaded into the session at start. Repositories shared by several entries are cloned once.',
     ),
 });
 
