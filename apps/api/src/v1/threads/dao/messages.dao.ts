@@ -26,6 +26,31 @@ export class MessagesDao extends BaseDao<MessageEntity> {
     threadId: string,
     txEm?: EntityManager,
   ): Promise<Map<string, RequestTokenUsage>> {
+    return await this.aggregateUsageGroupedByNodeId(
+      threadId,
+      { nodeId: { $like: '%::sub::%' } },
+      txEm,
+    );
+  }
+
+  /**
+   * Aggregates requestTokenUsage for ALL messages of a thread, grouped by
+   * nodeId (parent node ids and subagent surrogates alike). The message-scan
+   * source for checkpoint-less threads (e.g. Claude Agent): pre-turn spend
+   * seeding, cost-limit checks, and the byNode fallback all read this.
+   */
+  async aggregateUsageByNodeId(
+    threadId: string,
+    txEm?: EntityManager,
+  ): Promise<Map<string, RequestTokenUsage>> {
+    return await this.aggregateUsageGroupedByNodeId(threadId, {}, txEm);
+  }
+
+  private async aggregateUsageGroupedByNodeId(
+    threadId: string,
+    extraWhere: Record<string, unknown>,
+    txEm?: EntityManager,
+  ): Promise<Map<string, RequestTokenUsage>> {
     const rows = await (txEm ?? this.em)
       .createQueryBuilder(MessageEntity, 'm')
       .select([
@@ -51,7 +76,7 @@ export class MessagesDao extends BaseDao<MessageEntity> {
       ])
       .where({
         threadId,
-        nodeId: { $like: '%::sub::%' },
+        ...extraWhere,
         requestTokenUsage: { $ne: null },
       })
       .groupBy('m.nodeId')

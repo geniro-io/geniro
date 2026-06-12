@@ -8,10 +8,10 @@ import { z } from 'zod';
 import { BuiltAgentTool } from '../../../agent-tools/tools/base-tool';
 import { CommunicationToolGroup } from '../../../agent-tools/tools/common/communication/communication-tool-group';
 import { AgentInfo } from '../../../agent-tools/tools/common/communication/communication-tools.types';
+import type { RunnableAgent } from '../../../agents/agents.types';
 import { BaseAgentConfigurable } from '../../../agents/agents.types';
 import { extractExploredFilesFromMessages } from '../../../agents/agents.utils';
 import { AgentOutput } from '../../../agents/services/agents/base-agent';
-import { SimpleAgent } from '../../../agents/services/agents/simple-agent';
 import { GraphNode, NodeKind } from '../../../graphs/graphs.types';
 import { parseStructuredContent } from '../../../graphs/graphs.utils';
 import { GraphRegistry } from '../../../graphs/services/graph-registry';
@@ -71,10 +71,9 @@ export class AgentCommunicationToolTemplate extends ToolNodeBaseTemplate<
         const outputNodeIds = params.outputNodeIds;
         const metadata = params.metadata;
 
-        const agentNodeIds = this.graphRegistry.filterNodesByType(
+        const agentNodeIds = this.graphRegistry.filterAgentNodeIds(
           metadata.graphId,
           outputNodeIds,
-          NodeKind.SimpleAgent,
         );
 
         if (agentNodeIds.length === 0) {
@@ -85,7 +84,7 @@ export class AgentCommunicationToolTemplate extends ToolNodeBaseTemplate<
         }
 
         const agentInfos: AgentInfo[] = agentNodeIds.map((agentNodeId) => {
-          const agentNode = this.graphRegistry.getNode<SimpleAgent>(
+          const agentNode = this.graphRegistry.getNode<RunnableAgent>(
             metadata.graphId,
             agentNodeId,
           );
@@ -113,7 +112,7 @@ export class AgentCommunicationToolTemplate extends ToolNodeBaseTemplate<
             messages: string[],
             runnableConfig: ToolRunnableConfig<BaseAgentConfigurable>,
           ): Promise<T> => {
-            const currentAgentNode = this.graphRegistry.getNode<SimpleAgent>(
+            const currentAgentNode = this.graphRegistry.getNode<RunnableAgent>(
               metadata.graphId,
               agentNodeId,
             );

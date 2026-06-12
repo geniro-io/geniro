@@ -15,8 +15,8 @@ import {
   GitHubIssuesTrigger,
   GitHubIssuesTriggerConfig,
 } from '../../../agent-triggers/services/github-issues-trigger';
+import type { RunnableAgent } from '../../../agents/agents.types';
 import { BaseAgentConfigurable } from '../../../agents/agents.types';
-import { SimpleAgent } from '../../../agents/services/agents/simple-agent';
 import { GitHubWebhookSubscriptionService } from '../../../git-auth/services/webhook-subscription-registry.service';
 import { GitRepositoriesDao } from '../../../git-repositories/dao/git-repositories.dao';
 import { GraphNode, NodeKind } from '../../../graphs/graphs.types';
@@ -51,12 +51,22 @@ export class GitHubIssuesTriggerTemplate extends TriggerNodeBaseTemplate<
     'Triggers an agent workflow when GitHub issues are created or updated';
   readonly schema = GitHubIssuesTriggerTemplateSchema;
 
+  // Neither agent kind is `required` individually — the trigger needs at
+  // least one agent of EITHER kind, expressed via the shared `requiredGroup`
+  // (OR-validated by the graph compiler). configure() still throws
+  // AGENT_NOT_FOUND as a backstop when no agent is connected.
   readonly outputs = [
     {
       type: 'kind',
       value: NodeKind.SimpleAgent,
+      requiredGroup: 'agent',
       multiple: true,
-      required: true,
+    },
+    {
+      type: 'kind',
+      value: NodeKind.ClaudeAgent,
+      requiredGroup: 'agent',
+      multiple: true,
     },
   ] as const;
 
@@ -159,7 +169,7 @@ export class GitHubIssuesTriggerTemplate extends TriggerNodeBaseTemplate<
             messages: HumanMessage[],
             runnableConfig: RunnableConfig<BaseAgentConfigurable>,
           ) => {
-            const currentAgentNode = this.graphRegistry.getNode<SimpleAgent>(
+            const currentAgentNode = this.graphRegistry.getNode<RunnableAgent>(
               metadata.graphId,
               agentNodeId,
             );

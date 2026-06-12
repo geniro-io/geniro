@@ -97,7 +97,10 @@ export const UsageStatsModal: FC<UsageStatsModalProps> = ({
                   nodeNames[agent.nodeId] = agent.name.trim();
                 }
                 if (!nodeKinds[agent.nodeId]) {
-                  nodeKinds[agent.nodeId] = 'simpleAgent';
+                  // The preview agents DTO carries no kind; a graph may mix
+                  // simpleAgent and claudeAgent nodes, so label neutrally
+                  // rather than guessing (full-schema path sets exact kinds).
+                  nodeKinds[agent.nodeId] = 'agent';
                 }
               }
             }

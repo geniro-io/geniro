@@ -52,7 +52,9 @@ export class CheckpointStateService {
    *
    * @param threadId - External thread ID
    * @param checkpointNs - Checkpoint namespace (default: empty string for root threads)
-   * @returns Token usage with per-node breakdown, or null if no checkpoint found
+   * @returns Token usage with per-node breakdown. Checkpoint-less threads
+   *   (e.g. Claude Agent) fall back to the message-scan aggregate; null only
+   *   when neither checkpoints nor usage-bearing messages exist.
    */
   async getThreadTokenUsage(
     threadId: string,
@@ -68,7 +70,11 @@ export class CheckpointStateService {
       );
 
       if (tuples.length === 0) {
-        return null;
+        // Checkpoint-less threads (e.g. Claude Agent — no LangGraph state
+        // machine) fall through to the message-scan aggregate; `null` must
+        // mean "no usage data anywhere", never "0 spend" for a thread whose
+        // messages carry usage rows.
+        return await this.getUsageFromMessages(threadId);
       }
 
       // Aggregate token usage across all checkpoints.
@@ -195,5 +201,53 @@ export class CheckpointStateService {
       );
       return null;
     }
+  }
+
+  /**
+   * Message-scan fallback for checkpoint-less threads: totals and byNode are
+   * both built from `messages.requestTokenUsage` buckets, so the
+   * `Σ messages == byNode[K]` invariant holds by construction. currentContext
+   * cannot be reconstructed from messages (point-in-time) and stays 0.
+   */
+  private async getUsageFromMessages(
+    threadId: string,
+  ): Promise<ThreadTokenUsage | null> {
+    const threadRow = await this.threadsDao.getOne({
+      externalThreadId: threadId,
+    });
+    if (!threadRow) {
+      return null;
+    }
+
+    const byNode = await this.messagesDao.aggregateUsageByNodeId(threadRow.id);
+    if (byNode.size === 0) {
+      return null;
+    }
+
+    let inputTokens = 0;
+    let cachedInputTokens = 0;
+    let outputTokens = 0;
+    let reasoningTokens = 0;
+    let totalTokens = 0;
+    let totalPriceDecimal = new Decimal(0);
+    for (const usage of byNode.values()) {
+      inputTokens += usage.inputTokens;
+      cachedInputTokens += usage.cachedInputTokens ?? 0;
+      outputTokens += usage.outputTokens;
+      reasoningTokens += usage.reasoningTokens ?? 0;
+      totalTokens += usage.totalTokens;
+      totalPriceDecimal = totalPriceDecimal.plus(usage.totalPrice ?? 0);
+    }
+
+    return {
+      inputTokens,
+      cachedInputTokens,
+      outputTokens,
+      reasoningTokens,
+      totalTokens,
+      totalPrice: totalPriceDecimal.toNumber(),
+      currentContext: 0,
+      byNode: Object.fromEntries(byNode),
+    };
   }
 }

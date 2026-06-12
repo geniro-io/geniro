@@ -20,6 +20,7 @@ import { GraphDao } from '../../graphs/dao/graph.dao';
 import { MessageDto } from '../../graphs/dto/graphs.dto';
 import { GraphEntity } from '../../graphs/entity/graph.entity';
 import {
+  AGENT_NODE_KINDS,
   CompiledGraph,
   GraphEdgeSchemaType,
   NodeKind,
@@ -318,7 +319,7 @@ export class AiSuggestionsService {
     }
 
     const template = this.templateRegistry.getTemplate(node.template);
-    if (!template || template.kind !== NodeKind.SimpleAgent) {
+    if (!template || !AGENT_NODE_KINDS.has(template.kind)) {
       throw new BadRequestException(
         'INVALID_NODE_TYPE',
         'Instruction suggestions are only available for agent nodes',
@@ -843,7 +844,7 @@ export class AiSuggestionsService {
 
     const nodeType = (node as { type?: unknown }).type;
 
-    if (nodeType === NodeKind.SimpleAgent) {
+    if (AGENT_NODE_KINDS.has(nodeType as NodeKind)) {
       const cfg = (node as { config?: unknown }).config;
       const cfgRecord: UnknownRecord | undefined = isPlainObject(cfg)
         ? (cfg as UnknownRecord)
@@ -889,8 +890,8 @@ export class AiSuggestionsService {
   }
 
   private buildAgentContexts(compiledGraph: CompiledGraph): AgentContext[] {
-    const agentNodes = Array.from(compiledGraph.nodes.values()).filter(
-      (node) => node.type === NodeKind.SimpleAgent,
+    const agentNodes = Array.from(compiledGraph.nodes.values()).filter((node) =>
+      AGENT_NODE_KINDS.has(node.type),
     );
 
     return agentNodes.map((node) => {

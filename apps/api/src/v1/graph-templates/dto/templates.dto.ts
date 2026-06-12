@@ -8,12 +8,14 @@ const NodeConnectionSchema = z.discriminatedUnion('type', [
     type: z.literal('kind'),
     value: z.enum(NodeKind),
     required: z.boolean().optional(),
+    requiredGroup: z.string().optional(),
     multiple: z.boolean(),
   }),
   z.object({
     type: z.literal('template'),
     value: z.string(),
     required: z.boolean().optional(),
+    requiredGroup: z.string().optional(),
     multiple: z.boolean(),
   }),
 ]);

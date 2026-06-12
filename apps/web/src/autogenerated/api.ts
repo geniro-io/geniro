@@ -952,6 +952,7 @@ export const GraphNodeWithStatusDtoTypeEnum = {
   Runtime: 'runtime',
   Tool: 'tool',
   SimpleAgent: 'simpleAgent',
+  ClaudeAgent: 'claudeAgent',
   Trigger: 'trigger',
   Resource: 'resource',
   Mcp: 'mcp',
@@ -1888,6 +1889,12 @@ export interface NamespaceSummaryDto {
   'namespace': string;
   /**
    *
+   * @type {string}
+   * @memberof NamespaceSummaryDto
+   */
+  'mode': NamespaceSummaryDtoModeEnum;
+  /**
+   *
    * @type {number}
    * @memberof NamespaceSummaryDto
    */
@@ -1899,6 +1906,15 @@ export interface NamespaceSummaryDto {
    */
   'lastUpdatedAt': string;
 }
+
+export const NamespaceSummaryDtoModeEnum = {
+  Kv: 'kv',
+  Append: 'append',
+} as const;
+
+export type NamespaceSummaryDtoModeEnum =
+  (typeof NamespaceSummaryDtoModeEnum)[keyof typeof NamespaceSummaryDtoModeEnum];
+
 /**
  *
  * @export
@@ -2733,6 +2749,7 @@ export const TemplateDtoKindEnum = {
   Runtime: 'runtime',
   Tool: 'tool',
   SimpleAgent: 'simpleAgent',
+  ClaudeAgent: 'claudeAgent',
   Trigger: 'trigger',
   Resource: 'resource',
   Mcp: 'mcp',
@@ -2776,6 +2793,12 @@ export interface TemplateDtoInputsInnerOneOf {
   'required'?: boolean;
   /**
    *
+   * @type {string}
+   * @memberof TemplateDtoInputsInnerOneOf
+   */
+  'requiredGroup'?: string;
+  /**
+   *
    * @type {boolean}
    * @memberof TemplateDtoInputsInnerOneOf
    */
@@ -2792,6 +2815,7 @@ export const TemplateDtoInputsInnerOneOfValueEnum = {
   Runtime: 'runtime',
   Tool: 'tool',
   SimpleAgent: 'simpleAgent',
+  ClaudeAgent: 'claudeAgent',
   Trigger: 'trigger',
   Resource: 'resource',
   Mcp: 'mcp',
@@ -2825,6 +2849,12 @@ export interface TemplateDtoInputsInnerOneOf1 {
    * @memberof TemplateDtoInputsInnerOneOf1
    */
   'required'?: boolean;
+  /**
+   *
+   * @type {string}
+   * @memberof TemplateDtoInputsInnerOneOf1
+   */
+  'requiredGroup'?: string;
   /**
    *
    * @type {boolean}

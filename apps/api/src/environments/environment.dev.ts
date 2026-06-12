@@ -21,6 +21,12 @@ export const environment = () =>
       'postgresql://postgres:postgres@localhost:5439/geniro',
     ),
     llmBaseUrl: getEnv('LLM_BASE_URL', 'http://localhost:4000'),
+    // LiteLLM URL reachable from INSIDE sandbox runtimes (Claude Agent bridge).
+    // host.docker.internal resolves via the runtime container's host-gateway alias.
+    litellmSandboxUrl: getEnv(
+      'LITELLM_SANDBOX_URL',
+      'http://host.docker.internal:4000',
+    ),
     redisUrl: getEnv('REDIS_URL', 'redis://localhost:6380'),
     qdrantUrl: getEnv('QDRANT_URL', 'http://localhost:6333'),
     qdrantApiKey: getEnv('QDRANT_API_KEY'),

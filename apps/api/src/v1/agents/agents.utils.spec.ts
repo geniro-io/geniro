@@ -13,6 +13,7 @@ import {
   extractExploredFilesFromMessages,
   extractTextFromResponseContent,
   filterMessagesForLlm,
+  isRunnableAgent,
   markMessageHideForLlm,
   prepareMessagesForLlm,
   stripProxyPrefix,
@@ -711,5 +712,42 @@ describe('agents.utils', () => {
         needsMoreInfo: true,
       });
     });
+  });
+});
+
+describe('isRunnableAgent', () => {
+  const fullSurface = () => ({
+    run: () => Promise.resolve(),
+    runOrAppend: () => Promise.resolve(),
+    stopThread: () => Promise.resolve(true),
+    subscribe: () => () => {},
+    emit: () => {},
+    getGraphNodeMetadata: () => undefined,
+  });
+
+  it('accepts an object exposing the full RunnableAgent surface', () => {
+    expect(isRunnableAgent(fullSurface())).toBe(true);
+  });
+
+  it('rejects an object missing any surface method', () => {
+    for (const method of [
+      'run',
+      'runOrAppend',
+      'stopThread',
+      'subscribe',
+      'emit',
+      'getGraphNodeMetadata',
+    ]) {
+      const candidate = fullSurface() as Record<string, unknown>;
+      delete candidate[method];
+      expect(isRunnableAgent(candidate)).toBe(false);
+    }
+  });
+
+  it('rejects null, undefined and primitives', () => {
+    expect(isRunnableAgent(null)).toBe(false);
+    expect(isRunnableAgent(undefined)).toBe(false);
+    expect(isRunnableAgent('agent')).toBe(false);
+    expect(isRunnableAgent(42)).toBe(false);
   });
 });

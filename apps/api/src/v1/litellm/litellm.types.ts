@@ -98,6 +98,33 @@ export interface LiteLlmProviderEntry {
   modelHint: string;
 }
 
+export type LiteLLMKeyGenerateParams = {
+  keyAlias: string;
+  /** Omit for an uncapped (but TTL-bounded) key — no thread cost limit set. */
+  maxBudgetUsd?: number;
+  /** Model aliases the key may call; omit for an unrestricted key. */
+  models?: string[];
+  /**
+   * LiteLLM duration string (e.g. "168h", "7d"). The key expires server-side
+   * after this period — the GC mechanism for crash-orphaned keys.
+   */
+  duration?: string;
+  metadata?: Record<string, unknown>;
+};
+
+export type LiteLLMGeneratedKey = {
+  key: string;
+  expires?: string | null;
+};
+
+export type LiteLLMKeyInfo = {
+  key_alias?: string | null;
+  max_budget?: number | null;
+  spend: number;
+  expires?: string | null;
+  metadata?: Record<string, unknown> | null;
+};
+
 export type LiteLLMModelInfo = {
   model_name: string;
   litellm_params: {

@@ -7,8 +7,8 @@ import { v4 } from 'uuid';
 import { z } from 'zod';
 
 import { ManualTrigger } from '../../../agent-triggers/services/manual-trigger';
+import type { RunnableAgent } from '../../../agents/agents.types';
 import { BaseAgentConfigurable } from '../../../agents/agents.types';
-import { SimpleAgent } from '../../../agents/services/agents/simple-agent';
 import { GraphNode, NodeKind } from '../../../graphs/graphs.types';
 import { GraphRegistry } from '../../../graphs/services/graph-registry';
 import { RegisterTemplate } from '../../decorators/register-template.decorator';
@@ -37,12 +37,22 @@ export class ManualTriggerTemplate extends TriggerNodeBaseTemplate<
   readonly description = 'Manual trigger for direct agent invocation';
   readonly schema = ManualTriggerTemplateSchema;
 
+  // Neither agent kind is `required` individually — the trigger needs at
+  // least one agent of EITHER kind, expressed via the shared `requiredGroup`
+  // (OR-validated by the graph compiler). configure() still throws
+  // AGENT_NOT_FOUND as a backstop when no agent is connected.
   readonly outputs = [
     {
       type: 'kind',
       value: NodeKind.SimpleAgent,
+      requiredGroup: 'agent',
       multiple: true,
-      required: true,
+    },
+    {
+      type: 'kind',
+      value: NodeKind.ClaudeAgent,
+      requiredGroup: 'agent',
+      multiple: true,
     },
   ] as const;
 
@@ -79,7 +89,7 @@ export class ManualTriggerTemplate extends TriggerNodeBaseTemplate<
             messages: HumanMessage[],
             runnableConfig: RunnableConfig<BaseAgentConfigurable>,
           ) => {
-            const currentAgentNode = this.graphRegistry.getNode<SimpleAgent>(
+            const currentAgentNode = this.graphRegistry.getNode<RunnableAgent>(
               metadata.graphId,
               agentNodeId,
             );

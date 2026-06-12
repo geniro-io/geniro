@@ -10,6 +10,7 @@ import { RuntimeThreadProvider } from '../../runtime/services/runtime-thread-pro
 import { SecretsService } from '../../secrets/services/secrets.service';
 import { GraphEntity } from '../entity/graph.entity';
 import {
+  AGENT_NODE_KINDS,
   CompiledGraph,
   CompiledGraphNode,
   GraphEdgeSchemaType,
@@ -156,6 +157,38 @@ export class GraphCompiler {
   ): void {
     const nodeMap = new Map(nodes.map((n) => [n.id, n]));
 
+    const describeRule = (rule: NodeConnection): string =>
+      rule.type === 'template'
+        ? `template '${rule.value}'`
+        : `kind '${rule.value}'`;
+
+    const ruleSatisfied = (nodeId: string, rule: NodeConnection): boolean =>
+      edges.some((edge) => {
+        if (edge.from !== nodeId) {
+          return false;
+        }
+
+        const targetNode = nodeMap.get(edge.to);
+        if (!targetNode) {
+          return false;
+        }
+
+        const targetTemplate = this.templateRegistry.getTemplate(
+          targetNode.template,
+        );
+        if (!targetTemplate) {
+          return false;
+        }
+
+        if (rule.type === 'template') {
+          return rule.value === targetNode.template;
+        }
+        if (rule.type === 'kind') {
+          return rule.value === targetTemplate.kind;
+        }
+        return false;
+      });
+
     for (const node of nodes) {
       const template = this.templateRegistry.getTemplate(node.template);
       if (!template?.outputs) {
@@ -167,40 +200,32 @@ export class GraphCompiler {
       );
 
       for (const rule of requiredRules) {
-        const hasRequiredConnection = edges.some((edge) => {
-          if (edge.from !== node.id) {
-            return false;
-          }
-
-          const targetNode = nodeMap.get(edge.to);
-          if (!targetNode) {
-            return false;
-          }
-
-          const targetTemplate = this.templateRegistry.getTemplate(
-            targetNode.template,
-          );
-          if (!targetTemplate) {
-            return false;
-          }
-
-          if (rule.type === 'template') {
-            return rule.value === targetNode.template;
-          }
-          if (rule.type === 'kind') {
-            return rule.value === targetTemplate.kind;
-          }
-          return false;
-        });
-
-        if (!hasRequiredConnection) {
-          const ruleDescription =
-            rule.type === 'template'
-              ? `template '${rule.value}'`
-              : `kind '${rule.value}'`;
+        if (!ruleSatisfied(node.id, rule)) {
           throw new BadRequestException(
             'MISSING_REQUIRED_CONNECTION',
-            `Template '${node.template}' requires at least one connection to ${ruleDescription}, but none found`,
+            `Template '${node.template}' requires at least one connection to ${describeRule(rule)}, but none found`,
+          );
+        }
+      }
+
+      // `requiredGroup` rules are OR-validated: at least one rule per group
+      // must be satisfied (e.g. a trigger must connect to an agent of EITHER
+      // kind), which per-rule `required` cannot express.
+      const ruleGroups = new Map<string, NodeConnection[]>();
+      for (const rule of template.outputs as readonly NodeConnection[]) {
+        if (rule.requiredGroup) {
+          const group = ruleGroups.get(rule.requiredGroup) ?? [];
+          group.push(rule);
+          ruleGroups.set(rule.requiredGroup, group);
+        }
+      }
+
+      for (const [groupName, groupRules] of ruleGroups) {
+        if (!groupRules.some((rule) => ruleSatisfied(node.id, rule))) {
+          const options = groupRules.map(describeRule).join(' or ');
+          throw new BadRequestException(
+            'MISSING_REQUIRED_CONNECTION',
+            `Template '${node.template}' requires at least one connection to ${options} ('${groupName}' group), but none found`,
           );
         }
       }
@@ -425,7 +450,7 @@ export class GraphCompiler {
     for (const node of nodes.values()) {
       if (node.type === NodeKind.Trigger) {
         triggerNodes.push(node);
-      } else if (node.type === NodeKind.SimpleAgent) {
+      } else if (AGENT_NODE_KINDS.has(node.type)) {
         agentNodes.push(node);
       } else if (node.type === NodeKind.Mcp) {
         mcpNodes.push(node);

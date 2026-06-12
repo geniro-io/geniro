@@ -195,8 +195,9 @@ describe('Graph Agents Column Integration Tests', () => {
     });
 
     it('should reject graph creation when manual-trigger has no agent connection', async () => {
-      // A manual-trigger requires at least one connection to a simpleAgent kind node.
-      // Creating a graph without that connection should fail validation.
+      // A manual-trigger requires at least one connection to an agent node of
+      // EITHER kind (requiredGroup 'agent'). Creating a graph without one
+      // must fail validation.
       const graphData: CreateGraphDto = {
         name: `No-Agent Graph ${Date.now()}`,
         description: 'Graph without any agent nodes',
@@ -216,6 +217,56 @@ describe('Graph Agents Column Integration Tests', () => {
       await expect(
         graphsService.create(contextDataStorage, graphData),
       ).rejects.toThrow(/requires at least one connection/);
+    });
+
+    it('should accept a trigger connected only to a claudeAgent node (requiredGroup OR) and populate agents', async () => {
+      const graphData: CreateGraphDto = {
+        name: `Claude-Only Graph ${Date.now()}`,
+        description: 'Trigger satisfied by the second group member kind',
+        temporary: true,
+        schema: {
+          nodes: [
+            {
+              id: 'trigger-1',
+              template: 'manual-trigger',
+              config: {},
+            },
+            {
+              id: 'claude-1',
+              template: 'claude-agent',
+              config: {
+                name: 'Claude Worker',
+                description: 'Claude-backed agent',
+                instructions: 'do the work',
+                model: 'claude-haiku-4-5',
+              },
+            },
+            {
+              id: 'runtime-1',
+              template: 'runtime',
+              config: {},
+            },
+          ],
+          edges: [
+            { from: 'trigger-1', to: 'claude-1' },
+            { from: 'claude-1', to: 'runtime-1' },
+          ],
+        },
+      };
+
+      const graph = await graphsService.create(contextDataStorage, graphData);
+      registerGraph(graph.id);
+
+      const entity = await graphDao.getOne({ id: graph.id });
+      expect(entity).toBeDefined();
+      // extractAgentsFromSchema is AGENT_NODE_KINDS-based: the claude agent
+      // must land in the agents column exactly like a simple agent would.
+      expect(entity!.agents).toHaveLength(1);
+      expect(entity!.agents![0]).toMatchObject({
+        nodeId: 'claude-1',
+        name: 'Claude Worker',
+        description: 'Claude-backed agent',
+      });
     });
   });
 

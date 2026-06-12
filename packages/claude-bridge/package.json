@@ -1,0 +1,37 @@
+{
+  "name": "@packages/claude-bridge",
+  "version": "1.0.0",
+  "author": "Sergey Razumovskiy <s.razumru@gmail.com>",
+  "description": "Sandbox-resident Claude Agent SDK bridge: JSON-line stdio protocol between the Geniro API and a Claude Code session running inside a runtime container",
+  "exports": {
+    ".": {
+      "source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
+    }
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.173"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.2",
+    "eslint": "^10.4.1",
+    "tsup": "^8.5.0",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.8"
+  },
+  "main": "dist/index.js",
+  "module": "./dist/index.mjs",
+  "scripts": {
+    "lint:fix": "pnpm run lint --fix",
+    "lint": "pnpm eslint src",
+    "build": "tsup",
+    "prebuild": "rm -rf ./dist || true",
+    "check-types": "tsc --noEmit -p tsconfig.build.json",
+    "test": "vitest run --passWithNoTests",
+    "test:unit": "vitest run --passWithNoTests --fileParallelism",
+    "test:cov": "vitest run --coverage --passWithNoTests"
+  },
+  "types": "dist/index.d.ts"
+}

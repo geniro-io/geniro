@@ -41,6 +41,7 @@ import {
   LLMRequestContext,
   NewMessageMode,
   ReasoningEffort,
+  RunnableAgent,
 } from '../../agents.types';
 import {
   buildReasoningMessage,
@@ -79,7 +80,10 @@ type ActiveRunEntry = {
 };
 
 @Injectable({ scope: Scope.TRANSIENT })
-export class SimpleAgent extends BaseAgent<SimpleAgentSchemaType> {
+export class SimpleAgent
+  extends BaseAgent<SimpleAgentSchemaType>
+  implements RunnableAgent<SimpleAgentSchemaType>
+{
   private graph?: CompiledStateGraph<BaseAgentState, Record<string, unknown>>;
   private graphThreadState?: GraphThreadState;
   private graphThreadStateUnsubscribe?: () => void;

@@ -5,14 +5,27 @@ import { z } from 'zod';
 import type { BaseMcp } from '../../agent-mcp/services/base-mcp';
 import { BuiltAgentTool } from '../../agent-tools/tools/base-tool';
 import { BaseTrigger } from '../../agent-triggers/services/base-trigger';
+import { ClaudeAgent } from '../../agents/services/agents/claude-agent';
 import { SimpleAgent } from '../../agents/services/agents/simple-agent';
 import { IBaseResourceOutput } from '../../graph-resources/graph-resources.types';
 import { GraphNodeInstanceHandle, NodeKind } from '../../graphs/graphs.types';
 import { RuntimeThreadProvider } from '../../runtime/services/runtime-thread-provider';
 
 export type NodeConnection =
-  | { type: 'kind'; value: NodeKind; required?: boolean; multiple: boolean }
-  | { type: 'template'; value: string; required?: boolean; multiple: boolean };
+  | {
+      type: 'kind';
+      value: NodeKind;
+      required?: boolean;
+      requiredGroup?: string;
+      multiple: boolean;
+    }
+  | {
+      type: 'template';
+      value: string;
+      required?: boolean;
+      requiredGroup?: string;
+      multiple: boolean;
+    };
 
 export abstract class NodeBaseTemplate<
   TConfig extends z.ZodTypeAny,
@@ -83,6 +96,13 @@ export abstract class SimpleAgentNodeBaseTemplate<
   TResult = SimpleAgent,
 > extends NodeBaseTemplate<TConfig, TResult> {
   readonly kind: NodeKind = NodeKind.SimpleAgent;
+}
+
+export abstract class ClaudeAgentNodeBaseTemplate<
+  TConfig extends z.ZodTypeAny,
+  TResult = ClaudeAgent,
+> extends NodeBaseTemplate<TConfig, TResult> {
+  readonly kind: NodeKind = NodeKind.ClaudeAgent;
 }
 
 export abstract class TriggerNodeBaseTemplate<

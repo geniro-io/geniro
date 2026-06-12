@@ -4,6 +4,7 @@ import { parse as parseYaml } from 'yaml';
 import { TemplateRegistry } from '../graph-templates/services/template-registry';
 import type { TriggerNodeInfoType } from './dto/graphs.dto';
 import {
+  AGENT_NODE_KINDS,
   type GraphAgentInfo,
   type GraphSchemaType,
   NodeKind,
@@ -55,7 +56,7 @@ export function extractAgentsFromSchema(
   const agents: GraphAgentInfo[] = [];
   for (const node of schema.nodes) {
     const template = templateRegistry.getTemplate(node.template);
-    if (template?.kind === NodeKind.SimpleAgent) {
+    if (template && AGENT_NODE_KINDS.has(template.kind)) {
       const name =
         typeof node.config.name === 'string' ? node.config.name : undefined;
       const description =

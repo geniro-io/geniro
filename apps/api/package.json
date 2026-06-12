@@ -58,6 +58,7 @@
     "@octokit/graphql": "^9.0.3",
     "@octokit/request-error": "^7.1.0",
     "@octokit/rest": "^22.0.1",
+    "@packages/claude-bridge": "workspace:*",
     "@packages/common": "workspace:*",
     "@packages/http-server": "workspace:*",
     "@packages/metrics": "workspace:*",

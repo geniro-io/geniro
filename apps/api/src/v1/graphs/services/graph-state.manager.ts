@@ -6,6 +6,7 @@ import { v4 as uuidv4 } from 'uuid';
 
 import { BaseMcp } from '../../agent-mcp/services/base-mcp';
 import { BaseTrigger } from '../../agent-triggers/services/base-trigger';
+import type { RunnableAgent } from '../../agents/agents.types';
 import {
   AgentEventType,
   AgentInvokeEvent,
@@ -15,7 +16,6 @@ import {
   AgentStateUpdateEvent,
   AgentStopEvent,
 } from '../../agents/services/agents/base-agent';
-import { SimpleAgent } from '../../agents/services/agents/simple-agent';
 import type {
   IGraphNodeUpdateData,
   IThreadUpdateData,
@@ -28,6 +28,7 @@ import {
   ThreadWaitingEvent,
 } from '../../threads/threads.types';
 import {
+  AGENT_NODE_KINDS,
   CompiledGraphNode,
   GraphExecutionMetadata,
   GraphNodeStateSnapshot,
@@ -120,22 +121,23 @@ export class GraphStateManager {
     state.baseStatus = GraphNodeStatus.Idle;
     state.error = null;
 
-    switch (node.type) {
-      case NodeKind.SimpleAgent:
-        this.attachAgentListeners(
-          state,
-          node as CompiledGraphNode<SimpleAgent>,
-        );
-        break;
-      case NodeKind.Trigger:
-        this.attachTriggerListeners(
-          state,
-          node as CompiledGraphNode<BaseTrigger>,
-        );
-        break;
-      case NodeKind.Mcp:
-        this.attachMcpListeners(state, node as CompiledGraphNode<BaseMcp>);
-        break;
+    if (AGENT_NODE_KINDS.has(node.type)) {
+      this.attachAgentListeners(
+        state,
+        node as CompiledGraphNode<RunnableAgent>,
+      );
+    } else {
+      switch (node.type) {
+        case NodeKind.Trigger:
+          this.attachTriggerListeners(
+            state,
+            node as CompiledGraphNode<BaseTrigger>,
+          );
+          break;
+        case NodeKind.Mcp:
+          this.attachMcpListeners(state, node as CompiledGraphNode<BaseMcp>);
+          break;
+      }
     }
 
     this.emitNodeUpdate(state);
@@ -302,7 +304,7 @@ export class GraphStateManager {
 
   private attachAgentListeners(
     state: NodeState,
-    node: CompiledGraphNode<SimpleAgent>,
+    node: CompiledGraphNode<RunnableAgent>,
   ) {
     const agent = node.instance;
 
@@ -706,8 +708,8 @@ export class GraphStateManager {
 
     const meta: GraphExecutionMetadata = { threadId, runId };
 
-    if (node.type === NodeKind.SimpleAgent) {
-      return (node.instance as SimpleAgent).getGraphNodeMetadata(meta);
+    if (AGENT_NODE_KINDS.has(node.type)) {
+      return (node.instance as RunnableAgent).getGraphNodeMetadata(meta);
     }
 
     if (node.type === NodeKind.Runtime) {

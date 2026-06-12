@@ -3,7 +3,7 @@ import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
 import { DefaultLogger } from '@packages/common';
 
-import { SimpleAgent } from '../../agents/services/agents/simple-agent';
+import { isRunnableAgent } from '../../agents/agents.utils';
 import { GraphRegistry } from '../../graphs/services/graph-registry';
 import { NotificationEvent } from '../../notifications/notifications.types';
 import { NotificationsService } from '../../notifications/services/notifications.service';
@@ -150,9 +150,9 @@ export class ThreadResumeService implements OnModuleInit, OnModuleDestroy {
       );
     }
 
-    if (!(agentNode.instance instanceof SimpleAgent)) {
+    if (!isRunnableAgent(agentNode.instance)) {
       throw new Error(
-        `Node "${data.nodeId}" is not a SimpleAgent, cannot resume thread "${data.threadId}"`,
+        `Node "${data.nodeId}" is not a runnable agent, cannot resume thread "${data.threadId}"`,
       );
     }
     const agent = agentNode.instance;

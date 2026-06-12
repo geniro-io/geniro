@@ -1,7 +1,12 @@
 import { Injectable } from '@nestjs/common';
 import { BadRequestException } from '@packages/common';
 
-import { CompiledGraph, CompiledGraphNode, GraphStatus } from '../graphs.types';
+import {
+  AGENT_NODE_KINDS,
+  CompiledGraph,
+  CompiledGraphNode,
+  GraphStatus,
+} from '../graphs.types';
 
 /**
  * GraphRegistry maintains a registry of all compiled and running graphs.
@@ -217,6 +222,40 @@ export class GraphRegistry {
     return Array.from(graph.nodes.values()).filter(
       (node) => node.type === type,
     ) as CompiledGraphNode<TInstance>[];
+  }
+
+  /**
+   * Gets all agent nodes (any kind in AGENT_NODE_KINDS) from a graph.
+   * Instances implement the RunnableAgent surface.
+   */
+  getAgentNodes<TInstance>(graphId: string): CompiledGraphNode<TInstance>[] {
+    const graph = this.graphs.get(graphId);
+    if (!graph) {
+      return [];
+    }
+
+    return Array.from(graph.nodes.values()).filter((node) =>
+      AGENT_NODE_KINDS.has(node.type),
+    ) as CompiledGraphNode<TInstance>[];
+  }
+
+  /**
+   * Filters node IDs down to agent nodes (any kind in AGENT_NODE_KINDS).
+   */
+  filterAgentNodeIds(
+    graphId: string,
+    nodeIds: Set<string> | string[],
+  ): string[] {
+    const graph = this.graphs.get(graphId);
+    if (!graph) {
+      return [];
+    }
+
+    const nodeIdsArray = Array.isArray(nodeIds) ? nodeIds : Array.from(nodeIds);
+    return nodeIdsArray.filter((nodeId) => {
+      const node = graph.nodes.get(nodeId);
+      return node !== undefined && AGENT_NODE_KINDS.has(node.type);
+    });
   }
 
   /**
