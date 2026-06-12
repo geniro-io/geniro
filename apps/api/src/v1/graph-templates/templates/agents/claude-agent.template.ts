@@ -31,7 +31,8 @@ export const ClaudeAgentTemplateSchema = z.object({
       'Claude model alias used by the session (must be registered in LiteLLM, e.g. claude-sonnet-4-6).',
     )
     .meta({ 'x-ui:show-on-node': true })
-    .meta({ 'x-ui:label': 'Model' }),
+    .meta({ 'x-ui:label': 'Model' })
+    .meta({ 'x-ui:litellm-models-list-select': true }),
   maxTurns: z
     .number()
     .int()

@@ -5,6 +5,18 @@ import { mockDeep } from 'vitest-mock-extended';
 import type { BaseRuntime } from '../../../runtime/services/base-runtime';
 import { ClaudeBootstrapService } from './claude-bootstrap.service';
 
+// Keep the bridge-install path independent of the built `dist/bridge.mjs`
+// artifact: stub the FS read and the script-path resolver so the
+// `ensureBridgeInstalled` install branch can be exercised in a unit test.
+vi.mock('node:fs/promises', () => ({
+  readFile: vi.fn(async () => Buffer.from('bridge-source')),
+}));
+vi.mock('@packages/claude-bridge', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('@packages/claude-bridge')>();
+  return { ...actual, getBridgeScriptPath: vi.fn(() => '/fake/bridge.mjs') };
+});
+
 /**
  * The SAFE_GIT_URL / SAFE_GIT_REF / SAFE_SESSION_ID regexes are the only
  * barrier between user-controlled graph config and a root shell inside the
@@ -35,6 +47,74 @@ describe('ClaudeBootstrapService', () => {
       return { exitCode: 0, fail: false, stderr: '' };
     });
   };
+
+  describe('ensureBridgeInstalled', () => {
+    it('returns the bridge path without installing when the marker is present', async () => {
+      // Default mock: every exec (incl. the `test -f <marker>` probe) → 0.
+      const { bridgePath } = await service.ensureSessionReady(runtime, {});
+
+      expect(bridgePath).toContain('bridge.mjs');
+      const installCall = exec.mock.calls.find((c) =>
+        String(c[0]?.cmd).includes('npm install'),
+      );
+      expect(installCall).toBeUndefined();
+    });
+
+    it('rejects CLAUDE_RUNTIME_NO_NODE without installing when node/npm are absent', async () => {
+      exec.mockImplementation(async (params: { cmd: string | string[] }) => {
+        const cmd = Array.isArray(params.cmd)
+          ? params.cmd.join(' && ')
+          : params.cmd;
+        if (cmd.includes('.installed-p')) {
+          return { exitCode: 1, fail: false, stderr: '' };
+        }
+        if (cmd.includes('command -v node')) {
+          return { exitCode: 1, fail: false, stderr: '' };
+        }
+        return { exitCode: 0, fail: false, stderr: '' };
+      });
+
+      await expect(
+        service.ensureSessionReady(runtime, {}),
+      ).rejects.toMatchObject({ errorCode: 'CLAUDE_RUNTIME_NO_NODE' });
+
+      const installCall = exec.mock.calls.find((c) =>
+        String(c[0]?.cmd).includes('npm install'),
+      );
+      expect(installCall).toBeUndefined();
+    });
+
+    it('rejects CLAUDE_BRIDGE_INSTALL_FAILED with the stderr tail when install fails', async () => {
+      exec.mockImplementation(async (params: { cmd: string | string[] }) => {
+        const cmd = Array.isArray(params.cmd)
+          ? params.cmd.join(' && ')
+          : params.cmd;
+        // The install command array ends with `touch <marker>`, so match the
+        // install branch before the marker branch.
+        if (cmd.includes('npm install')) {
+          return {
+            exitCode: 1,
+            fail: true,
+            stderr: 'npm ERR! network timeout',
+          };
+        }
+        if (cmd.includes('command -v node')) {
+          return { exitCode: 0, fail: false, stderr: '' };
+        }
+        if (cmd.startsWith('test -f') && cmd.includes('.installed-p')) {
+          return { exitCode: 1, fail: false, stderr: '' };
+        }
+        return { exitCode: 0, fail: false, stderr: '' };
+      });
+
+      await expect(
+        service.ensureSessionReady(runtime, {}),
+      ).rejects.toMatchObject({
+        errorCode: 'CLAUDE_BRIDGE_INSTALL_FAILED',
+        message: expect.stringContaining('network timeout'),
+      });
+    });
+  });
 
   describe('plugin repo URL validation', () => {
     const expectRejected = async (repoUrl: string) => {
@@ -168,6 +248,82 @@ describe('ClaudeBootstrapService', () => {
       expect(pluginPaths[0]).not.toBe(pluginPaths[1]);
     });
 
+    it('clones the SAME repo twice when the ref differs (clone key includes ref)', async () => {
+      mockCloneNeeded();
+      const repoUrl = 'https://github.com/acme/plugins';
+
+      const { pluginPaths } = await service.ensureSessionReady(runtime, {
+        plugins: [{ repoUrl }, { repoUrl, ref: 'v2' }],
+      });
+
+      const cloneCalls = exec.mock.calls.filter((c) =>
+        String(c[0]?.cmd).includes('git clone'),
+      );
+      expect(cloneCalls).toHaveLength(2);
+      expect(pluginPaths).toHaveLength(2);
+      expect(pluginPaths[0]).not.toBe(pluginPaths[1]);
+    });
+
+    it('preserves plugin order across interleaved repositories', async () => {
+      mockCloneNeeded();
+      const r1 = 'https://github.com/acme/one';
+      const r2 = 'https://github.com/acme/two';
+
+      const { pluginPaths } = await service.ensureSessionReady(runtime, {
+        plugins: [
+          { repoUrl: r1, path: 'plugins/a' },
+          { repoUrl: r2 },
+          { repoUrl: r1, path: 'plugins/b' },
+        ],
+      });
+
+      expect(pluginPaths).toHaveLength(3);
+      const [root0, root1, root2] = pluginPaths as [string, string, string];
+      // Sub-paths are appended in entry order: a (0), bare r2 (1), b (2).
+      expect(root0).toMatch(/\/[0-9a-f]{12}\/plugins\/a$/);
+      expect(root2).toMatch(/\/[0-9a-f]{12}\/plugins\/b$/);
+      // Entries 0 and 2 (same repo r1) share one clone dir; entry 1 (r2) differs.
+      const r1Base = root0.replace(/\/plugins\/a$/, '');
+      expect(root2.replace(/\/plugins\/b$/, '')).toBe(r1Base);
+      expect(root1).not.toBe(r1Base);
+      expect(root1).toMatch(/\/[0-9a-f]{12}$/);
+    });
+
+    it('redacts the repo URL and reports "./" for a no-path plugin missing plugin.json', async () => {
+      exec.mockImplementation(async (params: { cmd: string | string[] }) => {
+        const cmd = Array.isArray(params.cmd)
+          ? params.cmd.join(' && ')
+          : params.cmd;
+        if (cmd.startsWith('test -d')) {
+          return { exitCode: 1, fail: false, stderr: '' };
+        }
+        if (cmd.includes('.claude-plugin/plugin.json')) {
+          return { exitCode: 1, fail: false, stderr: '' };
+        }
+        return { exitCode: 0, fail: false, stderr: '' };
+      });
+
+      await expect(
+        service.ensureSessionReady(runtime, {
+          plugins: [
+            { repoUrl: 'https://x:ghp_SECRET123@github.com/acme/not-a-plugin' },
+          ],
+        }),
+      ).rejects.toMatchObject({
+        errorCode: 'CLAUDE_PLUGIN_INVALID',
+        message: expect.stringContaining("'./'"),
+      });
+      await expect(
+        service.ensureSessionReady(runtime, {
+          plugins: [
+            { repoUrl: 'https://x:ghp_SECRET123@github.com/acme/not-a-plugin' },
+          ],
+        }),
+      ).rejects.toMatchObject({
+        message: expect.not.stringContaining('ghp_SECRET123'),
+      });
+    });
+
     it('dedupes identical plugin entries', async () => {
       mockCloneNeeded();
       const plugin = { repoUrl: 'https://github.com/acme/plugins' };
@@ -177,6 +333,10 @@ describe('ClaudeBootstrapService', () => {
       });
 
       expect(pluginPaths).toHaveLength(1);
+      const cloneCalls = exec.mock.calls.filter((c) =>
+        String(c[0]?.cmd).includes('git clone'),
+      );
+      expect(cloneCalls).toHaveLength(1);
     });
 
     it('throws CLAUDE_PLUGIN_INVALID when the plugin root has no plugin.json', async () => {

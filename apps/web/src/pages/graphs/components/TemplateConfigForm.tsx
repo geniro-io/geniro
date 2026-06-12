@@ -130,6 +130,18 @@ const buildUiSchema = (schema: RJSFSchema): UiSchemaShape => {
     return undefined;
   };
 
+  // Type of an array's items, when items is a single object schema (not a
+  // tuple). The `arrayAsTextarea` tag widget only handles `string[]`; an
+  // object-array (e.g. plugins) must fall through to RJSF's native nested
+  // array editor or it silently saves bare strings the backend rejects.
+  const getArrayItemTypeName = (prop: SchemaProperty): string | undefined => {
+    const items = (prop as { items?: unknown }).items;
+    if (!items || typeof items !== 'object' || Array.isArray(items)) {
+      return undefined;
+    }
+    return getSchemaTypeName(items as SchemaProperty);
+  };
+
   for (const [key, propUnknown] of Object.entries(
     props as Record<string, unknown>,
   )) {
@@ -163,7 +175,11 @@ const buildUiSchema = (schema: RJSFSchema): UiSchemaShape => {
 
     const typeName = getSchemaTypeName(prop);
 
-    if (typeName === 'array' && prop['x-ui:secret-multi-select'] !== true) {
+    if (
+      typeName === 'array' &&
+      prop['x-ui:secret-multi-select'] !== true &&
+      getArrayItemTypeName(prop) !== 'object'
+    ) {
       fieldUi['ui:field'] = 'arrayAsTextarea';
     }
 

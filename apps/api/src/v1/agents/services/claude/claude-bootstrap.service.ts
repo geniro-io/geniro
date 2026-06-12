@@ -189,24 +189,13 @@ export class ClaudeBootstrapService {
     return bridgePath;
   }
 
+  // Callers MUST pass a `url`/`ref` already cleared by `validatePluginSource`
+  // (ensureSessionReady validates every plugin up front before any clone).
   private async ensurePluginRepo(
     runtime: BaseRuntime,
     url: string,
     ref?: string,
   ): Promise<string> {
-    if (!SAFE_GIT_URL.test(url)) {
-      throw new BadRequestException(
-        'CLAUDE_PLUGIN_REPO_INVALID',
-        'Plugin repository URL contains unsupported characters',
-      );
-    }
-    if (ref && !SAFE_GIT_REF.test(ref)) {
-      throw new BadRequestException(
-        'CLAUDE_PLUGIN_REPO_INVALID',
-        'Plugin repository ref contains unsupported characters',
-      );
-    }
-
     // Non-security checksum: stable directory name per (url, ref) pair.
     const dirName = createHash('sha256')
       .update(`${url}@${ref ?? ''}`)

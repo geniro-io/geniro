@@ -125,18 +125,21 @@ export class LiteLlmClient {
     if (params.metadata) {
       body['metadata'] = params.metadata;
     }
-    return this.request('/key/generate', { method: 'POST', body });
+    return await this.request('/key/generate', { method: 'POST', body });
   }
 
   async updateKeyBudget(key: string, maxBudgetUsd: number): Promise<unknown> {
-    return this.request('/key/update', {
+    return await this.request('/key/update', {
       method: 'POST',
       body: { key, max_budget: maxBudgetUsd },
     });
   }
 
   async deleteKeys(keys: string[]): Promise<unknown> {
-    return this.request('/key/delete', { method: 'POST', body: { keys } });
+    return await this.request('/key/delete', {
+      method: 'POST',
+      body: { keys },
+    });
   }
 
   /**
