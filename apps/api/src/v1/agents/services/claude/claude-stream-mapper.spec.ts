@@ -530,4 +530,103 @@ describe('ClaudeStreamMapper', () => {
         .totalPrice,
     ).toBeCloseTo(0.5);
   });
+
+  describe('proxied tool usage (recordToolUsage)', () => {
+    const toolUseAssistant = (): SdkAssistantMessage =>
+      assistant({
+        id: 'msg-tool',
+        content: [
+          {
+            type: 'tool_use',
+            id: 'tu-9',
+            name: 'mcp__geniro__knowledge_search_docs',
+            input: { query: 'x' },
+          },
+        ],
+        usage: { input_tokens: 0, output_tokens: 0 },
+      });
+
+    const toolResultEcho = (): SdkUserMessage => ({
+      type: 'user',
+      session_id: 'sess-1',
+      parent_tool_use_id: null,
+      message: {
+        content: [
+          { type: 'tool_result', tool_use_id: 'tu-9', content: 'PASSAGE' },
+        ],
+      },
+    });
+
+    const usage = {
+      inputTokens: 40,
+      cachedInputTokens: 0,
+      outputTokens: 10,
+      totalTokens: 50,
+      totalPrice: 0.02,
+    };
+
+    it('stamps __toolTokenUsage on the matching synthesized ToolMessage (FIFO by name)', () => {
+      mapper.onSdkMessage(toolUseAssistant());
+      mapper.recordToolUsage('knowledge_search_docs', usage);
+      mapper.onSdkMessage(toolResultEcho());
+      mapper.flush();
+
+      const toolMessages = messageEvents()
+        .flatMap((e) => e.data.messages)
+        .filter((m): m is ToolMessage => m instanceof ToolMessage);
+      expect(toolMessages).toHaveLength(1);
+      expect(toolMessages[0]!.additional_kwargs.__toolTokenUsage).toEqual(
+        usage,
+      );
+    });
+
+    it('does not stamp usage on a ToolMessage of a different tool name', () => {
+      mapper.onSdkMessage(toolUseAssistant());
+      mapper.recordToolUsage('web_search', usage);
+      mapper.onSdkMessage(toolResultEcho());
+      mapper.flush();
+
+      const toolMessages = messageEvents()
+        .flatMap((e) => e.data.messages)
+        .filter((m): m is ToolMessage => m instanceof ToolMessage);
+      expect(
+        toolMessages[0]!.additional_kwargs.__toolTokenUsage,
+      ).toBeUndefined();
+    });
+
+    it('folds tool usage into total price and state snapshots', () => {
+      createMapper(() => 0.01);
+      mapper.onSdkMessage(assistant());
+      mapper.recordToolUsage('knowledge_search_docs', usage);
+      mapper.onSdkMessage(assistant({ id: 'msg-2' }));
+
+      // 2 assistant messages priced 0.01 each + 0.02 tool spend.
+      expect(mapper.getTotalPriceUsd()).toBeCloseTo(0.04);
+      const last = stateEvents().at(-1)!;
+      expect(last.data.stateChange).toMatchObject({
+        totalPrice: 0.04,
+        totalTokens: 300 + 50,
+      });
+    });
+
+    it('keeps the result-message residual reconciliation blind to tool usage', () => {
+      createMapper(() => 0);
+      mapper.onSdkMessage(toolUseAssistant());
+      mapper.recordToolUsage('knowledge_search_docs', usage);
+      mapper.onSdkMessage(toolResultEcho());
+
+      const result: SdkResultMessage = {
+        type: 'result',
+        subtype: 'success',
+        session_id: 'sess-1',
+        total_cost_usd: 0.1,
+        usage: { input_tokens: 200, output_tokens: 100 },
+      };
+      mapper.onSdkMessage(result);
+
+      // The residual ($0.10 turn cost) must be computed against LLM-side
+      // totals only; the $0.02 tool spend then adds on top of it.
+      expect(mapper.getTotalPriceUsd()).toBeCloseTo(0.12);
+    });
+  });
 });

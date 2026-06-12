@@ -4,12 +4,17 @@ import {
   BridgeCommand,
   BridgeEvent,
   JsonLineParser,
+  sanitizeBridgeQuestions,
   SdkMessage,
   serializeFrame,
 } from '@packages/claude-bridge';
 import { DefaultLogger, InternalException } from '@packages/common';
 
 import { BaseRuntime } from '../../../runtime/services/base-runtime';
+import {
+  ClaudeQuestionRequest,
+  ClaudeToolCallRequest,
+} from './claude-session.types';
 
 export type ClaudeBridgeHandlers = {
   onSdkMessage: (message: SdkMessage) => void;
@@ -18,6 +23,10 @@ export type ClaudeBridgeHandlers = {
   onFatal: (error: string) => void;
   /** Fired on every stdout chunk — the keepalive hook. */
   onActivity?: () => void;
+  /** Proxied Geniro tool invocation; reply via send({type: 'tool_call_response', ...}). */
+  onToolCallRequest?: (request: ClaudeToolCallRequest) => void;
+  /** Intercepted AskUserQuestion; reply via send({type: 'question_response', ...}). */
+  onQuestionRequest?: (request: ClaudeQuestionRequest) => void;
 };
 
 type BridgeStreams = {
@@ -94,6 +103,11 @@ export class ClaudeBridgeTransport {
     this.streams.stdin.write(serializeFrame(command));
   }
 
+  /** True once the session settled (done/aborted/fatal/closed) — sends are no-ops. */
+  isFinished(): boolean {
+    return this.finished;
+  }
+
   interrupt(): void {
     this.send({ type: 'interrupt' });
   }
@@ -148,14 +162,23 @@ export class ClaudeBridgeTransport {
   private onStdout(chunk: Buffer): void {
     this.handlers.onActivity?.();
 
-    const events = this.parser.push(chunk, (line, error) => {
-      this.logger.debug(
-        `Ignoring non-protocol bridge stdout line (${error.message}): ${line.slice(0, 200)}`,
-      );
-    });
+    // A synchronous throw here escapes as an uncaught error from the runtime
+    // stream's 'data' handler (API-process blast radius) — fail the transport
+    // instead. The stdout bytes are sandbox-controlled; assume the worst.
+    try {
+      const events = this.parser.push(chunk, (line, error) => {
+        this.logger.debug(
+          `Ignoring non-protocol bridge stdout line (${error.message}): ${line.slice(0, 200)}`,
+        );
+      });
 
-    for (const event of events) {
-      this.handleEvent(event);
+      for (const event of events) {
+        this.handleEvent(event);
+      }
+    } catch (error) {
+      this.fail(
+        `bridge stdout processing error: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   }
 
@@ -193,6 +216,37 @@ export class ClaudeBridgeTransport {
           return;
         }
         this.handlers.onSdkMessage(message);
+        return;
+      }
+      // For both request kinds: a malformed frame is dropped without a
+      // response (there is no trustworthy id to answer on). The bridge's
+      // pending promise self-heals via the SDK's MCP stream timeout; only a
+      // hostile in-sandbox writer produces such frames in the first place.
+      case 'tool_call_request': {
+        const id =
+          typeof event.id === 'string' && event.id !== '' ? event.id : null;
+        const toolName =
+          typeof event.toolName === 'string' && event.toolName !== ''
+            ? event.toolName
+            : null;
+        if (!id || !toolName) {
+          this.logger.debug('Ignoring malformed tool_call_request frame');
+          return;
+        }
+        this.handlers.onToolCallRequest?.({ id, toolName, args: event.args });
+        return;
+      }
+      case 'question_request': {
+        const id =
+          typeof event.id === 'string' && event.id !== '' ? event.id : null;
+        if (!id) {
+          this.logger.debug('Ignoring malformed question_request frame');
+          return;
+        }
+        this.handlers.onQuestionRequest?.({
+          id,
+          questions: sanitizeBridgeQuestions(event.questions),
+        });
         return;
       }
       case 'done': {

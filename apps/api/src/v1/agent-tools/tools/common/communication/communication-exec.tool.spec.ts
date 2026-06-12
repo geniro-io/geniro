@@ -132,6 +132,45 @@ describe('CommunicationExecTool', () => {
       expect(result).toEqual({ response: 'response from agent 1' });
     });
 
+    it('strips calleeUsage from the model-visible output and reports it as toolRequestUsage', async () => {
+      const calleeUsage = {
+        inputTokens: 10,
+        cachedInputTokens: 0,
+        outputTokens: 5,
+        totalTokens: 15,
+        totalPrice: 0.02,
+      };
+      const agents: AgentInfo[] = [
+        {
+          name: 'claude-agent',
+          description: 'Bridge-backed agent',
+          invokeAgent: vi.fn().mockResolvedValue({
+            message: 'Which DB?',
+            needsMoreInfo: true,
+            threadId: 'callee-thread',
+            calleeUsage,
+          }),
+        },
+      ];
+
+      const result = await tool.invoke(
+        {
+          message: 'Pick a database',
+          purpose: 'Decision',
+          agent: 'claude-agent',
+        },
+        { agents },
+        { configurable: { thread_id: 'parent-thread' } },
+      );
+
+      expect(result.toolRequestUsage).toEqual(calleeUsage);
+      expect(result.output).toEqual({
+        message: 'Which DB?',
+        needsMoreInfo: true,
+        threadId: 'callee-thread',
+      });
+    });
+
     it('should throw error when no agents are configured', async () => {
       const mockRunnableConfig: ToolRunnableConfig<BaseAgentConfigurable> = {
         configurable: { thread_id: 'test-thread' },

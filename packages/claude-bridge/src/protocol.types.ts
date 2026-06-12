@@ -7,7 +7,7 @@
  * subsets of what the bridge forwards verbatim.
  */
 
-export const BRIDGE_PROTOCOL_VERSION = 1;
+export const BRIDGE_PROTOCOL_VERSION = 2;
 
 // The sandbox SDK version is derived from this package's own dependency range
 // (see `CLAUDE_AGENT_SDK_VERSION` in `index.ts`) — it deliberately does NOT
@@ -113,6 +113,20 @@ export type SdkMessage =
 // Host -> bridge commands (stdin)
 // ---------------------------------------------------------------------------
 
+/**
+ * A Geniro tool forwarded into the SDK session. The bridge registers each one
+ * on its in-process MCP server (exposed as `mcp__geniro__<name>`); invocations
+ * are proxied back to the host as `tool_call_request` events and resolved by
+ * `tool_call_response` commands carrying the same id.
+ */
+export type BridgeToolDefinition = {
+  /** Geniro tool name (without the `mcp__geniro__` prefix). */
+  name: string;
+  description: string;
+  /** JSON Schema (draft-07) for the tool arguments. */
+  inputSchema: Record<string, unknown>;
+};
+
 export type BridgeStartOptions = {
   /** Initial user prompt for this turn. */
   prompt: string;
@@ -128,21 +142,52 @@ export type BridgeStartOptions = {
   pluginPaths?: string[];
   /** Claude Code setting sources to load (e.g. ['project']). */
   settingSources?: ('user' | 'project' | 'local')[];
+  /** Geniro tools exposed inside the session via the in-bridge MCP server. */
+  tools?: BridgeToolDefinition[];
 };
 
 export type BridgeCommand =
   | { type: 'start'; options: BridgeStartOptions }
   | { type: 'user_message'; text: string }
   | { type: 'interrupt' }
-  | { type: 'shutdown' };
+  | { type: 'shutdown' }
+  /** Resolves the pending `tool_call_request` with the same id. Exactly one of `result`/`error` is set. */
+  | { type: 'tool_call_response'; id: string; result?: string; error?: string }
+  /**
+   * Resolves the pending `question_request` with the same id. `answers` align
+   * by index with the request's `questions`; `deny: true` (or missing answers)
+   * makes the bridge deny the AskUserQuestion call gracefully. The current
+   * host always ends the turn via `interrupt` instead of answering live
+   * (NeedMoreInfo / parent-relay both resume the session with the answer as
+   * the next prompt); the answer path is exercised end-to-end by the SDK and
+   * reserved for a live-answer mode.
+   */
+  | {
+      type: 'question_response';
+      id: string;
+      answers?: string[];
+      deny?: boolean;
+    };
 
 // ---------------------------------------------------------------------------
 // Bridge -> host events (stdout)
 // ---------------------------------------------------------------------------
 
+/** One question from an intercepted AskUserQuestion tool call. */
+export type BridgeQuestion = {
+  question?: string;
+  header?: string;
+  multiSelect?: boolean;
+  options?: { label?: string; description?: string }[];
+};
+
 export type BridgeEvent =
   | { type: 'ready'; protocolVersion: number }
   | { type: 'sdk_message'; message: SdkMessage }
+  /** Proxied invocation of a forwarded Geniro tool; the host replies with `tool_call_response` carrying the same id. */
+  | { type: 'tool_call_request'; id: string; toolName: string; args: unknown }
+  /** Intercepted AskUserQuestion; the host replies with `question_response` carrying the same id. */
+  | { type: 'question_request'; id: string; questions: BridgeQuestion[] }
   | { type: 'done'; sessionId?: string }
   | { type: 'aborted'; sessionId?: string }
   | { type: 'fatal'; error: string };

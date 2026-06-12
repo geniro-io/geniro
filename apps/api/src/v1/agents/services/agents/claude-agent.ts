@@ -1,9 +1,14 @@
-import { BaseMessage, SystemMessage } from '@langchain/core/messages';
+import {
+  AIMessage,
+  BaseMessage,
+  SystemMessage,
+} from '@langchain/core/messages';
 import { RunnableConfig } from '@langchain/core/runnables';
 import { Injectable, Scope } from '@nestjs/common';
 import { DefaultLogger, InternalException } from '@packages/common';
 import { v4 } from 'uuid';
 
+import type { BuiltAgentTool } from '../../../agent-tools/tools/base-tool';
 import { MessageRole } from '../../../graphs/graphs.types';
 import { RequestTokenUsage } from '../../../litellm/litellm.types';
 import { LiteLlmClient } from '../../../litellm/services/litellm.client';
@@ -22,13 +27,17 @@ import { ClaudeBridgeTransport } from '../claude/claude-bridge-transport';
 import { ClaudeKeepaliveService } from '../claude/claude-keepalive.service';
 import {
   ClaudePluginSource,
+  ClaudeQuestionRequest,
   ClaudeThreadMetadata,
 } from '../claude/claude-session.types';
 import {
+  buildBridgeToolDefinitions,
   buildClaudeSessionEnv,
+  formatQuestionsAsText,
   SMALL_FAST_MODEL_ALIAS,
 } from '../claude/claude-session.utils';
 import { ClaudeStreamMapper } from '../claude/claude-stream-mapper';
+import { ClaudeToolDispatcher } from '../claude/claude-tool-dispatcher';
 import { AgentEventType, AgentOutput, BaseAgent } from './base-agent';
 
 export type ClaudeAgentSchemaType = {
@@ -47,6 +56,18 @@ type ClaudeActiveRun = {
   stopped?: boolean;
   stopReason?: string;
   stopCostUsd?: number;
+  /**
+   * Top-level AskUserQuestion that ended the turn: the session is interrupted
+   * and the run finishes with `needsMoreInfo` carrying the question text.
+   */
+  pendingQuestion?: ClaudeQuestionRequest;
+  /** Live transport — mid-run appends inject `user_message` frames through it. */
+  transport?: ClaudeBridgeTransport;
+  /**
+   * Mid-run appends that arrived while the bridge was still booting (bootstrap
+   * can take minutes); flushed as `user_message` frames right after `start`.
+   */
+  pendingInjections: string[];
 };
 
 type BridgeOutcome =
@@ -177,6 +198,7 @@ export class ClaudeAgent
       threadId,
       runnableConfig: mergedConfig,
       stopped: false,
+      pendingInjections: [],
     };
     this.activeRuns.set(threadId, runEntry);
 
@@ -302,6 +324,36 @@ export class ClaudeAgent
         },
       });
 
+      const toolDefinitions = buildBridgeToolDefinitions(
+        Array.from(this.tools.values()) as BuiltAgentTool[],
+      );
+      const dispatcher = new ClaudeToolDispatcher({
+        tools: this.tools,
+        config: mergedConfig,
+        mapper,
+        logger: this.logger,
+        signal: abortController.signal,
+        // The transport is assigned below before `start` is sent; a tool call
+        // can only arrive after the session started, so the closure is safe.
+        send: (command) => transport?.send(command),
+        // Mirrors ToolExecutorNode's pre-invocation cost check: forged or
+        // late frames must not drive host-side tool work past the budget or
+        // after a stop.
+        shouldRefuse: () => {
+          if (runEntry.stopped) {
+            return 'The run was stopped';
+          }
+          if (
+            hasLimit &&
+            priorSpendUsd + mapper.getTotalPriceUsd() >=
+              (effectiveLimit as number)
+          ) {
+            return `Cost limit reached ($${(effectiveLimit as number).toFixed(2)})`;
+          }
+          return null;
+        },
+      });
+
       const outcome = await new Promise<BridgeOutcome>((resolve, reject) => {
         ClaudeBridgeTransport.start({
           runtime,
@@ -314,6 +366,20 @@ export class ClaudeAgent
             onAborted: (sessionId) => resolve({ kind: 'aborted', sessionId }),
             onFatal: (error) => resolve({ kind: 'fatal', error }),
             onActivity: toucher,
+            onToolCallRequest: (request) => dispatcher.dispatch(request),
+            // Top-level mode: the question ends the turn (NeedMoreInfo); the
+            // user's answer resumes the same SDK session on the next run.
+            // Interrupting leaves the bridge's pending question unresolved on
+            // purpose — failAll settles it once the session aborts.
+            // Known cost residue (shared with the M1 user-stop abort): an
+            // aborted query emits no `result` frame, so the interrupted
+            // turn's LLM spend never reaches the message rollup — the
+            // virtual-key budget remains the hard backstop. Revisit with the
+            // SDK's graceful query.interrupt() on the M3 live harness.
+            onQuestionRequest: (request) => {
+              runEntry.pendingQuestion = request;
+              transport?.interrupt();
+            },
           },
         })
           .then((started) => {
@@ -322,11 +388,14 @@ export class ClaudeAgent
               // The thread was stopped while the bridge was still booting
               // (bootstrap can take minutes on first run): never launch the
               // billable session — close (sends shutdown) and settle as
-              // aborted instead of sending `start`.
+              // aborted instead of sending `start`. runEntry.transport stays
+              // unset on purpose: later appends must not write into a closed
+              // transport's void.
               started.close();
               resolve({ kind: 'aborted' });
               return;
             }
+            runEntry.transport = started;
             abortController.signal.addEventListener('abort', () =>
               started.interrupt(),
             );
@@ -343,8 +412,12 @@ export class ClaudeAgent
                 cwd: runtime.getWorkdir(),
                 ...(pluginPaths.length > 0 && { pluginPaths }),
                 settingSources: ['project'],
+                ...(toolDefinitions.length > 0 && { tools: toolDefinitions }),
               },
             });
+            for (const text of runEntry.pendingInjections.splice(0)) {
+              started.send({ type: 'user_message', text });
+            }
           })
           .catch(reject);
       });
@@ -372,6 +445,7 @@ export class ClaudeAgent
         messages: mapper.getMessages(),
         threadId,
         needsMoreInfo: false,
+        statistics: { usage: mapper.getTotalUsage() },
       };
 
       if (outcome.kind === 'fatal') {
@@ -384,6 +458,16 @@ export class ClaudeAgent
           output.messages,
           effectiveLimit as number,
           runEntry.stopCostUsd ?? priorSpendUsd + mapper.getTotalPriceUsd(),
+          output.statistics,
+        );
+      }
+
+      if (runEntry.pendingQuestion && !runEntry.stopped) {
+        return this.finishNeedsMoreInfo(
+          runEntry,
+          runEntry.pendingQuestion,
+          output,
+          mergedConfig,
         );
       }
 
@@ -430,6 +514,15 @@ export class ClaudeAgent
       });
       throw error;
     } finally {
+      // Stops the dispatcher from draining queued tool frames after the
+      // session settled (in-flight invokes see the same signal). Interrupt
+      // listeners hit an already-closed transport — a silent no-op.
+      abortController.abort();
+      if (runEntry.pendingInjections.length > 0) {
+        this.logger.warn(
+          `${runEntry.pendingInjections.length} mid-run append(s) never reached the Claude session for thread ${threadId} — the messages are persisted on the thread but the model did not see them this turn`,
+        );
+      }
       if (keepaliveTimer) {
         clearInterval(keepaliveTimer);
       }
@@ -451,12 +544,45 @@ export class ClaudeAgent
       return await this.run(threadId, messages, _config, runnableConfig);
     }
 
-    // Mid-run message injection over the SDK streaming-input channel ships in
-    // milestone 2; until then a Running Claude thread rejects new input.
-    throw new InternalException(
-      'THREAD_ALREADY_RUNNING',
-      'Thread is currently running',
+    // Mid-run append: persist/stream the Human messages immediately (the
+    // bridge never re-echoes injected text as a persistable frame), then
+    // inject into the live session over the SDK streaming-input channel.
+    // Appends racing the bootstrap are buffered and flushed after `start`.
+    const stamped = updateMessagesListWithMetadata(
+      messages,
+      activeRun.runnableConfig,
     );
+    if (stamped.length > 0) {
+      this.emit({
+        type: 'message',
+        data: {
+          threadId: activeRun.threadId,
+          messages: stamped,
+          config: activeRun.runnableConfig,
+        },
+      });
+      const text = this.extractPromptText(messages);
+      if (text) {
+        if (activeRun.transport && !activeRun.transport.isFinished()) {
+          activeRun.transport.send({ type: 'user_message', text });
+        } else {
+          // No live session (still booting, or already settled while the run
+          // entry lingers in its finally) — buffer instead of writing into a
+          // closed transport's void; run() flushes on start or warn-logs the
+          // strand, so a dropped append is never silent.
+          activeRun.pendingInjections.push(text);
+        }
+      }
+    }
+
+    // Empty messages on purpose: the append has no callee response yet, and
+    // a relay reading the last message must not mistake the caller's own
+    // text for the agent's answer (the live run's output is the response).
+    return {
+      messages: [],
+      threadId: activeRun.threadId,
+      needsMoreInfo: false,
+    };
   }
 
   public async stopThread(threadId: string, reason?: string): Promise<boolean> {
@@ -519,11 +645,52 @@ export class ClaudeAgent
     return { invokeModelName: this.currentConfig.model };
   }
 
+  /**
+   * Top-level AskUserQuestion turn-end: surface the question as a visible
+   * thread message and finish with `needsMoreInfo`, which the agent-event
+   * chain maps to ThreadStatus.NeedMoreInfo for root threads. The user's
+   * answer resumes the SAME SDK session via the persisted session id (the
+   * interrupted AskUserQuestion call is settled by Claude Code on resume).
+   */
+  private finishNeedsMoreInfo(
+    runEntry: ClaudeActiveRun,
+    question: ClaudeQuestionRequest,
+    output: AgentOutput,
+    config: RunnableConfig<BaseAgentConfigurable>,
+  ): AgentOutput {
+    const questionMessage = new AIMessage(
+      formatQuestionsAsText(question.questions),
+    );
+    const msgs = updateMessagesListWithMetadata([questionMessage], config);
+    this.emit({
+      type: 'message',
+      data: { threadId: runEntry.threadId, messages: msgs, config },
+    });
+
+    const result: AgentOutput = {
+      messages: [...output.messages, ...msgs],
+      threadId: runEntry.threadId,
+      needsMoreInfo: true,
+      ...(output.statistics && { statistics: output.statistics }),
+    };
+    this.emit({
+      type: 'run',
+      data: {
+        threadId: runEntry.threadId,
+        messages: result.messages,
+        config,
+        result,
+      },
+    });
+    return result;
+  }
+
   private finishCostLimited(
     runEntry: ClaudeActiveRun,
     messages: BaseMessage[],
     effectiveLimitUsd: number,
     totalSpendUsd: number,
+    statistics?: AgentOutput['statistics'],
   ): AgentOutput {
     // Same user-facing copy as SimpleAgent's cost-limit stop — the wording
     // must not depend on which agent kind hit the limit.
@@ -554,10 +721,13 @@ export class ClaudeAgent
       },
     });
 
+    // A cost-limited callee SPENT real money this run — the relay's parent
+    // fold must still see it, or the parent's pre-invocation gate weakens.
     return {
       messages,
       threadId: runEntry.threadId,
       needsMoreInfo: false,
+      ...(statistics && { statistics }),
     };
   }
 

@@ -1,6 +1,15 @@
 import { StringDecoder } from 'node:string_decoder';
 
 /**
+ * Cap on the partial-line buffer. A newline-less stream (a hostile in-sandbox
+ * writer flooding the bridge's stdout) would otherwise grow one JS string to
+ * V8's limit and throw a RangeError synchronously inside the consumer's
+ * stream 'data' handler — uncaught in the API process. Real protocol frames
+ * are tool results capped at 500K chars; 10M chars leaves generous headroom.
+ */
+const MAX_PARTIAL_LINE_CHARS = 10_000_000;
+
+/**
  * Incremental newline-delimited JSON parser, safe against frames split across
  * stream chunks. Used on both protocol ends: the host parses bridge stdout,
  * the bridge parses host stdin.
@@ -26,6 +35,16 @@ export class JsonLineParser<TFrame = unknown> {
 
     const lines = this.buffer.split('\n');
     this.buffer = lines.pop() ?? '';
+    if (this.buffer.length > MAX_PARTIAL_LINE_CHARS) {
+      const discarded = this.buffer;
+      this.buffer = '';
+      onInvalidLine?.(
+        `${discarded.slice(0, 200)}…`,
+        new Error(
+          `partial line exceeded ${MAX_PARTIAL_LINE_CHARS} chars — discarded`,
+        ),
+      );
+    }
 
     const frames: TFrame[] = [];
     for (const rawLine of lines) {

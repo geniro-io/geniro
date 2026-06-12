@@ -10,6 +10,7 @@ import type { InvalidToolCall, ToolCall } from '@langchain/core/messages/tool';
 import { RunnableConfig } from '@langchain/core/runnables';
 import { isPlainObject } from 'lodash';
 import type { UnknownRecord } from 'type-fest';
+import { stringify as stringifyYaml } from 'yaml';
 
 import type {
   BaseAgentConfigurable,
@@ -518,6 +519,42 @@ export function buildReasoningMessage(
   };
 
   return markMessageHideForLlm(msg);
+}
+
+/**
+ * Canonical tool-output → LLM-visible-string conversion (ToolExecutorNode and
+ * the Claude tool dispatcher must format identically). JSON-shaped outputs are
+ * re-serialized as YAML — fewer tokens, equally parseable for the model.
+ */
+export function formatToolOutputForLlm(output: unknown): string {
+  if (typeof output === 'string') {
+    const trimmed = output.trim();
+    if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) {
+      return output;
+    }
+
+    try {
+      const parsed = JSON.parse(trimmed) as unknown;
+      if (!isPlainObject(parsed) && !Array.isArray(parsed)) {
+        return output;
+      }
+
+      return stringifyYaml(parsed).trimEnd();
+    } catch {
+      return output;
+    }
+  }
+
+  if (isPlainObject(output) || Array.isArray(output)) {
+    return stringifyYaml(output).trimEnd();
+  }
+
+  // JSON.stringify returns undefined (despite its string typing) for
+  // undefined/functions/symbols — a side-effect-only tool resolving
+  // `{ output: undefined }` must read as an empty success, not crash the
+  // caller on `.length`.
+  const serialized = JSON.stringify(output) as string | undefined;
+  return serialized ?? '';
 }
 
 /**

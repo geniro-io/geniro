@@ -13,6 +13,13 @@
  */
 import { query, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 
+import {
+  buildCanUseTool,
+  buildGeniroMcpServer,
+  PendingHostRequests,
+  type QuestionResolution,
+  type ToolCallResolution,
+} from './geniro-mcp';
 import { JsonLineParser, serializeFrame } from './json-line-parser';
 import {
   BRIDGE_PROTOCOL_VERSION,
@@ -77,6 +84,11 @@ async function runSession(options: BridgeStartOptions): Promise<void> {
   let lastSessionId: string | undefined;
   let aborted = false;
 
+  const toolRequests = new PendingHostRequests<ToolCallResolution>('tool');
+  const questionRequests = new PendingHostRequests<QuestionResolution>(
+    'question',
+  );
+
   const stdinParser = new JsonLineParser<BridgeCommand>();
   const onStdin = (chunk: Buffer) => {
     const commands = stdinParser.push(chunk, (line, error) => {
@@ -90,9 +102,44 @@ async function runSession(options: BridgeStartOptions): Promise<void> {
       if (command.type === 'interrupt' || command.type === 'shutdown') {
         aborted = true;
         inputQueue.close();
+        toolRequests.failAll('session aborted');
+        questionRequests.failAll('session aborted');
         abortController.abort();
       } else if (command.type === 'user_message') {
         inputQueue.push(command.text);
+      } else if (command.type === 'tool_call_response') {
+        if (typeof command.id !== 'string') {
+          logErr('Ignoring tool_call_response without a string id');
+          continue;
+        }
+        const matched = toolRequests.resolve(command.id, {
+          ...(typeof command.result === 'string' && {
+            result: command.result,
+          }),
+          ...(typeof command.error === 'string' && { error: command.error }),
+        });
+        if (!matched) {
+          logErr(`No pending tool call for id ${command.id}`);
+        }
+      } else if (command.type === 'question_response') {
+        if (typeof command.id !== 'string') {
+          logErr('Ignoring question_response without a string id');
+          continue;
+        }
+        const matched = questionRequests.resolve(command.id, {
+          ...(Array.isArray(command.answers) && {
+            // map, not filter: answers align with questions BY INDEX, so an
+            // invalid entry must stay as an undefined hole — compacting it
+            // would shift every later answer onto the wrong question.
+            answers: command.answers.map((answer) =>
+              typeof answer === 'string' ? answer : undefined,
+            ),
+          }),
+          ...(typeof command.deny === 'boolean' && { deny: command.deny }),
+        });
+        if (!matched) {
+          logErr(`No pending question for id ${command.id}`);
+        }
       } else {
         logErr(`Ignoring unexpected command while running: ${command.type}`);
       }
@@ -130,6 +177,12 @@ async function runSession(options: BridgeStartOptions): Promise<void> {
             append: options.systemPrompt,
           },
         }),
+        ...(options.tools?.length && {
+          mcpServers: {
+            geniro: buildGeniroMcpServer(options.tools, emit, toolRequests),
+          },
+        }),
+        canUseTool: buildCanUseTool(emit, questionRequests),
       },
     });
 
@@ -159,6 +212,8 @@ async function runSession(options: BridgeStartOptions): Promise<void> {
     }
     throw error;
   } finally {
+    toolRequests.failAll('session ended');
+    questionRequests.failAll('session ended');
     process.stdin.off('data', onStdin);
   }
 }

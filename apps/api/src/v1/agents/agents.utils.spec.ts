@@ -13,6 +13,7 @@ import {
   extractExploredFilesFromMessages,
   extractTextFromResponseContent,
   filterMessagesForLlm,
+  formatToolOutputForLlm,
   isRunnableAgent,
   markMessageHideForLlm,
   prepareMessagesForLlm,
@@ -749,5 +750,15 @@ describe('isRunnableAgent', () => {
     expect(isRunnableAgent(undefined)).toBe(false);
     expect(isRunnableAgent('agent')).toBe(false);
     expect(isRunnableAgent(42)).toBe(false);
+  });
+});
+
+describe('formatToolOutputForLlm', () => {
+  it('returns a string when a tool produced no output (undefined) — both callers take .length of the result', () => {
+    // ToolExecutorNode and ClaudeToolDispatcher immediately read `.length`
+    // on the returned value to apply their output caps; the declared `string`
+    // return type must hold for every input, including a void tool result.
+    const formatted = formatToolOutputForLlm(undefined);
+    expect(typeof formatted).toBe('string');
   });
 });

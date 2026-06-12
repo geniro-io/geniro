@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import { redactGitUrl } from './claude-session.utils';
+import type { BuiltAgentTool } from '../../../agent-tools/tools/base-tool';
+import {
+  buildBridgeToolDefinitions,
+  formatQuestionsAsText,
+  isToolForwardableToClaude,
+  redactGitUrl,
+} from './claude-session.utils';
 
 /**
  * redactGitUrl is the last barrier between a private-repo clone URL (which can
@@ -59,5 +65,99 @@ describe('redactGitUrl', () => {
       "fatal: unable to access 'HTTPS://ghp_LEAK@github.com/acme/private'",
     );
     expect(redacted).not.toContain('ghp_LEAK');
+  });
+});
+
+describe('isToolForwardableToClaude', () => {
+  it.each([
+    'finish',
+    'wait_for',
+    'tool_search',
+    'subagents_run_task',
+    'communication_exec',
+  ])('never forwards agent-context-bound tool %s', (name) => {
+    expect(isToolForwardableToClaude(name)).toBe(false);
+  });
+
+  it.each(['shell', 'files_read', 'files_write_file', 'files_apply_changes'])(
+    'skips Claude-native overlap tool %s',
+    (name) => {
+      expect(isToolForwardableToClaude(name)).toBe(false);
+    },
+  );
+
+  it.each([
+    'knowledge_search_docs',
+    'codebase_search',
+    'web_search',
+    'gh_clone',
+    'thread_store_get',
+    'subagents_list',
+  ])('forwards regular Geniro tool %s', (name) => {
+    expect(isToolForwardableToClaude(name)).toBe(true);
+  });
+});
+
+describe('buildBridgeToolDefinitions', () => {
+  it('maps name/description/__ajvSchema into wire definitions', () => {
+    const definitions = buildBridgeToolDefinitions([
+      {
+        name: 'knowledge_search_docs',
+        description: 'Search docs.',
+        __ajvSchema: {
+          type: 'object',
+          properties: { query: { type: 'string' } },
+        },
+      } as unknown as BuiltAgentTool,
+    ]);
+
+    expect(definitions).toEqual([
+      {
+        name: 'knowledge_search_docs',
+        description: 'Search docs.',
+        inputSchema: {
+          type: 'object',
+          properties: { query: { type: 'string' } },
+        },
+      },
+    ]);
+  });
+
+  it('falls back to an empty object schema when __ajvSchema is missing', () => {
+    const definitions = buildBridgeToolDefinitions([
+      {
+        name: 'bare',
+        description: 'No schema.',
+      } as unknown as BuiltAgentTool,
+    ]);
+
+    expect(definitions[0]?.inputSchema).toEqual({
+      type: 'object',
+      properties: {},
+    });
+  });
+});
+
+describe('formatQuestionsAsText', () => {
+  it('renders questions with labeled options', () => {
+    expect(
+      formatQuestionsAsText([
+        {
+          question: 'Which DB?',
+          options: [
+            { label: 'Postgres', description: 'relational' },
+            { label: 'MySQL' },
+          ],
+        },
+        { question: 'Deploy now?' },
+      ]),
+    ).toBe('Which DB?\n- Postgres: relational\n- MySQL\n\nDeploy now?');
+  });
+
+  it('falls back to an explanatory line when no question text survived sanitization', () => {
+    expect(formatQuestionsAsText([])).toContain('could not be read');
+    expect(formatQuestionsAsText([{ header: 'DB' }])).toContain(
+      'could not be read',
+    );
   });
 });

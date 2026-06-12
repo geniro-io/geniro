@@ -3,13 +3,18 @@ import { ModuleRef } from '@nestjs/core';
 import { BadRequestException } from '@packages/common';
 import { z } from 'zod';
 
+import type { BuiltAgentTool } from '../../../agent-tools/tools/base-tool';
 import { ClaudeAgent } from '../../../agents/services/agents/claude-agent';
+import { isToolForwardableToClaude } from '../../../agents/services/claude/claude-session.utils';
 import type { GraphNode } from '../../../graphs/graphs.types';
 import { NodeKind } from '../../../graphs/graphs.types';
 import { GraphRegistry } from '../../../graphs/services/graph-registry';
 import type { RuntimeThreadProvider } from '../../../runtime/services/runtime-thread-provider';
 import { RegisterTemplate } from '../../decorators/register-template.decorator';
-import { ClaudeAgentNodeBaseTemplate } from '../base-node.template';
+import {
+  ClaudeAgentNodeBaseTemplate,
+  type ToolNodeOutput,
+} from '../base-node.template';
 
 export const ClaudeAgentTemplateSchema = z.object({
   name: z.string().min(1).describe('Unique name for this agent'),
@@ -90,6 +95,11 @@ export class ClaudeAgentTemplate extends ClaudeAgentNodeBaseTemplate<
 
   readonly inputs = [
     {
+      type: 'template',
+      value: 'agent-communication-tool',
+      multiple: true,
+    },
+    {
       type: 'kind',
       value: NodeKind.Trigger,
       multiple: true,
@@ -102,6 +112,11 @@ export class ClaudeAgentTemplate extends ClaudeAgentNodeBaseTemplate<
       value: NodeKind.Runtime,
       required: true,
       multiple: false,
+    },
+    {
+      type: 'kind',
+      value: NodeKind.Tool,
+      multiple: true,
     },
   ] as const;
 
@@ -146,6 +161,35 @@ export class ClaudeAgentTemplate extends ClaudeAgentNodeBaseTemplate<
         }
 
         instance.setRuntimeProvider(runtimeNode.instance);
+
+        // Wired tools forwarded into the SDK session via the in-bridge MCP
+        // server (same walk as SimpleAgent), minus the exclusion policy.
+        const forwardableTools: BuiltAgentTool[] = [];
+        for (const nodeId of params.outputNodeIds) {
+          const node = this.graphRegistry.getNode<
+            BuiltAgentTool | BuiltAgentTool[] | ToolNodeOutput
+          >(graphId, nodeId);
+          if (!node || node.type !== NodeKind.Tool) {
+            continue;
+          }
+          const inst = node.instance;
+          const tools: BuiltAgentTool[] = [];
+          if (inst && typeof inst === 'object' && 'tools' in inst) {
+            tools.push(...(inst as ToolNodeOutput).tools);
+          } else if (Array.isArray(inst)) {
+            tools.push(...inst);
+          } else if (inst) {
+            tools.push(inst);
+          }
+          for (const tool of tools) {
+            if (isToolForwardableToClaude(tool.name)) {
+              forwardableTools.push(tool);
+            }
+          }
+        }
+        instance.resetTools();
+        forwardableTools.forEach((tool) => instance.addTool(tool));
+
         instance.setConfig(params.config);
       },
       destroy: async (instance: ClaudeAgent) => {

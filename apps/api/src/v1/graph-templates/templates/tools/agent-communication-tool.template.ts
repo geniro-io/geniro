@@ -40,12 +40,22 @@ export class AgentCommunicationToolTemplate extends ToolNodeBaseTemplate<
       value: NodeKind.SimpleAgent,
       multiple: true,
     },
+    {
+      type: 'kind',
+      value: NodeKind.ClaudeAgent,
+      multiple: true,
+    },
   ] as const;
 
   readonly outputs = [
     {
       type: 'kind',
       value: NodeKind.SimpleAgent,
+      multiple: true,
+    },
+    {
+      type: 'kind',
+      value: NodeKind.ClaudeAgent,
       multiple: true,
     },
   ] as const;
@@ -194,12 +204,23 @@ export class AgentCommunicationToolTemplate extends ToolNodeBaseTemplate<
               response.messages,
             );
 
+            // Checkpoint-less callees (ClaudeAgent) signal questions via the
+            // AgentOutput flag rather than a finish-tool message — honor both.
+            //
+            // Cost fold uses ONLY the callee's run-scoped statistics: summing
+            // response.messages would re-count a checkpointed callee's whole
+            // history on repeat invocations. A callee that doesn't report
+            // statistics (SimpleAgent today) keeps its existing
+            // own-thread-only cost accounting.
+            const calleeUsage = response.statistics?.usage;
+
             return {
               message: responseMessage || 'No response message available',
-              needsMoreInfo,
+              needsMoreInfo: needsMoreInfo || response.needsMoreInfo === true,
               ...(exploredFiles.length > 0 ? { exploredFiles } : {}),
               threadId: response.threadId,
               checkpointNs: response.checkpointNs,
+              ...(calleeUsage ? { calleeUsage } : {}),
             } as T;
           };
 

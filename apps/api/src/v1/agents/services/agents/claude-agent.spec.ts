@@ -72,6 +72,7 @@ describe('ClaudeAgent', () => {
     send: ReturnType<typeof vi.fn>;
     interrupt: ReturnType<typeof vi.fn>;
     close: ReturnType<typeof vi.fn>;
+    isFinished: ReturnType<typeof vi.fn>;
   };
   /** Resolves the mocked ClaudeBridgeTransport.start promise. */
   let releaseTransportStart: () => void;
@@ -134,6 +135,7 @@ describe('ClaudeAgent', () => {
       send: vi.fn(),
       interrupt: vi.fn(),
       close: vi.fn(),
+      isFinished: vi.fn().mockReturnValue(false),
     };
     capturedHandlers = undefined;
     startSpy = vi
@@ -267,7 +269,9 @@ describe('ClaudeAgent', () => {
     capturedHandlers!.onAborted('sess-1');
     const output = await runPromise;
 
-    expect(fakeTransport.interrupt).toHaveBeenCalledTimes(1);
+    // At least once mid-stream (the trip); run-end cleanup aborts the signal,
+    // whose interrupt listener no-ops against the already-closed transport.
+    expect(fakeTransport.interrupt).toHaveBeenCalled();
     // Persist-before-stop: the tripping assistant message is in the output
     // (it streamed/persisted before the stop fired).
     expect(output.messages.some((m) => m.content === 'expensive thought')).toBe(
@@ -413,7 +417,7 @@ describe('ClaudeAgent', () => {
     expect(sentStartFrame().options.resume).toBeUndefined();
   });
 
-  it('rejects concurrent runs on the same thread', async () => {
+  it('rejects concurrent run() calls on the same thread', async () => {
     const runPromise = agent.run(
       THREAD_ID,
       [new HumanMessage('hi')],
@@ -423,11 +427,131 @@ describe('ClaudeAgent', () => {
     await vi.waitFor(() => expect(startSpy).toHaveBeenCalled());
 
     await expect(
-      agent.runOrAppend(THREAD_ID, [new HumanMessage('more')]),
+      agent.run(THREAD_ID, [new HumanMessage('more')]),
     ).rejects.toMatchObject({ errorCode: 'THREAD_ALREADY_RUNNING' });
 
     releaseTransportStart();
     await vi.waitFor(() => expect(fakeTransport.send).toHaveBeenCalled());
+    capturedHandlers!.onDone('sess-1');
+    await runPromise;
+  });
+
+  it('buffers a mid-run append racing bootstrap and flushes it right after start', async () => {
+    const runPromise = agent.run(
+      THREAD_ID,
+      [new HumanMessage('hi')],
+      undefined,
+      runnableConfig(),
+    );
+    await vi.waitFor(() => expect(startSpy).toHaveBeenCalled());
+
+    // Bridge still booting — the append must buffer, not reject.
+    const appended = await agent.runOrAppend(THREAD_ID, [
+      new HumanMessage('more'),
+    ]);
+    expect(appended.needsMoreInfo).toBe(false);
+
+    releaseTransportStart();
+    await vi.waitFor(() => expect(fakeTransport.send).toHaveBeenCalled());
+    const frames = fakeTransport.send.mock.calls.map(
+      (call) => call[0] as { type: string },
+    );
+    expect(frames[0]!.type).toBe('start');
+    expect(frames[1]).toEqual({ type: 'user_message', text: 'more' });
+
+    capturedHandlers!.onDone('sess-1');
+    await runPromise;
+  });
+
+  it('injects a mid-run append into the live session and persists the Human message', async () => {
+    const { runPromise } = await startRunAndOpenBridge();
+
+    const appended = await agent.runOrAppend(THREAD_ID, [
+      new HumanMessage('follow-up'),
+    ]);
+
+    // Empty on purpose: the append has no callee response yet — a relay must
+    // not read the caller's own text back as the agent's answer.
+    expect(appended.messages).toHaveLength(0);
+    expect(appended.needsMoreInfo).toBe(false);
+    expect(fakeTransport.send).toHaveBeenCalledWith({
+      type: 'user_message',
+      text: 'follow-up',
+    });
+
+    const messageEvents = events.filter((e) => e.type === 'message') as Extract<
+      AgentEventType,
+      { type: 'message' }
+    >[];
+    const lastBatch = messageEvents.at(-1)!.data.messages;
+    expect(String(lastBatch[0]!.content)).toBe('follow-up');
+
+    capturedHandlers!.onDone('sess-1');
+    await runPromise;
+  });
+
+  it('ends the turn as NeedMoreInfo with the question text when a top-level question arrives', async () => {
+    const { runPromise } = await startRunAndOpenBridge();
+
+    capturedHandlers!.onQuestionRequest!({
+      id: 'question-1',
+      questions: [
+        {
+          question: 'Which DB?',
+          options: [{ label: 'Postgres', description: 'pg' }],
+        },
+      ],
+    });
+    expect(fakeTransport.interrupt).toHaveBeenCalled();
+    capturedHandlers!.onAborted('sess-1');
+
+    const output = await runPromise;
+    expect(output.needsMoreInfo).toBe(true);
+    const questionText = String(output.messages.at(-1)!.content);
+    expect(questionText).toContain('Which DB?');
+    expect(questionText).toContain('- Postgres: pg');
+
+    const run = runEvents();
+    expect(run).toHaveLength(1);
+    expect(run[0]!.data.result?.needsMoreInfo).toBe(true);
+    expect(run[0]!.data.error).toBeUndefined();
+  });
+
+  it('lets a user stop win over a pending question (no NeedMoreInfo after stop)', async () => {
+    const { runPromise } = await startRunAndOpenBridge();
+
+    capturedHandlers!.onQuestionRequest!({
+      id: 'question-1',
+      questions: [{ question: 'Which DB?' }],
+    });
+    await agent.stopThread(THREAD_ID, 'user stop');
+    capturedHandlers!.onAborted('sess-1');
+
+    const output = await runPromise;
+    expect(output.needsMoreInfo).toBe(false);
+    expect(runEvents()).toHaveLength(0);
+  });
+
+  it('forwards wired tool definitions in the start frame', async () => {
+    agent.addTool({
+      name: 'knowledge_search_docs',
+      description: 'Search docs.',
+      __ajvSchema: { type: 'object', properties: {} },
+    } as never);
+
+    const { runPromise } = await startRunAndOpenBridge();
+
+    const frame = fakeTransport.send.mock.calls[0]![0] as {
+      options: { tools?: unknown[] };
+    };
+    expect(frame.options.tools).toEqual([
+      {
+        name: 'knowledge_search_docs',
+        description: 'Search docs.',
+        inputSchema: { type: 'object', properties: {} },
+      },
+    ]);
+
     capturedHandlers!.onDone('sess-1');
     await runPromise;
   });
