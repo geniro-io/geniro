@@ -3450,4 +3450,65 @@ describe('ThreadsService', () => {
       );
     });
   });
+
+  describe('ensureThreadRow', () => {
+    const payload = () => ({
+      graphId: 'graph-1',
+      createdBy: 'user-1',
+      projectId: 'project-1',
+      externalThreadId: 'ext-1',
+      status: ThreadStatus.Running as typeof ThreadStatus.Running,
+      runningStartedAt: new Date('2026-05-01T10:00:00Z'),
+      totalRunningMs: 0,
+    });
+
+    it('throws InternalException when status is not Running (runtime guard)', async () => {
+      await expect(
+        service.ensureThreadRow({
+          ...payload(),
+          status: ThreadStatus.Done as unknown as typeof ThreadStatus.Running,
+        }),
+      ).rejects.toThrow(/ensureThreadRow requires status=Running/);
+    });
+
+    it('returns the inserted entity when the row does not exist yet', async () => {
+      const inserted = { id: 't-1', status: ThreadStatus.Running };
+      vi.spyOn(threadsDao, 'insertIfNotExists').mockResolvedValue(
+        inserted as never,
+      );
+
+      const result = await service.ensureThreadRow(payload());
+
+      expect(result).toBe(inserted);
+      expect(threadsDao.getOne).not.toHaveBeenCalled();
+    });
+
+    it('returns the existing row UNTOUCHED on conflict — no transition, no write', async () => {
+      vi.spyOn(threadsDao, 'insertIfNotExists').mockResolvedValue(null);
+      const existing = {
+        id: 't-2',
+        externalThreadId: 'ext-1',
+        status: ThreadStatus.Done,
+        runningStartedAt: null,
+        totalRunningMs: 7_000,
+      };
+      vi.spyOn(threadsDao, 'getOne').mockResolvedValue(existing as never);
+
+      const result = await service.ensureThreadRow(payload());
+
+      expect(result).toBe(existing);
+      expect(result.status).toBe(ThreadStatus.Done);
+      expect(transitionService.computeTransition).not.toHaveBeenCalled();
+      expect(threadsDao.updateById).not.toHaveBeenCalled();
+    });
+
+    it('throws UPSERT_ROW_VANISHED when row disappears between INSERT and SELECT', async () => {
+      vi.spyOn(threadsDao, 'insertIfNotExists').mockResolvedValue(null);
+      vi.spyOn(threadsDao, 'getOne').mockResolvedValue(null);
+
+      await expect(service.ensureThreadRow(payload())).rejects.toThrow(
+        /ensureThreadRow: row vanished/,
+      );
+    });
+  });
 });

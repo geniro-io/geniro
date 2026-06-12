@@ -280,6 +280,36 @@ describe('Socket Notifications Integration Tests', () => {
     });
   };
 
+  /**
+   * Subscribes to a graph room and resolves only after the server ack
+   * confirms the room join. A bare emit('subscribe_graph') is fire-and-forget:
+   * triggering graph activity before the server processed the join races the
+   * subscription, and the notification is silently emitted into a room the
+   * socket has not entered yet (60s "Timeout waiting for notification" flake).
+   */
+  const subscribeToGraph = (s: Socket, graphId: string): Promise<void> => {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error('subscribe_graph ack timeout')),
+        15_000,
+      );
+      s.emit(
+        'subscribe_graph',
+        { graphId },
+        (res: { success?: boolean; error?: string }) => {
+          clearTimeout(timer);
+          if (res?.success) {
+            resolve();
+          } else {
+            reject(
+              new Error(`subscribe_graph failed: ${res?.error ?? 'unknown'}`),
+            );
+          }
+        },
+      );
+    });
+  };
+
   const extractPendingMessageContent = (
     message: unknown,
   ): string | undefined => {
@@ -333,7 +363,7 @@ describe('Socket Notifications Integration Tests', () => {
       const graphId = baseGraphId;
 
       // Subscribe to graph
-      socket.emit('subscribe_graph', { graphId });
+      await subscribeToGraph(socket, graphId);
 
       // Set up listener for graph update events
       const notificationPromise = new Promise((resolve, reject) => {
@@ -384,7 +414,7 @@ describe('Socket Notifications Integration Tests', () => {
       const graphId = baseGraphId;
 
       // Subscribe
-      socket.emit('subscribe_graph', { graphId });
+      await subscribeToGraph(socket, graphId);
       await new Promise((resolve) => setTimeout(resolve, 500));
 
       // Unsubscribe
@@ -407,7 +437,7 @@ describe('Socket Notifications Integration Tests', () => {
         const graphId = baseGraphId;
 
         // Subscribe to graph
-        socket.emit('subscribe_graph', { graphId });
+        await subscribeToGraph(socket, graphId);
         await new Promise((resolve) => setTimeout(resolve, 500));
 
         const receivedMessages: unknown[] = [];
@@ -475,7 +505,7 @@ describe('Socket Notifications Integration Tests', () => {
 
         const graphId = baseGraphId;
 
-        socket.emit('subscribe_graph', { graphId });
+        await subscribeToGraph(socket, graphId);
 
         const messageNotifications: unknown[] = [];
 
@@ -689,7 +719,7 @@ describe('Socket Notifications Integration Tests', () => {
 
         await restartGraph(graphId);
 
-        socket.emit('subscribe_graph', { graphId });
+        await subscribeToGraph(socket, graphId);
         await new Promise((resolve) => setTimeout(resolve, 200));
 
         // Track meaningful events: create and applied for each revision
@@ -812,7 +842,7 @@ describe('Socket Notifications Integration Tests', () => {
 
         const graphId = baseGraphId;
 
-        socket.emit('subscribe_graph', { graphId });
+        await subscribeToGraph(socket, graphId);
 
         const nodeEvents: unknown[] = [];
         const statusesSeen = new Set<string>();
@@ -885,7 +915,7 @@ describe('Socket Notifications Integration Tests', () => {
 
         const graphId = baseGraphId;
 
-        socket.emit('subscribe_graph', { graphId });
+        await subscribeToGraph(socket, graphId);
 
         // Keep the first agent run in-flight long enough to enqueue a second
         // trigger as a pending message. Higher-specificity matcher wins over
@@ -1020,7 +1050,7 @@ describe('Socket Notifications Integration Tests', () => {
           socket.once('connect', () => resolve()),
         );
 
-        socket.emit('subscribe_graph', { graphId });
+        await subscribeToGraph(socket, graphId);
 
         const threadSubId = uniqueThreadSubId('sequential-pending-thread');
         const metadataUpdates: {
@@ -1917,7 +1947,7 @@ describe('Socket Notifications Integration Tests', () => {
           }
         });
 
-        socket.emit('subscribe_graph', { graphId });
+        await subscribeToGraph(socket, graphId);
         await new Promise((resolve) => setTimeout(resolve, 500));
 
         await restartGraph(graphId);
@@ -1975,7 +2005,7 @@ describe('Socket Notifications Integration Tests', () => {
         });
 
         // Subscribe to graph updates BEFORE running the graph
-        socket.emit('subscribe_graph', { graphId });
+        await subscribeToGraph(socket, graphId);
 
         // Small wait to ensure subscription is processed
         await new Promise((resolve) => setTimeout(resolve, 500));
@@ -2068,7 +2098,7 @@ describe('Socket Notifications Integration Tests', () => {
 
         const graphId = baseGraphId;
 
-        socket.emit('subscribe_graph', { graphId });
+        await subscribeToGraph(socket, graphId);
         await new Promise((resolve) => setTimeout(resolve, 500));
 
         const stateUpdateNotifications: unknown[] = [];
@@ -2137,7 +2167,7 @@ describe('Socket Notifications Integration Tests', () => {
 
         const graphId = baseGraphId;
 
-        socket.emit('subscribe_graph', { graphId });
+        await subscribeToGraph(socket, graphId);
         await new Promise((resolve) => setTimeout(resolve, 500));
 
         const stateUpdatePromise = new Promise<AgentStateUpdateNotification>(
@@ -2247,8 +2277,8 @@ describe('Socket Notifications Integration Tests', () => {
         });
 
         // Subscribe both sockets and wait for server to process
-        socket.emit('subscribe_graph', { graphId });
-        secondSocket.emit('subscribe_graph', { graphId });
+        await subscribeToGraph(socket, graphId);
+        await subscribeToGraph(secondSocket, graphId);
         await new Promise((resolve) => setTimeout(resolve, 500));
 
         // Trigger notification
@@ -2299,8 +2329,8 @@ describe('Socket Notifications Integration Tests', () => {
         });
 
         // Subscribe both sockets to the graph
-        socket.emit('subscribe_graph', { graphId });
-        secondSocket.emit('subscribe_graph', { graphId });
+        await subscribeToGraph(socket, graphId);
+        await subscribeToGraph(secondSocket, graphId);
 
         await new Promise((resolve) => setTimeout(resolve, 500));
 
@@ -2363,7 +2393,7 @@ describe('Socket Notifications Integration Tests', () => {
         socket = createSocketConnection(TEST_USER_ID);
         await waitForSocketConnection(socket);
 
-        socket.emit('subscribe_graph', { graphId: baseGraphId });
+        await subscribeToGraph(socket, baseGraphId);
         await new Promise((resolve) => setTimeout(resolve, 500));
 
         const agentStateNotifications: AgentStateUpdateNotification[] = [];

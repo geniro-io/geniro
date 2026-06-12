@@ -7,6 +7,7 @@ import { AppContextStorage } from '../../../auth/app-context-storage';
 import { GraphsService } from '../../../v1/graphs/services/graphs.service';
 import { ProjectsDao } from '../../../v1/projects/dao/projects.dao';
 import { ThreadsDao } from '../../../v1/threads/dao/threads.dao';
+import { ThreadStatusTransitionService } from '../../../v1/threads/services/thread-status-transition.service';
 import { ThreadsService } from '../../../v1/threads/services/threads.service';
 import { ThreadStatus } from '../../../v1/threads/threads.types';
 import { createMockGraphData } from '../helpers/graph-helpers';
@@ -36,6 +37,7 @@ describe('ThreadsService.upsertRunningThread — INSERT-or-resume semantics', ()
   let threadsDao: ThreadsDao;
   let threadsService: ThreadsService;
   let graphsService: GraphsService;
+  let transitionService: ThreadStatusTransitionService;
   let orm: MikroORM;
   let testProjectId: string;
   let sharedGraphId: string;
@@ -48,6 +50,7 @@ describe('ThreadsService.upsertRunningThread — INSERT-or-resume semantics', ()
     threadsDao = app.get(ThreadsDao);
     threadsService = app.get(ThreadsService);
     graphsService = app.get(GraphsService);
+    transitionService = app.get(ThreadStatusTransitionService);
     orm = app.get(MikroORM);
 
     const project = await createTestProject(app);
@@ -270,9 +273,10 @@ describe('ThreadsService.upsertRunningThread — INSERT-or-resume semantics', ()
     'CONFLICT (existing Running, incoming status=Done): preserves Running invariants — DAO should reject non-Running upserts',
     { timeout: 15_000 },
     async () => {
-      // The DAO contract is implicitly "upsert into Running": all production
-      // callers pass status=Running (agent-invoke handler + executeTrigger
-      // eager upsert). The ON CONFLICT CASE only handles the
+      // The DAO contract is implicitly "upsert into Running": the production
+      // caller passes status=Running (agent-invoke handler; executeTrigger's
+      // eager path uses insert-only ensureThreadRow). The ON CONFLICT CASE
+      // only handles the
       // "existing=Running → incoming arbitrary" branch correctly for
       // status=Running; if a caller passes status=Done, the merged row ends
       // up with status=Done + non-null runningStartedAt (preserved from the
@@ -399,4 +403,145 @@ describe('ThreadsService.upsertRunningThread — INSERT-or-resume semantics', ()
       expect((await reload(inserted.id)).lastRunId).toBe(secondRunId);
     },
   );
+
+  /**
+   * ensureThreadRow is the insert-only primitive used by executeTrigger's
+   * eager-creation path. That path runs AFTER trigger.invokeAgent resolved —
+   * for synchronous executions the agent-event chain may have already written
+   * a terminal status. The tests below pin the exact production interleaving
+   * that used to strand threads in Running forever (the roaming CI flake):
+   *   1. agent-invoke handler: upsertRunningThread → Running
+   *   2. agent-run handler: computeTransition → Done (or Waiting)
+   *   3. executeTrigger eager write lands LAST → must NOT resurrect Running
+   */
+  describe('ensureThreadRow — insert-only, never mutates existing rows', () => {
+    it(
+      'INSERT: creates a Running row seeded with the payload timer fields and metadata',
+      { timeout: 15_000 },
+      async () => {
+        const externalThreadId = randomUUID();
+        const now = new Date();
+
+        const inserted = await threadsService.ensureThreadRow(
+          baseUpsertPayload({
+            externalThreadId,
+            runningStartedAt: now,
+            metadata: { effectiveCostLimitUsd: 2.5 },
+          }),
+        );
+        createdThreadIds.push(inserted.id);
+
+        expect(inserted.status).toBe(ThreadStatus.Running);
+        expect(inserted.runningStartedAt!.getTime()).toBe(now.getTime());
+        expect(Number(inserted.totalRunningMs)).toBe(0);
+        expect(inserted.metadata).toEqual({ effectiveCostLimitUsd: 2.5 });
+        expect(inserted.externalThreadId).toBe(externalThreadId);
+      },
+    );
+
+    it(
+      'RACE REGRESSION: a late eager write after the run handler landed Done must not resurrect Running',
+      { timeout: 15_000 },
+      async () => {
+        const externalThreadId = randomUUID();
+
+        // 1. Agent-invoke handler: thread enters Running at run start.
+        const thread = await threadsService.upsertRunningThread(
+          baseUpsertPayload({
+            externalThreadId,
+            runningStartedAt: new Date('2026-04-01T10:00:00.000Z'),
+            metadata: { effectiveCostLimitUsd: 1.5 },
+          }),
+        );
+        createdThreadIds.push(thread.id);
+
+        // 2. Agent-run handler: terminal status lands (same machinery as
+        //    ThreadUpdateNotificationHandler — computeTransition + updateById).
+        orm.em.clear();
+        const running = await reload(thread.id);
+        const patch = transitionService.computeTransition(
+          running,
+          ThreadStatus.Done,
+        );
+        await threadsDao.updateById(thread.id, patch);
+
+        // 3. executeTrigger's eager write arrives LAST (the losing-side
+        //    interleaving of the race). It must be a no-op on the existing row.
+        orm.em.clear();
+        const result = await threadsService.ensureThreadRow(
+          baseUpsertPayload({
+            externalThreadId,
+            runningStartedAt: new Date(),
+            metadata: { somethingElse: true },
+          }),
+        );
+
+        expect(result.id).toBe(thread.id);
+        expect(result.status).toBe(ThreadStatus.Done);
+
+        const reloaded = await reload(thread.id);
+        expect(reloaded.status).toBe(ThreadStatus.Done);
+        expect(reloaded.runningStartedAt).toBeNull();
+        // Accumulated timer and metadata survive untouched.
+        expect(Number(reloaded.totalRunningMs)).toBeGreaterThanOrEqual(0);
+        expect(reloaded.metadata).toEqual({ effectiveCostLimitUsd: 1.5 });
+      },
+    );
+
+    it(
+      'RACE REGRESSION: a late eager write must not stomp Waiting either',
+      { timeout: 15_000 },
+      async () => {
+        const externalThreadId = randomUUID();
+
+        const thread = await threadsService.upsertRunningThread(
+          baseUpsertPayload({
+            externalThreadId,
+            runningStartedAt: new Date('2026-04-01T10:00:00.000Z'),
+          }),
+        );
+        createdThreadIds.push(thread.id);
+
+        orm.em.clear();
+        const running = await reload(thread.id);
+        const patch = transitionService.computeTransition(
+          running,
+          ThreadStatus.Waiting,
+        );
+        await threadsDao.updateById(thread.id, patch);
+
+        orm.em.clear();
+        await threadsService.ensureThreadRow(
+          baseUpsertPayload({
+            externalThreadId,
+            runningStartedAt: new Date(),
+          }),
+        );
+
+        const reloaded = await reload(thread.id);
+        expect(reloaded.status).toBe(ThreadStatus.Waiting);
+      },
+    );
+
+    it(
+      'rejects non-Running status at runtime (timer-invariant guard)',
+      { timeout: 15_000 },
+      async () => {
+        await expect(
+          threadsService.ensureThreadRow({
+            graphId: sharedGraphId,
+            createdBy: TEST_USER_ID,
+            projectId: testProjectId,
+            externalThreadId: randomUUID(),
+            // Intentionally bypass the compile-time narrowing to hit the guard.
+            status: ThreadStatus.Done as typeof ThreadStatus.Running,
+            runningStartedAt: new Date(),
+            totalRunningMs: 0,
+          }),
+        ).rejects.toMatchObject({
+          errorCode: 'UPSERT_REQUIRES_RUNNING_STATUS',
+        });
+      },
+    );
+  });
 });

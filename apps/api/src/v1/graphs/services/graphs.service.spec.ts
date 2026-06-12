@@ -60,7 +60,7 @@ describe('GraphsService', () => {
   let notificationsService: NotificationsService;
   let graphRevisionService: GraphRevisionService;
   let threadsDao: ThreadsDao;
-  let threadsService: { upsertRunningThread: ReturnType<typeof vi.fn> };
+  let threadsService: { ensureThreadRow: ReturnType<typeof vi.fn> };
   let eventEmitter: EventEmitter2;
   let logger: DefaultLogger;
   let projectsDao: ProjectsDao;
@@ -230,7 +230,7 @@ describe('GraphsService', () => {
         {
           provide: THREADS_SERVICE_TOKEN,
           useValue: {
-            upsertRunningThread: vi.fn(),
+            ensureThreadRow: vi.fn(),
           },
         },
         {
@@ -2502,11 +2502,9 @@ describe('GraphsService', () => {
         return mockTrigger;
       };
 
-      it('should eagerly upsert thread by externalThreadId', async () => {
+      it('should eagerly create the thread row by externalThreadId (insert-only)', async () => {
         setupTriggerMocks();
-        vi.mocked(threadsService.upsertRunningThread).mockResolvedValue(
-          {} as any,
-        );
+        vi.mocked(threadsService.ensureThreadRow).mockResolvedValue({} as any);
 
         const result = await service.executeTrigger(
           mockCtx,
@@ -2520,7 +2518,7 @@ describe('GraphsService', () => {
         );
 
         expect(result.externalThreadId).toBe(expectedThreadId);
-        expect(threadsService.upsertRunningThread).toHaveBeenCalledWith({
+        expect(threadsService.ensureThreadRow).toHaveBeenCalledWith({
           graphId: mockGraphId,
           createdBy: mockUserId,
           projectId: 'project-123',
@@ -2532,11 +2530,9 @@ describe('GraphsService', () => {
         });
       });
 
-      it('should upsert (no-op merge) when thread already exists', async () => {
+      it('should leave the existing row untouched when thread already exists (insert-only)', async () => {
         setupTriggerMocks();
-        vi.mocked(threadsService.upsertRunningThread).mockResolvedValue(
-          {} as any,
-        );
+        vi.mocked(threadsService.ensureThreadRow).mockResolvedValue({} as any);
 
         const result = await service.executeTrigger(
           mockCtx,
@@ -2549,7 +2545,7 @@ describe('GraphsService', () => {
         );
 
         expect(result.externalThreadId).toBe(expectedThreadId);
-        expect(threadsService.upsertRunningThread).toHaveBeenCalledOnce();
+        expect(threadsService.ensureThreadRow).toHaveBeenCalledOnce();
       });
 
       it('should cancel resume job and clear wait metadata when thread is waiting', async () => {
@@ -2649,7 +2645,7 @@ describe('GraphsService', () => {
         vi.mocked(graphRegistry.getNode).mockReturnValue(
           mockTriggerNode as unknown as CompiledGraphNode,
         );
-        vi.mocked(threadsService.upsertRunningThread).mockResolvedValue({
+        vi.mocked(threadsService.ensureThreadRow).mockResolvedValue({
           id: 'thread-uuid',
           graphId: mockGraphId,
           externalThreadId: expectedThreadId,
@@ -2662,7 +2658,7 @@ describe('GraphsService', () => {
           threadSubId: 'my-thread',
         });
 
-        const upsertCall = vi.mocked(threadsService.upsertRunningThread).mock
+        const upsertCall = vi.mocked(threadsService.ensureThreadRow).mock
           .calls[0];
         expect(upsertCall).toBeDefined();
         const [upsertPayload] = upsertCall!;
@@ -2783,7 +2779,12 @@ describe('GraphsService', () => {
           other: 'keep-me',
           effectiveCostLimitUsd: 10,
         });
-        expect(update.status).toBeUndefined();
+        // Pre-invoke transition: the existing row leaves Stopped BEFORE the
+        // agent is invoked — ordering-safe vs the agent-event chain, and a
+        // caller polling right after executeTrigger cannot read the stale
+        // pre-run Stopped status.
+        expect(update.status).toBe(ThreadStatus.Running);
+        expect(update).toHaveProperty('runningStartedAt');
       });
 
       it('throws BadRequestException when current cost is still at or above limit', async () => {

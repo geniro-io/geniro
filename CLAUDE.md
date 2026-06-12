@@ -72,7 +72,7 @@ pnpm test:integration                 # Run the full integration suite (allowed 
 
 # Iteration tip: target a specific file with `pnpm test:integration <file>` to keep the loop tight.
 # The bulk run is fine for verification (e.g. before pushing). Files run in parallel
-# (5 workers, each with its own per-worker DB clone); within a file tests still run sequentially.
+# (5 workers locally, 3 on CI; each with its own per-worker DB clone); within a file tests still run sequentially.
 # The setup always boots ephemeral Postgres/Redis/Qdrant testcontainers and runs migrations
 # against the base DB before cloning per-worker databases.
 

@@ -812,7 +812,6 @@ export class GraphsService {
           string,
           unknown
         >;
-        let nextStatus: ThreadStatus | undefined;
 
         if (existingThread.status === ThreadStatus.Waiting) {
           // Cancel the pending resume job so the user's message takes over.
@@ -821,7 +820,6 @@ export class GraphsService {
               existingThread.id,
             );
             nextMetadata = clearWaitMetadata(existingThread.metadata) ?? {};
-            nextStatus = ThreadStatus.Running;
           } catch {
             // Best effort — the user message will proceed regardless
           }
@@ -861,7 +859,6 @@ export class GraphsService {
           }
 
           // Limit has been raised (or removed) — clear all cost-limit markers.
-          // Do NOT pre-set status: Running; the agent-run event flow sets status.
           delete (nextMetadata as { stopReason?: string }).stopReason;
           delete (nextMetadata as { stopCostUsd?: number }).stopCostUsd;
           delete (nextMetadata as { costLimitHit?: boolean }).costLimitHit;
@@ -873,27 +870,27 @@ export class GraphsService {
           nextMetadata as { effectiveCostLimitUsd?: number | null }
         ).effectiveCostLimitUsd = effectiveCostLimitUsd;
 
-        if (nextStatus === ThreadStatus.Running) {
-          // Compute the transition patch (sets runningStartedAt atomically alongside
-          // status) and merge with metadata for a single DB round trip — avoids the
-          // stale-drift window where status=Running but runningStartedAt=null.
-          const patch = this.transitionService.computeTransition(
-            existingThread,
-            ThreadStatus.Running,
-          );
-          await this.threadsDao.updateById(
-            existingThread.id,
-            { ...patch, metadata: nextMetadata },
-            em,
-          );
-        } else {
-          // No status transition — only refresh metadata (e.g. cost-limit fields).
-          await this.threadsDao.updateById(
-            existingThread.id,
-            { metadata: nextMetadata },
-            em,
-          );
-        }
+        // Pre-set Running for ANY existing thread before invoking the agent.
+        // This write is the ordering-safe point to take the thread out of its
+        // previous terminal status (Done/Stopped/NeedMoreInfo/Waiting): it
+        // strictly precedes execution, so the agent-event chain (invoke →
+        // Running, run → terminal) always lands after it and stays
+        // authoritative. The post-invoke eager write is insert-only
+        // (ensureThreadRow) and never touches this row — without the pre-set,
+        // a caller polling right after executeTrigger resolves could read the
+        // STALE pre-run terminal status and conclude the run already ended.
+        // computeTransition is idempotent for already-Running rows and sets
+        // runningStartedAt atomically alongside status — avoids the
+        // stale-drift window where status=Running but runningStartedAt=null.
+        const patch = this.transitionService.computeTransition(
+          existingThread,
+          ThreadStatus.Running,
+        );
+        await this.threadsDao.updateById(
+          existingThread.id,
+          { ...patch, metadata: nextMetadata },
+          em,
+        );
       });
     }
 
@@ -927,14 +924,18 @@ export class GraphsService {
       effectiveCostLimitUsd,
     };
 
-    // Eagerly upsert the thread row so the frontend can immediately load it.
-    // ThreadsService.upsertRunningThread merges only status/lastRunId/
-    // updatedAt/runningStartedAt/totalRunningMs on conflict, so a concurrent
-    // AgentInvokeNotificationHandler upsert and the upper transactional
-    // metadata update both remain authoritative for their respective fields —
-    // no PK race, no metadata stomp. eagerStartedAt seeds the runtime timer
-    // so the running clock includes agent-startup time.
-    await this.threadsService.upsertRunningThread({
+    // Eagerly create the thread row so the frontend can immediately load it.
+    // Insert-only (ensureThreadRow): this code runs AFTER invokeAgent has
+    // resolved, so for synchronous executions (async=false) the agent has
+    // already finished and the agent-event chain may have already written a
+    // terminal status (Done/Waiting/NeedMoreInfo). Transitioning an existing
+    // row back to Running here loses that write and strands the thread in
+    // Running forever — status authority over existing rows belongs to the
+    // event chain (AgentInvokeNotificationHandler flips Running at run start,
+    // ThreadUpdateNotificationHandler lands the terminal status). On the
+    // insert path eagerStartedAt still seeds the runtime timer so the running
+    // clock includes agent-startup time.
+    await this.threadsService.ensureThreadRow({
       graphId,
       createdBy: userId,
       projectId: graph.projectId,
