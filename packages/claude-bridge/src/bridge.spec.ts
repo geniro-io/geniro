@@ -83,6 +83,8 @@ function drainPrompt(
 interface BridgeHarness {
   /** Writes commands as a SINGLE stdin chunk (frames coalesced on purpose). */
   sendChunk: (commands: BridgeCommand[]) => void;
+  /** Writes raw bytes verbatim — for chunks that split a frame mid-line. */
+  sendRaw: (raw: string) => void;
   /** Parsed JSON protocol frames the bridge wrote to stdout so far. */
   protocolFrames: () => Record<string, unknown>[];
   /** stderr lines written by the bridge's own logger so far. */
@@ -136,6 +138,9 @@ async function bootBridge(): Promise<BridgeHarness> {
   return {
     sendChunk: (commands: BridgeCommand[]) => {
       stdin.write(commands.map((command) => serializeFrame(command)).join(''));
+    },
+    sendRaw: (raw: string) => {
+      stdin.write(raw);
     },
     protocolFrames: () => {
       const frames: Record<string, unknown>[] = [];
@@ -270,5 +275,73 @@ describe('bridge stdin command delivery', () => {
         diagnosticsAfterInjection,
       )})`,
     ).toBe(true);
+  });
+
+  it('completes a user_message whose frame is split across the start chunk and a later chunk', async () => {
+    const injectedText = 'frame split across the handshake boundary';
+    const promptTexts: string[] = [];
+
+    mocks.query.mockImplementation((args: QueryArgs) => {
+      drainPrompt(args.prompt, promptTexts);
+      return (async function* () {
+        await waitMs(75);
+        yield { type: 'result', subtype: 'success', session_id: 'session-1' };
+      })();
+    });
+
+    const harness = await bootBridge();
+
+    // The host's first pipe read ends mid-frame: `start\n` plus only the prefix
+    // of the user_message frame (no terminating newline). The remainder is held
+    // as the start parser's partial line, seeded into the running session, and
+    // completed by the second chunk.
+    const userFrame = serializeFrame({
+      type: 'user_message',
+      text: injectedText,
+    });
+    const splitAt = Math.floor(userFrame.length / 2);
+    const startFrame = serializeFrame({
+      type: 'start',
+      options: { prompt: 'initial turn prompt', model: 'claude-test' },
+    });
+
+    harness.sendRaw(startFrame + userFrame.slice(0, splitAt));
+    // Let main() resolve `start`, hand off to runSession, register its stdin
+    // listener, and seed the carried-over partial before the remainder lands.
+    await waitMs(10);
+    harness.sendRaw(userFrame.slice(splitAt));
+
+    await harness.exited;
+
+    expect(promptTexts).toContain('initial turn prompt');
+    expect(promptTexts).toContain(injectedText);
+  });
+
+  it('aborts (not completes) the session when an interrupt is coalesced into the start chunk', async () => {
+    const promptTexts: string[] = [];
+
+    mocks.query.mockImplementation((args: QueryArgs) => {
+      drainPrompt(args.prompt, promptTexts);
+      // A coalesced interrupt aborts before any turn output — empty stream.
+      return (async function* () {})();
+    });
+
+    const harness = await bootBridge();
+
+    harness.sendChunk([
+      {
+        type: 'start',
+        options: { prompt: 'initial turn prompt', model: 'claude-test' },
+      },
+      { type: 'interrupt' },
+    ]);
+
+    await harness.exited;
+
+    // The replayed interrupt must end the session as `aborted`, never `done` —
+    // a stopped thread must not complete a billable turn.
+    const frames = harness.protocolFrames();
+    expect(frames.some((frame) => frame.type === 'aborted')).toBe(true);
+    expect(frames.some((frame) => frame.type === 'done')).toBe(false);
   });
 });
