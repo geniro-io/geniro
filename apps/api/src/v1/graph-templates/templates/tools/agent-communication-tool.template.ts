@@ -7,11 +7,13 @@ import { z } from 'zod';
 
 import { BuiltAgentTool } from '../../../agent-tools/tools/base-tool';
 import { CommunicationToolGroup } from '../../../agent-tools/tools/common/communication/communication-tool-group';
-import { AgentInfo } from '../../../agent-tools/tools/common/communication/communication-tools.types';
+import {
+  AgentInfo,
+  CommunicationAgentResult,
+} from '../../../agent-tools/tools/common/communication/communication-tools.types';
 import type { RunnableAgent } from '../../../agents/agents.types';
 import { BaseAgentConfigurable } from '../../../agents/agents.types';
 import { extractExploredFilesFromMessages } from '../../../agents/agents.utils';
-import { AgentOutput } from '../../../agents/services/agents/base-agent';
 import { GraphNode, NodeKind } from '../../../graphs/graphs.types';
 import { parseStructuredContent } from '../../../graphs/graphs.utils';
 import { GraphRegistry } from '../../../graphs/services/graph-registry';
@@ -118,10 +120,10 @@ export class AgentCommunicationToolTemplate extends ToolNodeBaseTemplate<
             );
           }
 
-          const invokeAgent = async <T = AgentOutput>(
+          const invokeAgent = async (
             messages: string[],
             runnableConfig: ToolRunnableConfig<BaseAgentConfigurable>,
-          ): Promise<T> => {
+          ): Promise<CommunicationAgentResult> => {
             const currentAgentNode = this.graphRegistry.getNode<RunnableAgent>(
               metadata.graphId,
               agentNodeId,
@@ -221,7 +223,7 @@ export class AgentCommunicationToolTemplate extends ToolNodeBaseTemplate<
               threadId: response.threadId,
               checkpointNs: response.checkpointNs,
               ...(calleeUsage ? { calleeUsage } : {}),
-            } as T;
+            };
           };
 
           return {

@@ -271,7 +271,7 @@ export class ToolExecutorNode extends BaseNode<
               }
             : messageMetadata;
 
-          const content = formatToolOutputForLlm(output);
+          const content = formatToolOutputForLlm(output, this.maxOutputChars);
 
           if (content.length > this.maxOutputChars) {
             const trimmed = content.slice(0, this.maxOutputChars);

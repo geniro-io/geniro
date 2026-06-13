@@ -73,6 +73,33 @@ describe('JsonLineParser', () => {
 
     expect(parser.push(Buffer.from('{"ok":true}\n'))).toEqual([{ ok: true }]);
   });
+
+  it('discards an oversized newline-less partial line and re-syncs on the next frame', () => {
+    const parser = new JsonLineParser<{ ok: boolean }>();
+    const onInvalid = vi.fn();
+
+    // A hostile in-sandbox writer floods stdout with a newline-less stream:
+    // a >10M-char partial line would otherwise grow one JS string toward V8's
+    // limit and throw a RangeError synchronously inside the consumer's 'data'
+    // handler — uncaught in the API process. The guard must discard it without
+    // throwing, report it through onInvalidLine, and clear the buffer.
+    const flood = '{'.repeat(10_000_001);
+    const frames = parser.push(flood, onInvalid);
+
+    expect(frames).toEqual([]);
+    expect(onInvalid).toHaveBeenCalledOnce();
+
+    const [echo, error] = onInvalid.mock.calls[0]!;
+    // Echo is truncated — never the whole multi-MB flood in a log line.
+    expect(echo as string).toMatch(/…$/);
+    expect((echo as string).length).toBeLessThan(1000);
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toMatch(/exceeded .* chars — discarded/);
+
+    // Buffer cleared: a subsequent complete frame still parses (re-sync).
+    expect(parser.pending()).toBe('');
+    expect(parser.push('{"ok":true}\n', onInvalid)).toEqual([{ ok: true }]);
+  });
 });
 
 describe('serializeFrame', () => {

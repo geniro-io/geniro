@@ -37,14 +37,24 @@ function logErr(message: string): void {
   process.stderr.write(`[claude-bridge] ${message}\n`);
 }
 
+// Shared invalid-line reporter for every JsonLineParser.push on stdin. `line`
+// is a host→sandbox stdin byte sequence and the parser only hard-discards
+// lines past its 10M-char cap, so the echo is bounded here to keep a large
+// malformed line from flooding stderr (which the host logs).
+function logInvalidStdinLine(line: string, error: Error): void {
+  logErr(
+    `Ignoring invalid stdin line (${error.message}): ${line.slice(0, 200)}`,
+  );
+}
+
 class AsyncMessageQueue implements AsyncIterable<SDKUserMessage> {
   private readonly pending: SDKUserMessage[] = [];
   private resolveNext: (() => void) | null = null;
   private closed = false;
 
-  push(text: string): void {
+  push(text: string): boolean {
     if (this.closed) {
-      return;
+      return false;
     }
     this.pending.push({
       type: 'user',
@@ -53,6 +63,7 @@ class AsyncMessageQueue implements AsyncIterable<SDKUserMessage> {
       session_id: '',
     });
     this.resolveNext?.();
+    return true;
   }
 
   close(): void {
@@ -76,7 +87,16 @@ class AsyncMessageQueue implements AsyncIterable<SDKUserMessage> {
   }
 }
 
-async function runSession(options: BridgeStartOptions): Promise<void> {
+async function runSession(
+  options: BridgeStartOptions,
+  // Frames the start handshake read from the same pipe chunk(s) as `start`
+  // but could not consume itself: the commands parsed after `start`, plus the
+  // start parser's unconsumed partial line. Replayed here so an injection the
+  // host coalesced with `start` is never dropped (bridge.spec.ts coalesced
+  // user_message test).
+  pendingCommands: BridgeCommand[] = [],
+  pendingBuffer = '',
+): Promise<void> {
   const abortController = new AbortController();
   const inputQueue = new AsyncMessageQueue();
   inputQueue.push(options.prompt);
@@ -89,63 +109,92 @@ async function runSession(options: BridgeStartOptions): Promise<void> {
     'question',
   );
 
+  const handleCommand = (command: BridgeCommand): void => {
+    if (typeof command !== 'object' || command === null) {
+      logErr(`Ignoring non-object stdin frame: ${JSON.stringify(command)}`);
+      return;
+    }
+    if (command.type === 'interrupt' || command.type === 'shutdown') {
+      aborted = true;
+      inputQueue.close();
+      toolRequests.failAll('session aborted');
+      questionRequests.failAll('session aborted');
+      abortController.abort();
+    } else if (command.type === 'user_message') {
+      // The turn's `result` closes the input queue (one turn per process), but
+      // the SDK session can stay open afterwards. A user_message that lands in
+      // that window cannot be delivered into the closed queue — replay-only
+      // delivery, per the M2 accepted residue. Surface the drop instead of
+      // swallowing it silently so a lost injection is never a phantom.
+      const delivered = inputQueue.push(command.text);
+      if (!delivered) {
+        logErr(
+          `Dropped user_message — input queue closed after turn result: ${command.text.slice(
+            0,
+            200,
+          )}`,
+        );
+      }
+    } else if (command.type === 'tool_call_response') {
+      if (typeof command.id !== 'string') {
+        logErr('Ignoring tool_call_response without a string id');
+        return;
+      }
+      const matched = toolRequests.resolve(command.id, {
+        ...(typeof command.result === 'string' && {
+          result: command.result,
+        }),
+        ...(typeof command.error === 'string' && { error: command.error }),
+      });
+      if (!matched) {
+        logErr(`No pending tool call for id ${command.id}`);
+      }
+    } else if (command.type === 'question_response') {
+      if (typeof command.id !== 'string') {
+        logErr('Ignoring question_response without a string id');
+        return;
+      }
+      const matched = questionRequests.resolve(command.id, {
+        ...(Array.isArray(command.answers) && {
+          // map, not filter: answers align with questions BY INDEX, so an
+          // invalid entry must stay as an undefined hole — compacting it
+          // would shift every later answer onto the wrong question.
+          answers: command.answers.map((answer) =>
+            typeof answer === 'string' ? answer : undefined,
+          ),
+        }),
+        ...(typeof command.deny === 'boolean' && { deny: command.deny }),
+      });
+      if (!matched) {
+        logErr(`No pending question for id ${command.id}`);
+      }
+    } else {
+      logErr(`Ignoring unexpected command while running: ${command.type}`);
+    }
+  };
+
   const stdinParser = new JsonLineParser<BridgeCommand>();
   const onStdin = (chunk: Buffer) => {
-    const commands = stdinParser.push(chunk, (line, error) => {
-      logErr(`Ignoring invalid stdin line (${error.message}): ${line}`);
-    });
+    const commands = stdinParser.push(chunk, logInvalidStdinLine);
     for (const command of commands) {
-      if (typeof command !== 'object' || command === null) {
-        logErr(`Ignoring non-object stdin frame: ${JSON.stringify(command)}`);
-        continue;
-      }
-      if (command.type === 'interrupt' || command.type === 'shutdown') {
-        aborted = true;
-        inputQueue.close();
-        toolRequests.failAll('session aborted');
-        questionRequests.failAll('session aborted');
-        abortController.abort();
-      } else if (command.type === 'user_message') {
-        inputQueue.push(command.text);
-      } else if (command.type === 'tool_call_response') {
-        if (typeof command.id !== 'string') {
-          logErr('Ignoring tool_call_response without a string id');
-          continue;
-        }
-        const matched = toolRequests.resolve(command.id, {
-          ...(typeof command.result === 'string' && {
-            result: command.result,
-          }),
-          ...(typeof command.error === 'string' && { error: command.error }),
-        });
-        if (!matched) {
-          logErr(`No pending tool call for id ${command.id}`);
-        }
-      } else if (command.type === 'question_response') {
-        if (typeof command.id !== 'string') {
-          logErr('Ignoring question_response without a string id');
-          continue;
-        }
-        const matched = questionRequests.resolve(command.id, {
-          ...(Array.isArray(command.answers) && {
-            // map, not filter: answers align with questions BY INDEX, so an
-            // invalid entry must stay as an undefined hole — compacting it
-            // would shift every later answer onto the wrong question.
-            answers: command.answers.map((answer) =>
-              typeof answer === 'string' ? answer : undefined,
-            ),
-          }),
-          ...(typeof command.deny === 'boolean' && { deny: command.deny }),
-        });
-        if (!matched) {
-          logErr(`No pending question for id ${command.id}`);
-        }
-      } else {
-        logErr(`Ignoring unexpected command while running: ${command.type}`);
-      }
+      handleCommand(command);
     }
   };
   process.stdin.on('data', onStdin);
+
+  // Drain the carry-over from the start handshake before the SDK query begins
+  // consuming the input queue. Stream order is preserved: the commands that
+  // followed `start` in the chunk first, then the partial line seeded into
+  // this session's parser so a later chunk completes it.
+  for (const command of pendingCommands) {
+    handleCommand(command);
+  }
+  if (pendingBuffer) {
+    const carried = stdinParser.push(pendingBuffer, logInvalidStdinLine);
+    for (const command of carried) {
+      handleCommand(command);
+    }
+  }
 
   try {
     const session = query({
@@ -230,18 +279,22 @@ async function main(): Promise<void> {
   emit({ type: 'ready', protocolVersion: BRIDGE_PROTOCOL_VERSION });
 
   const startParser = new JsonLineParser<BridgeCommand>();
+  let pendingCommands: BridgeCommand[] = [];
   const start = await new Promise<BridgeStartOptions>((resolve, reject) => {
     const onData = (chunk: Buffer) => {
-      const commands = startParser.push(chunk, (line, error) => {
-        logErr(`Ignoring invalid stdin line (${error.message}): ${line}`);
-      });
-      for (const command of commands) {
+      const commands = startParser.push(chunk, logInvalidStdinLine);
+      for (let index = 0; index < commands.length; index += 1) {
+        const command = commands[index]!;
         if (typeof command !== 'object' || command === null) {
           logErr(`Ignoring non-object stdin frame: ${JSON.stringify(command)}`);
           continue;
         }
         if (command.type === 'start') {
           process.stdin.off('data', onData);
+          // Frames the host coalesced into the same pipe read after `start`
+          // (its back-to-back flush of buffered injections) are handed to the
+          // running session instead of being discarded with this handler.
+          pendingCommands = commands.slice(index + 1);
           resolve(command.options);
           return;
         }
@@ -259,7 +312,9 @@ async function main(): Promise<void> {
     process.stdin.on('data', onData);
   });
 
-  await runSession(start);
+  // startParser.pending() carries the unconsumed partial line (if the host's
+  // chunk ended mid-frame) so the running session can complete it.
+  await runSession(start, pendingCommands, startParser.pending());
 }
 
 void main()

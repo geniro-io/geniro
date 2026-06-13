@@ -166,7 +166,7 @@ export class ClaudeToolDispatcher {
           result.stateChange;
       }
 
-      const content = formatToolOutputForLlm(result.output);
+      const content = formatToolOutputForLlm(result.output, MAX_RESULT_CHARS);
       const text =
         content.length > MAX_RESULT_CHARS
           ? `${content.slice(0, MAX_RESULT_CHARS)}\n\n[output trimmed to ${MAX_RESULT_CHARS} characters from ${content.length}]`

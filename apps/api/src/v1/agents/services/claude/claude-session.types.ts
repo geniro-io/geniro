@@ -5,15 +5,19 @@ export const CLAUDE_PLUGINS_DIR = `${CLAUDE_INSTALL_DIR}/plugins`;
 
 /**
  * Tools that only make sense inside a Geniro agent loop (turn control,
- * dynamic tool loading, subagent/peer dispatch) — never forwarded into a
- * Claude SDK session, per the spec's forbidden actions. The SDK session has
- * its own turn lifecycle and subagent mechanics; forwarding these would hand
- * the sandboxed model control over host-side agent orchestration.
+ * dynamic tool loading, subagent/peer listing and dispatch) — never forwarded
+ * into a Claude SDK session, per the spec's forbidden actions. The SDK session
+ * has its own turn lifecycle and subagent mechanics; forwarding these would
+ * hand the sandboxed model control over host-side agent orchestration.
+ * `subagents_list` is excluded alongside `subagents_run_task`: surfacing
+ * subagents the SDK session cannot invoke is a fail-open leak across the trust
+ * boundary, not a useful capability.
  */
 export const CLAUDE_AGENT_CONTEXT_BOUND_TOOLS: ReadonlySet<string> = new Set([
   'finish',
   'wait_for',
   'tool_search',
+  'subagents_list',
   'subagents_run_task',
   'communication_exec',
 ]);

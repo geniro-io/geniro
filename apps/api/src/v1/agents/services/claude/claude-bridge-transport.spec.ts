@@ -92,6 +92,56 @@ describe('ClaudeBridgeTransport', () => {
     transport.close();
   });
 
+  it('fails the transport instead of letting a throwing message handler escape the stdout data handler', async () => {
+    // The catch in onStdout is the last guard keeping a throwing handler from
+    // escaping a runtime stream's 'data' handler uncaught in the API process.
+    // A handler crash must become a graceful transport-fail, not a blast.
+    const transport = await startTransport();
+
+    handlers.onSdkMessage.mockImplementation(() => {
+      throw new Error('handler boom');
+    });
+
+    expect(() =>
+      stdout.emit(
+        'data',
+        Buffer.from(
+          serializeFrame({
+            type: 'sdk_message',
+            message: { type: 'assistant', session_id: 's-1' },
+          }),
+        ),
+      ),
+    ).not.toThrow();
+
+    expect(handlers.onFatal).toHaveBeenCalledTimes(1);
+    expect(handlers.onFatal).toHaveBeenCalledWith(
+      expect.stringContaining('bridge stdout processing error'),
+    );
+    expect(handlers.onFatal.mock.calls[0]![0]).toContain('handler boom');
+
+    // After the fatal, the `finished` latch must suppress further frames: a
+    // second sandbox-controlled stdout frame neither re-fires onFatal nor
+    // reaches the (still-throwing) handler again.
+    const sdkCallsAtFatal = handlers.onSdkMessage.mock.calls.length;
+    expect(() =>
+      stdout.emit(
+        'data',
+        Buffer.from(
+          serializeFrame({
+            type: 'sdk_message',
+            message: { type: 'assistant', session_id: 's-2' },
+          }),
+        ),
+      ),
+    ).not.toThrow();
+
+    expect(handlers.onFatal).toHaveBeenCalledTimes(1);
+    expect(handlers.onSdkMessage.mock.calls.length).toBe(sdkCallsAtFatal);
+
+    transport.close();
+  });
+
   it('rejects waitReady and closes the streams when the ready frame never arrives', async () => {
     vi.useFakeTimers();
     try {

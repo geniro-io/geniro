@@ -525,11 +525,26 @@ export function buildReasoningMessage(
  * Canonical tool-output → LLM-visible-string conversion (ToolExecutorNode and
  * the Claude tool dispatcher must format identically). JSON-shaped outputs are
  * re-serialized as YAML — fewer tokens, equally parseable for the model.
+ *
+ * `maxChars`, when supplied, is the caller's downstream output cap. A raw JSON
+ * string already past `2 * maxChars` would be trimmed by the caller regardless,
+ * and trimmed JSON is exactly as (un)parseable for the model as trimmed YAML —
+ * so the full `JSON.parse` + YAML re-serialize (hundreds of ms of blocked event
+ * loop on a multi-MB tool output, stalling the dispatcher's serialized queue)
+ * is skipped. The `2x` band still converts borderline outputs where YAML
+ * compaction could bring them back under the cap.
  */
-export function formatToolOutputForLlm(output: unknown): string {
+export function formatToolOutputForLlm(
+  output: unknown,
+  maxChars?: number,
+): string {
   if (typeof output === 'string') {
     const trimmed = output.trim();
     if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) {
+      return output;
+    }
+
+    if (maxChars !== undefined && output.length > 2 * maxChars) {
       return output;
     }
 
@@ -545,6 +560,10 @@ export function formatToolOutputForLlm(output: unknown): string {
     }
   }
 
+  // The maxChars short-circuit above is string-only by design: an already
+  // parsed object/array has no raw string to fall back to (skipping the
+  // serialize would leave the caller nothing to trim), so only the
+  // unavoidable YAML serialization cost remains here.
   if (isPlainObject(output) || Array.isArray(output)) {
     return stringifyYaml(output).trimEnd();
   }

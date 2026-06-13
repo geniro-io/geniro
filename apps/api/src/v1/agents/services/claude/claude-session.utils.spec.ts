@@ -73,6 +73,7 @@ describe('isToolForwardableToClaude', () => {
     'finish',
     'wait_for',
     'tool_search',
+    'subagents_list',
     'subagents_run_task',
     'communication_exec',
   ])('never forwards agent-context-bound tool %s', (name) => {
@@ -92,7 +93,6 @@ describe('isToolForwardableToClaude', () => {
     'web_search',
     'gh_clone',
     'thread_store_get',
-    'subagents_list',
   ])('forwards regular Geniro tool %s', (name) => {
     expect(isToolForwardableToClaude(name)).toBe(true);
   });

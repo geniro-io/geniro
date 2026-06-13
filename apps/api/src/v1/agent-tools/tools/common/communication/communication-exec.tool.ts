@@ -5,7 +5,6 @@ import dedent from 'dedent';
 import { z } from 'zod';
 
 import { BaseAgentConfigurable } from '../../../../agents/agents.types';
-import type { RequestTokenUsage } from '../../../../litellm/litellm.types';
 import {
   BaseTool,
   ExtendedLangGraphRunnableConfig,
@@ -285,10 +284,8 @@ export class CommunicationExecTool extends BaseTool<
       // The callee's aggregate spend is a transport field, not part of the
       // response the model reads: strip it from `output` and report it as
       // this tool's own usage so the executor folds it into caller state.
-      const { calleeUsage, ...visibleOutput } = output as Record<
-        string,
-        unknown
-      > & { calleeUsage?: RequestTokenUsage };
+      // `calleeUsage` is a typed field on CommunicationAgentResult — no cast.
+      const { calleeUsage, ...visibleOutput } = output;
       return {
         output: visibleOutput,
         ...(calleeUsage ? { toolRequestUsage: calleeUsage } : {}),
