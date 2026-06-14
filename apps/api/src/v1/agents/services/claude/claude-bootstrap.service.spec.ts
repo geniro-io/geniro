@@ -491,28 +491,72 @@ describe('ClaudeBootstrapService', () => {
   });
 
   describe('configureGitAuth', () => {
+    // The marker gate calls `test -f <marker>` first; a 0 there short-circuits
+    // before the git/gh config exec. Make the marker absent so the config runs.
+    const markerAbsent = () =>
+      exec.mockImplementation(async (params: { cmd: string | string[] }) => {
+        const cmd = Array.isArray(params.cmd)
+          ? params.cmd.join(' && ')
+          : params.cmd;
+        if (cmd.startsWith('test -f') && cmd.includes('.git-auth-configured')) {
+          return { exitCode: 1, fail: false, stderr: '' };
+        }
+        return { exitCode: 0, fail: false, stderr: '' };
+      });
+    // The config exec is the one carrying the credential helper — call[0] is now
+    // the marker probe, so find the setup call by content.
+    const setupCall = () =>
+      exec.mock.calls.find((c) =>
+        String(c[0]?.cmd).includes('credential.helper'),
+      );
+
     it('installs the credential helper and a baseline git identity in one exec', async () => {
+      markerAbsent();
       await service.configureGitAuth(runtime);
 
-      expect(exec).toHaveBeenCalledTimes(1);
-      const cmd = String(exec.mock.calls[0]![0].cmd);
+      const cmd = String(setupCall()![0].cmd);
       expect(cmd).toContain('credential.helper');
       expect(cmd).toContain('user.name "Geniro Bot"');
       expect(cmd).toContain('git_protocol https');
     });
 
     it('references GH_TOKEN lazily and never bakes a token into the command', async () => {
+      markerAbsent();
       await service.configureGitAuth(runtime);
 
       // The helper must resolve ${GH_TOKEN} from the session env at git time,
       // not embed a resolved credential — the token lives only in the env, so
       // it must never reach the configured command (and thus never a log line).
-      const cmd = String(exec.mock.calls[0]![0].cmd);
+      const cmd = String(setupCall()![0].cmd);
       expect(cmd).toContain('${GH_TOKEN}');
       expect(cmd).not.toMatch(/gh[ps]_/);
     });
 
+    it('skips the git/gh config exec when the version marker is already present', async () => {
+      // Default beforeEach mock: every exec (incl. the `test -f` marker probe)
+      // returns 0 → the marker is present → only the probe runs.
+      await service.configureGitAuth(runtime);
+
+      expect(exec).toHaveBeenCalledTimes(1);
+      expect(String(exec.mock.calls[0]![0].cmd)).toContain(
+        '.git-auth-configured',
+      );
+      expect(setupCall()).toBeUndefined();
+    });
+
+    it('touches the marker last so it only lands after a successful config', async () => {
+      markerAbsent();
+      await service.configureGitAuth(runtime);
+
+      const cmd = String(setupCall()![0].cmd);
+      expect(cmd).toContain('touch ');
+      // The touch is appended after the config commands in the same && chain.
+      expect(cmd.indexOf('touch ')).toBeGreaterThan(cmd.indexOf('user.email'));
+    });
+
     it('warns but does not throw when the git config exec fails', async () => {
+      // Every exec → exitCode 1: the marker probe reads "absent" (1), so the
+      // config exec runs and also fails (1) → warn path, no throw.
       exec.mockResolvedValue({ exitCode: 1, fail: true, stderr: 'boom' });
 
       await expect(service.configureGitAuth(runtime)).resolves.toBeUndefined();

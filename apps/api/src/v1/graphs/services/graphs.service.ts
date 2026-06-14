@@ -53,6 +53,21 @@ import { GraphCompiler } from './graph-compiler';
 import { GraphRegistry } from './graph-registry';
 import { GraphRevisionService } from './graph-revision.service';
 
+/**
+ * Snapshot of a previously-terminal thread captured before executeTrigger's
+ * pre-set Running, used to roll the row back if invokeAgent rejects before the
+ * agent-event chain can land a status. Includes the ORIGINAL metadata so a
+ * restore re-arms the cost-limit resume guard (the pre-set may clear its
+ * markers).
+ */
+type StrandedRestore = {
+  id: string;
+  status: ThreadStatus;
+  runningStartedAt: Date | null;
+  totalRunningMs: number;
+  metadata: Record<string, unknown>;
+};
+
 @Injectable()
 export class GraphsService {
   constructor(
@@ -775,6 +790,14 @@ export class GraphsService {
       graphId,
     );
 
+    // A mutable holder, not a bare `let`: the snapshot is assigned inside the
+    // transaction's closure, and a bare let written only in a closure stays
+    // narrowed to its initializer (`null`) at the catch site. It records a
+    // previously-terminal row so a synchronous invokeAgent failure can restore
+    // it instead of leaving it stranded in the pre-set Running status (see the
+    // try/catch around invokeAgent).
+    const strandedRestore: { value: StrandedRestore | null } = { value: null };
+
     if (dto.threadSubId) {
       // Wrap the entire "existing thread" branch in a pessimistic-write
       // transaction to prevent TOCTOU races where two concurrent requests
@@ -806,6 +829,31 @@ export class GraphsService {
 
         if (!existingThread) {
           return;
+        }
+
+        // Snapshot a previously-terminal row before the pre-set Running below.
+        // That pre-set takes EVERY existing thread to Running, but the
+        // agent-event chain that normally lands a terminal status never fires
+        // if invokeAgent rejects before the run starts (runtime provisioning
+        // failure, compile error) — which would otherwise strand the thread
+        // Running with a live timer. Only terminal statuses need rescue:
+        // Waiting cancels its own resume job below, and Running is owned by the
+        // event chain. Self-heals on the next successful run regardless.
+        if (
+          existingThread.status === ThreadStatus.Done ||
+          existingThread.status === ThreadStatus.NeedMoreInfo ||
+          existingThread.status === ThreadStatus.Stopped
+        ) {
+          strandedRestore.value = {
+            id: existingThread.id,
+            status: existingThread.status,
+            runningStartedAt: existingThread.runningStartedAt ?? null,
+            totalRunningMs: Number(existingThread.totalRunningMs ?? 0),
+            // The ORIGINAL metadata, copied before the cost-limit branch below
+            // may clear stopReason/stopCostUsd/costLimitHit. Restoring it re-arms
+            // the cost-limit resume guard for the next attempt.
+            metadata: { ...(existingThread.metadata ?? {}) },
+          };
         }
 
         let nextMetadata = { ...(existingThread.metadata ?? {}) } as Record<
@@ -898,15 +946,41 @@ export class GraphsService {
     // includes agent startup time (connection setup, queue drain, etc.) —
     // using new Date() after awaiting invokeAgent would undercount elapsed ms.
     const eagerStartedAt = new Date();
-    const res = await trigger.invokeAgent(messages, {
-      configurable: {
-        thread_id: dto.threadSubId,
-        async: dto.async,
-        thread_metadata: dto.metadata,
-        thread_created_by: userId,
-        effective_cost_limit_usd: effectiveCostLimitUsd,
-      },
-    });
+    let res: Awaited<ReturnType<NonNullable<BaseTrigger['invokeAgent']>>>;
+    try {
+      res = await trigger.invokeAgent(messages, {
+        configurable: {
+          thread_id: dto.threadSubId,
+          async: dto.async,
+          thread_metadata: dto.metadata,
+          thread_created_by: userId,
+          effective_cost_limit_usd: effectiveCostLimitUsd,
+        },
+      });
+    } catch (err) {
+      // invokeAgent rejected before the agent-event chain could land a status,
+      // so a pre-set-Running thread would be stranded Running with a live timer.
+      // Roll the row back to its captured terminal snapshot, then rethrow. The
+      // restore is best-effort: a failed restore must not mask the original
+      // error — the row self-heals on the next successful run regardless.
+      const restore = strandedRestore.value;
+      if (restore) {
+        try {
+          await this.threadsDao.updateById(restore.id, {
+            status: restore.status,
+            runningStartedAt: restore.runningStartedAt,
+            totalRunningMs: restore.totalRunningMs,
+            metadata: restore.metadata,
+          });
+        } catch (restoreErr) {
+          this.logger.warn(
+            `Failed to restore stranded thread ${restore.id} after invokeAgent error`,
+            { restoreErr },
+          );
+        }
+      }
+      throw err;
+    }
 
     const externalThreadId = res.threadId;
 

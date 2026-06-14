@@ -91,3 +91,16 @@ export interface InstallationUnlinkedEvent {
 }
 
 export const INSTALLATION_UNLINKED_EVENT = 'installation.unlinked';
+
+/**
+ * Git credential helper that feeds the session's `GH_TOKEN` to git over HTTPS
+ * (username `x-access-token`). The helper resolves `${GH_TOKEN}` lazily at
+ * git-invocation time, so the token is never baked into the configured command
+ * — it lives only in the process/session env (and thus never in a log line).
+ * Shared by every site that wires native git auth inside a sandbox
+ * (`ClaudeBootstrapService.configureGitAuth`, the `GithubResource` init script)
+ * so a hardening/escaping change lands in exactly one place instead of drifting
+ * between byte-identical copies.
+ */
+export const GIT_CREDENTIAL_HELPER_CONFIG =
+  'git config --global credential.helper \'!f() { test "$1" = get && echo "protocol=https" && echo "host=github.com" && echo "username=x-access-token" && echo "password=${GH_TOKEN}"; }; f\'';

@@ -269,11 +269,17 @@ export class ClaudeAgent
         },
       });
       virtualKey = issued.key;
-      // The thread owner's default GitHub App installation token authenticates
-      // Claude's native gh/git (same resolver the proxied gh_* tools use). It
-      // is owner-scoped, not repo-scoped, because the agent may touch any repo
-      // the owner can reach. Absent (no GitHub App / no linked install) leaves
-      // native GitHub access unauthenticated.
+      // Resolve the GitHub App installation token that authenticates Claude's
+      // native gh/git (same resolver the proxied gh_* tools use). Prefer the
+      // thread owner, then fall back to the graph owner so triggered/ownerless
+      // runs (e.g. the github-issues webhook, where thread_created_by is unset)
+      // still get native auth — acceptable under the current trusted-runtime
+      // model, where all runtimes run trusted code and the token is not exposed
+      // to an adversary. The token is owner-scoped, not repo-scoped, and
+      // resolves to ONE arbitrary active install: a multi-install owner gets
+      // native gh/git scoped to a single org, with the rest still reachable via
+      // the proxied gh_* tools. When neither owner resolves a token, native
+      // GitHub access is left unauthenticated and gh_* remains the only path.
       const ownerUserId =
         configurable.thread_created_by ?? configurable.graph_created_by;
       const githubToken = ownerUserId
@@ -386,10 +392,15 @@ export class ClaudeAgent
             onFatal: (error) => resolve({ kind: 'fatal', error }),
             onActivity: toucher,
             onToolCallRequest: (request) => dispatcher.dispatch(request),
-            // Top-level mode: the question ends the turn (NeedMoreInfo); the
-            // user's answer resumes the same SDK session on the next run.
-            // Interrupting leaves the bridge's pending question unresolved on
-            // purpose — failAll settles it once the session aborts.
+            // Both top-level AND subagent/peer questions route through here in
+            // M2: the question ends the turn (NeedMoreInfo) and the user's
+            // answer resumes the same SDK session on the next run. There is no
+            // subagent branch yet — milestone-2 step 3's "parent answers while
+            // the query continues" (driving the bridge's in-session
+            // question_response primitive) is deferred to M3; M2 ships
+            // escalate-and-resume for both modes. Interrupting leaves the
+            // bridge's pending question unresolved on purpose — failAll settles
+            // it once the session aborts.
             // Known cost residue (shared with the M1 user-stop abort): an
             // aborted query emits no `result` frame, so the interrupted
             // turn's LLM spend never reaches the message rollup — the

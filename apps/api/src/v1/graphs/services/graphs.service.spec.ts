@@ -2069,6 +2069,131 @@ describe('GraphsService', () => {
   });
 
   describe('executeTrigger', () => {
+    // Shared wiring for the invokeAgent-rejects scenarios: a started trigger
+    // whose invokeAgent throws synchronously, a running graph, and the given
+    // existing thread row.
+    const wireRejectingTrigger = (
+      existingThread: Record<string, unknown>,
+    ): string => {
+      const triggerId = 'trigger-1';
+      const mockGraph = createMockGraphEntity({
+        status: GraphStatus.Running,
+        schema: {
+          nodes: [
+            {
+              id: triggerId,
+              template: 'manual-trigger',
+              config: { agentId: 'agent-1' },
+            },
+          ],
+          edges: [],
+        },
+      });
+      const mockTrigger = {
+        isStarted: true,
+        invokeAgent: vi
+          .fn()
+          .mockRejectedValue(new Error('runtime provisioning failed')),
+      };
+      const mockTriggerNode = {
+        id: triggerId,
+        type: NodeKind.Trigger,
+        template: 'manual-trigger',
+        instance: mockTrigger,
+        handle: {
+          provide: async () => mockTrigger,
+          configure: vi.fn().mockResolvedValue(undefined),
+          destroy: vi.fn().mockResolvedValue(undefined),
+        },
+        getStatus: vi.fn().mockReturnValue(GraphNodeStatus.Idle),
+      };
+      vi.mocked(threadsDao.getOne).mockResolvedValue(existingThread as never);
+      vi.mocked(graphDao.getOne).mockResolvedValue(mockGraph);
+      vi.mocked(graphRegistry.get).mockReturnValue(createMockCompiledGraph());
+      vi.mocked(graphRegistry.getNode).mockReturnValue(
+        mockTriggerNode as unknown as CompiledGraphNode,
+      );
+      return triggerId;
+    };
+
+    const rejectingExecute = (triggerId: string): Promise<void> =>
+      expect(
+        service.executeTrigger(mockCtx, mockGraphId, triggerId, {
+          messages: ['hi'],
+          threadSubId: 'recover-thread',
+          async: true,
+        }),
+      ).rejects.toThrow('runtime provisioning failed');
+
+    it('restores a previously-terminal thread instead of stranding it Running when invokeAgent rejects', async () => {
+      // Existing terminal (Done) row with accumulated running time and a null
+      // running timer. The pre-set takes it to Running before invokeAgent runs;
+      // a synchronous invokeAgent rejection must roll it back, not leave it
+      // stranded Running.
+      const triggerId = wireRejectingTrigger({
+        id: 'thread-row-9',
+        status: ThreadStatus.Done,
+        runningStartedAt: null,
+        totalRunningMs: 4321,
+        metadata: {},
+      });
+
+      await rejectingExecute(triggerId);
+
+      // Rolled back to the captured terminal snapshot — not Running, no live
+      // timer.
+      expect(threadsDao.updateById).toHaveBeenCalledWith('thread-row-9', {
+        status: ThreadStatus.Done,
+        runningStartedAt: null,
+        totalRunningMs: 4321,
+        metadata: {},
+      });
+      // The eager insert-only create is downstream of invokeAgent, so it never
+      // runs on the failure path.
+      expect(threadsService.ensureThreadRow).not.toHaveBeenCalled();
+    });
+
+    it('restores the original cost-limit markers when a resumed cost-limited thread fails to start', async () => {
+      // A Stopped+cost_limit row whose limit was raised (resolveForThread → null
+      // here): the transaction clears the markers and pre-sets Running. If
+      // invokeAgent then rejects, the restore must put the ORIGINAL markers back
+      // so the cost-limit resume guard re-arms for the next attempt — otherwise
+      // the thread would silently resume unguarded.
+      const triggerId = wireRejectingTrigger({
+        id: 'thread-row-cost',
+        status: ThreadStatus.Stopped,
+        runningStartedAt: null,
+        totalRunningMs: 100,
+        metadata: { stopReason: 'cost_limit', stopCostUsd: 0.5 },
+      });
+
+      await rejectingExecute(triggerId);
+
+      expect(threadsDao.updateById).toHaveBeenCalledWith('thread-row-cost', {
+        status: ThreadStatus.Stopped,
+        runningStartedAt: null,
+        totalRunningMs: 100,
+        metadata: { stopReason: 'cost_limit', stopCostUsd: 0.5 },
+      });
+    });
+
+    it('does not roll back a non-terminal existing thread when invokeAgent rejects', async () => {
+      // A Running row is owned by the event chain, not the restore path: the
+      // snapshot is terminal-only, so the catch performs NO rollback write —
+      // only the single pre-set Running write happens.
+      const triggerId = wireRejectingTrigger({
+        id: 'thread-row-run',
+        status: ThreadStatus.Running,
+        runningStartedAt: new Date(),
+        totalRunningMs: 0,
+        metadata: {},
+      });
+
+      await rejectingExecute(triggerId);
+
+      expect(threadsDao.updateById).toHaveBeenCalledTimes(1);
+    });
+
     it('should execute trigger in async mode, pass flag, and return thread info', async () => {
       const triggerId = 'trigger-1';
       const agentId = 'agent-1';

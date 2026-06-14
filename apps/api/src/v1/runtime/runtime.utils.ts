@@ -16,11 +16,20 @@ const SAFE_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
  * `DOCKER_SOCKET`) previously failed with `ENOENT /var/run/docker.sock`. The
  * integration global-setup already relies on this same `new Docker()` env
  * resolution.
+ *
+ * `dockerSocket` is typed to admit `boolean` because `getEnv('DOCKER_SOCKET')`
+ * coerces magic values (`true`/`1`/`on`/`false`/`0`/`off`) to a boolean at
+ * runtime — so a non-string can reach here. A `typeof` check is required:
+ * optional chaining (`?.trim()`) guards only null/undefined and would throw
+ * `TypeError: trim is not a function` on a coerced boolean, crashing every
+ * Docker runtime creation. A non-string is treated as "unset" → defer to
+ * dockerode's standard resolution.
  */
 export function resolveDockerOptions(env: {
-  dockerSocket?: string | null;
+  dockerSocket?: string | boolean | null;
 }): Record<string, unknown> | undefined {
-  const socketPath = env.dockerSocket?.trim();
+  const raw = env.dockerSocket;
+  const socketPath = typeof raw === 'string' ? raw.trim() : undefined;
   return socketPath ? { socketPath } : undefined;
 }
 

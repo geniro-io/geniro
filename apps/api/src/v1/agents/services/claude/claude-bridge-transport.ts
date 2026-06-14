@@ -25,7 +25,14 @@ export type ClaudeBridgeHandlers = {
   onActivity?: () => void;
   /** Proxied Geniro tool invocation; reply via send({type: 'tool_call_response', ...}). */
   onToolCallRequest?: (request: ClaudeToolCallRequest) => void;
-  /** Intercepted AskUserQuestion; reply via send({type: 'question_response', ...}). */
+  /**
+   * Intercepted AskUserQuestion. M2 routes every question as escalate-and-resume
+   * (interrupt the turn → NeedMoreInfo → the user's answer resumes the session
+   * on the next run), so the host does NOT drive the in-session
+   * `question_response` reply path. That bridge command is the forward-compat
+   * primitive for M3's "parent answers while the query continues" subagent flow
+   * — kept and protocol-tested, but no host code sends it yet.
+   */
   onQuestionRequest?: (request: ClaudeQuestionRequest) => void;
 };
 

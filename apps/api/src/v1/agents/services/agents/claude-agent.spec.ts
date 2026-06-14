@@ -67,6 +67,7 @@ describe('ClaudeAgent', () => {
     getAll: ReturnType<typeof vi.fn>;
   };
   let runtimeProvider: RuntimeThreadProvider;
+  let gitTokenResolver: { resolveDefaultToken: ReturnType<typeof vi.fn> };
 
   let startSpy: ReturnType<typeof vi.spyOn>;
   let capturedHandlers: ClaudeBridgeHandlers | undefined;
@@ -119,9 +120,9 @@ describe('ClaudeAgent', () => {
       createToucher: vi.fn().mockReturnValue(vi.fn()),
     } as unknown as ClaudeKeepaliveService;
 
-    const gitTokenResolver = {
+    gitTokenResolver = {
       resolveDefaultToken: vi.fn().mockResolvedValue(null),
-    } as unknown as GitTokenResolverService;
+    };
 
     agent = new ClaudeAgent(
       mockDeep<DefaultLogger>(),
@@ -131,7 +132,7 @@ describe('ClaudeAgent', () => {
       liteLlmClient as unknown as LiteLlmClient,
       threadsDao as unknown as ThreadsDao,
       messagesDao as unknown as MessagesDao,
-      gitTokenResolver,
+      gitTokenResolver as unknown as GitTokenResolverService,
     );
     agent.setConfig(AGENT_CONFIG);
     agent.setRuntimeProvider(runtimeProvider);
@@ -164,11 +165,16 @@ describe('ClaudeAgent', () => {
 
   const runnableConfig = (
     costLimitUsd?: number,
+    created?: { thread?: string; graph?: string },
   ): RunnableConfig<BaseAgentConfigurable> => ({
     configurable: {
       thread_id: THREAD_ID,
       graph_id: 'g-1',
       node_id: 'claude-1',
+      ...(created?.thread !== undefined && {
+        thread_created_by: created.thread,
+      }),
+      ...(created?.graph !== undefined && { graph_created_by: created.graph }),
       ...(costLimitUsd !== undefined && {
         effective_cost_limit_usd: costLimitUsd,
       }),
@@ -183,12 +189,13 @@ describe('ClaudeAgent', () => {
    */
   const startRunAndOpenBridge = async (
     costLimitUsd?: number,
+    created?: { thread?: string; graph?: string },
   ): Promise<{ runPromise: ReturnType<ClaudeAgent['run']> }> => {
     const runPromise = agent.run(
       THREAD_ID,
       [new HumanMessage('hi')],
       undefined,
-      runnableConfig(costLimitUsd),
+      runnableConfig(costLimitUsd, created),
     );
     await vi.waitFor(() => expect(startSpy).toHaveBeenCalled());
     releaseTransportStart();
@@ -562,5 +569,79 @@ describe('ClaudeAgent', () => {
 
     capturedHandlers!.onDone('sess-1');
     await runPromise;
+  });
+
+  /**
+   * Native gh/git auth wiring in run(): resolve the owner's GitHub App token,
+   * inject it as GH_TOKEN into the session env, and configure git auth only
+   * when a token resolved. The whole branch is dead unless a created_by id is
+   * present, so these pin the production-reachable shape (graph-compiler /
+   * graphs.service populate the owner) that the other tests leave undriven.
+   */
+  describe('native gh/git auth wiring', () => {
+    const startEnv = () =>
+      (startSpy.mock.calls[0]![0] as { env: Record<string, string> }).env;
+
+    it('injects the resolved owner token as GH_TOKEN and configures git auth', async () => {
+      gitTokenResolver.resolveDefaultToken.mockResolvedValue({
+        token: 'ghs_x',
+      });
+
+      const { runPromise } = await startRunAndOpenBridge(undefined, {
+        thread: 'user-thread',
+      });
+      capturedHandlers!.onDone('sess-1');
+      await runPromise;
+
+      expect(gitTokenResolver.resolveDefaultToken).toHaveBeenCalledWith(
+        'user-thread',
+      );
+      expect(bootstrap.configureGitAuth).toHaveBeenCalledTimes(1);
+      expect(startEnv().GH_TOKEN).toBe('ghs_x');
+    });
+
+    it('skips git-auth config and GH_TOKEN when the owner resolves no token', async () => {
+      // resolveDefaultToken default → null.
+      const { runPromise } = await startRunAndOpenBridge(undefined, {
+        thread: 'user-thread',
+      });
+      capturedHandlers!.onDone('sess-1');
+      await runPromise;
+
+      expect(gitTokenResolver.resolveDefaultToken).toHaveBeenCalledWith(
+        'user-thread',
+      );
+      expect(bootstrap.configureGitAuth).not.toHaveBeenCalled();
+      expect(startEnv().GH_TOKEN).toBeUndefined();
+    });
+
+    it('never resolves a token when neither owner id is present', async () => {
+      const { runPromise } = await startRunAndOpenBridge();
+      capturedHandlers!.onDone('sess-1');
+      await runPromise;
+
+      expect(gitTokenResolver.resolveDefaultToken).not.toHaveBeenCalled();
+      expect(bootstrap.configureGitAuth).not.toHaveBeenCalled();
+      expect(startEnv().GH_TOKEN).toBeUndefined();
+    });
+
+    it('prefers the thread owner over the graph owner', async () => {
+      gitTokenResolver.resolveDefaultToken.mockResolvedValue({
+        token: 'ghs_thread',
+      });
+
+      const { runPromise } = await startRunAndOpenBridge(undefined, {
+        thread: 'user-thread',
+        graph: 'user-graph',
+      });
+      capturedHandlers!.onDone('sess-1');
+      await runPromise;
+
+      expect(gitTokenResolver.resolveDefaultToken).toHaveBeenCalledTimes(1);
+      expect(gitTokenResolver.resolveDefaultToken).toHaveBeenCalledWith(
+        'user-thread',
+      );
+      expect(startEnv().GH_TOKEN).toBe('ghs_thread');
+    });
   });
 });

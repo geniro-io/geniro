@@ -2,7 +2,10 @@ import { Injectable, Scope } from '@nestjs/common';
 import { DefaultLogger } from '@packages/common';
 import outdent from 'outdent';
 
-import { GitProvider } from '../../git-auth/git-auth.types';
+import {
+  GIT_CREDENTIAL_HELPER_CONFIG,
+  GitProvider,
+} from '../../git-auth/git-auth.types';
 import { GitTokenResolverService } from '../../git-auth/services/git-token-resolver.service';
 import {
   IShellResourceOutput,
@@ -85,11 +88,7 @@ export class GithubResource extends BaseResource<
         initScriptTimeout: 300000,
         initScript: [
           'set -eu',
-          ...(config.auth !== false
-            ? [
-                'git config --global credential.helper \'!f() { test "$1" = get && echo "protocol=https" && echo "host=github.com" && echo "username=x-access-token" && echo "password=${GH_TOKEN}"; }; f\'',
-              ]
-            : []),
+          ...(config.auth !== false ? [GIT_CREDENTIAL_HELPER_CONFIG] : []),
           'gh config set git_protocol https',
           'git config --global pull.rebase false',
           `git config --global user.name "${config.name || 'Geniro Bot'}"`,

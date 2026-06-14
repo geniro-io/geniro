@@ -13,6 +13,7 @@ import {
   InternalException,
 } from '@packages/common';
 
+import { GIT_CREDENTIAL_HELPER_CONFIG } from '../../../git-auth/git-auth.types';
 import { BaseRuntime } from '../../../runtime/services/base-runtime';
 import type { ClaudePluginSource } from './claude-session.types';
 import { CLAUDE_INSTALL_DIR, CLAUDE_PLUGINS_DIR } from './claude-session.types';
@@ -189,15 +190,31 @@ export class ClaudeBootstrapService {
    * exit is logged, never thrown — the proxied gh_* tools remain the
    * authoritative GitHub path. Never logs the token (it lives only in the
    * session env, never in the configured command).
+   *
+   * A version-keyed marker gates the work: the config is token-VALUE-independent
+   * (the helper reads ${GH_TOKEN} lazily), so a warm/resumed container only
+   * needs it once. run() re-enters per turn via runOrAppend, so without the gate
+   * this would re-exec the multi-command git/gh round-trip on every turn. Mirrors
+   * ensureBridgeInstalled's `test -f` marker. Bump the version suffix if the
+   * configured commands below change so existing containers reconfigure.
    */
   async configureGitAuth(runtime: BaseRuntime): Promise<void> {
+    const marker = `${CLAUDE_INSTALL_DIR}/.git-auth-configured-v1`;
+    const markerCheck = await runtime.exec({ cmd: `test -f ${marker}` });
+    if (markerCheck.exitCode === 0) {
+      return;
+    }
+
     const setup = await runtime.exec({
       cmd: [
-        'git config --global credential.helper \'!f() { test "$1" = get && echo "protocol=https" && echo "host=github.com" && echo "username=x-access-token" && echo "password=${GH_TOKEN}"; }; f\'',
+        GIT_CREDENTIAL_HELPER_CONFIG,
         'gh config set git_protocol https',
         'git config --global pull.rebase false',
         'git config --global user.name "Geniro Bot"',
         'git config --global user.email "bot@geniro.io"',
+        // Touch the marker LAST: the `&&` chain stops on the first failure, so
+        // the marker only lands when every config command above succeeded.
+        `touch ${marker}`,
       ].join(' && '),
     });
     if (setup.exitCode !== 0) {

@@ -28,4 +28,14 @@ describe('resolveDockerOptions', () => {
       expect(resolveDockerOptions({ dockerSocket: value })).toBeUndefined();
     },
   );
+
+  // getEnv('DOCKER_SOCKET') coerces magic strings (true/1/on, false/0/off) to a
+  // boolean, so a non-string reaches resolveDockerOptions in production. The
+  // typeof guard must treat it as "unset" rather than calling .trim() on it.
+  it.each([true, false])(
+    'returns undefined (not a TypeError) when getEnv coerced the value to a boolean (%p)',
+    (value) => {
+      expect(resolveDockerOptions({ dockerSocket: value })).toBeUndefined();
+    },
+  );
 });
