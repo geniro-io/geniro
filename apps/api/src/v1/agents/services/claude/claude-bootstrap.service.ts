@@ -176,6 +176,37 @@ export class ClaudeBootstrapService {
     return probe.exitCode === 0;
   }
 
+  /**
+   * Wires native git/gh GitHub auth inside the session so Claude's own Bash
+   * tooling can use `gh` and git push/pull without the proxied gh_* tools: a
+   * credential helper that feeds the session's GH_TOKEN to git over HTTPS,
+   * plus a baseline commit identity. Mirrors the GithubResource init script.
+   *
+   * Idempotent — `git config --global` overwrites the same keys each run. The
+   * helper resolves ${GH_TOKEN} lazily at git-invocation time, so this only
+   * makes sense once buildClaudeSessionEnv has injected a GH_TOKEN; with no
+   * token the helper would hand git an empty password. Best-effort: a non-zero
+   * exit is logged, never thrown — the proxied gh_* tools remain the
+   * authoritative GitHub path. Never logs the token (it lives only in the
+   * session env, never in the configured command).
+   */
+  async configureGitAuth(runtime: BaseRuntime): Promise<void> {
+    const setup = await runtime.exec({
+      cmd: [
+        'git config --global credential.helper \'!f() { test "$1" = get && echo "protocol=https" && echo "host=github.com" && echo "username=x-access-token" && echo "password=${GH_TOKEN}"; }; f\'',
+        'gh config set git_protocol https',
+        'git config --global pull.rebase false',
+        'git config --global user.name "Geniro Bot"',
+        'git config --global user.email "bot@geniro.io"',
+      ].join(' && '),
+    });
+    if (setup.exitCode !== 0) {
+      this.logger.warn(
+        `Failed to configure native git/gh auth in Claude session (exit ${setup.exitCode}); native GitHub access may be unauthenticated — proxied gh_* tools remain available`,
+      );
+    }
+  }
+
   private async ensureBridgeInstalled(runtime: BaseRuntime): Promise<string> {
     const bridgePath = `${CLAUDE_INSTALL_DIR}/bridge.mjs`;
     const marker = `${CLAUDE_INSTALL_DIR}/.installed-p${BRIDGE_PROTOCOL_VERSION}-sdk${CLAUDE_AGENT_SDK_VERSION}`;

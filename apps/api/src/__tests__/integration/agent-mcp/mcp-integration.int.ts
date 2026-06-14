@@ -19,6 +19,7 @@ import {
   RuntimeStartParams,
   RuntimeType,
 } from '../../../v1/runtime/runtime.types';
+import { resolveDockerOptions } from '../../../v1/runtime/runtime.utils';
 import { BaseRuntime } from '../../../v1/runtime/services/base-runtime';
 import { DockerRuntime } from '../../../v1/runtime/services/docker-runtime';
 import { RuntimeThreadProvider } from '../../../v1/runtime/services/runtime-thread-provider';
@@ -190,7 +191,7 @@ describe('MCP Integration Tests', () => {
   };
 
   beforeAll(async () => {
-    runtime = new DockerRuntime({ socketPath: environment.dockerSocket });
+    runtime = new DockerRuntime(resolveDockerOptions(environment));
     await runtime.start({
       // Alpine + npx occasionally flakes in CI/containers with TAR_ENTRY_ERROR / missing files.
       // Debian-based node image is more stable for npx-based MCP servers.

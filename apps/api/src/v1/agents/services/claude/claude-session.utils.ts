@@ -103,9 +103,16 @@ export function buildBridgeToolDefinitions(
  * Environment injected into the bridge exec session (NOT baked into the
  * container) so the per-thread virtual key never outlives the session and the
  * LiteLLM master key never reaches the sandbox.
+ *
+ * `githubToken` (when the thread owner has a linked GitHub App installation)
+ * authenticates Claude's native `gh` CLI and git over HTTPS — the latter via
+ * the credential helper `ClaudeBootstrapService.configureGitAuth` installs.
+ * Omitted entirely when absent so native git/gh stay cleanly unauthenticated
+ * rather than half-wired with an empty credential.
  */
 export function buildClaudeSessionEnv(
   virtualKey: string,
+  githubToken?: string | null,
 ): Record<string, string> {
   const baseUrl = environment.litellmSandboxUrl;
   if (!baseUrl) {
@@ -132,5 +139,9 @@ export function buildClaudeSessionEnv(
     DISABLE_AUTOUPDATER: '1',
     DISABLE_TELEMETRY: '1',
     DISABLE_ERROR_REPORTING: '1',
+    // gh CLI reads GH_TOKEN directly; native git consumes it through the
+    // credential helper. Spread last so an empty/absent token contributes
+    // nothing (no GH_TOKEN key) rather than an empty-string credential.
+    ...(githubToken ? { GH_TOKEN: githubToken } : {}),
   };
 }

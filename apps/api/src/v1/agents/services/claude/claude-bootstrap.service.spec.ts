@@ -489,4 +489,36 @@ describe('ClaudeBootstrapService', () => {
       );
     });
   });
+
+  describe('configureGitAuth', () => {
+    it('installs the credential helper and a baseline git identity in one exec', async () => {
+      await service.configureGitAuth(runtime);
+
+      expect(exec).toHaveBeenCalledTimes(1);
+      const cmd = String(exec.mock.calls[0]![0].cmd);
+      expect(cmd).toContain('credential.helper');
+      expect(cmd).toContain('user.name "Geniro Bot"');
+      expect(cmd).toContain('git_protocol https');
+    });
+
+    it('references GH_TOKEN lazily and never bakes a token into the command', async () => {
+      await service.configureGitAuth(runtime);
+
+      // The helper must resolve ${GH_TOKEN} from the session env at git time,
+      // not embed a resolved credential — the token lives only in the env, so
+      // it must never reach the configured command (and thus never a log line).
+      const cmd = String(exec.mock.calls[0]![0].cmd);
+      expect(cmd).toContain('${GH_TOKEN}');
+      expect(cmd).not.toMatch(/gh[ps]_/);
+    });
+
+    it('warns but does not throw when the git config exec fails', async () => {
+      exec.mockResolvedValue({ exitCode: 1, fail: true, stderr: 'boom' });
+
+      await expect(service.configureGitAuth(runtime)).resolves.toBeUndefined();
+      expect(logger.warn).toHaveBeenCalledWith(
+        expect.stringContaining('native git/gh auth'),
+      );
+    });
+  });
 });

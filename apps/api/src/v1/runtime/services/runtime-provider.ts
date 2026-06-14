@@ -23,6 +23,7 @@ import {
   RuntimeStartingPhase,
   RuntimeType,
 } from '../runtime.types';
+import { resolveDockerOptions } from '../runtime.utils';
 import { BaseRuntime } from './base-runtime';
 import { DaytonaRuntime, DaytonaRuntimeConfig } from './daytona-runtime';
 import { DockerRuntime } from './docker-runtime';
@@ -143,7 +144,7 @@ export class RuntimeProvider {
   ): Record<string, unknown> | undefined {
     switch (type) {
       case RuntimeType.Docker:
-        return { socketPath: environment.dockerSocket };
+        return resolveDockerOptions(environment);
       case RuntimeType.Daytona:
         return {
           apiKey: environment.daytonaApiKey,

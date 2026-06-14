@@ -4,6 +4,7 @@ import type { DefaultLogger } from '@packages/common';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mockDeep } from 'vitest-mock-extended';
 
+import type { GitTokenResolverService } from '../../../git-auth/services/git-token-resolver.service';
 import { MessageRole } from '../../../graphs/graphs.types';
 import { RequestTokenUsage } from '../../../litellm/litellm.types';
 import type { LiteLlmClient } from '../../../litellm/services/litellm.client';
@@ -50,6 +51,7 @@ describe('ClaudeAgent', () => {
   let bootstrap: {
     ensureSessionReady: ReturnType<typeof vi.fn>;
     isSessionResumable: ReturnType<typeof vi.fn>;
+    configureGitAuth: ReturnType<typeof vi.fn>;
   };
   let virtualKeys: {
     issueThreadKey: ReturnType<typeof vi.fn>;
@@ -84,6 +86,7 @@ describe('ClaudeAgent', () => {
         .fn()
         .mockResolvedValue({ bridgePath: '/opt/b.mjs', pluginPaths: [] }),
       isSessionResumable: vi.fn().mockResolvedValue(false),
+      configureGitAuth: vi.fn().mockResolvedValue(undefined),
     };
     virtualKeys = {
       issueThreadKey: vi.fn().mockResolvedValue({ key: 'sk-vkey-test' }),
@@ -116,6 +119,10 @@ describe('ClaudeAgent', () => {
       createToucher: vi.fn().mockReturnValue(vi.fn()),
     } as unknown as ClaudeKeepaliveService;
 
+    const gitTokenResolver = {
+      resolveDefaultToken: vi.fn().mockResolvedValue(null),
+    } as unknown as GitTokenResolverService;
+
     agent = new ClaudeAgent(
       mockDeep<DefaultLogger>(),
       bootstrap as unknown as ClaudeBootstrapService,
@@ -124,6 +131,7 @@ describe('ClaudeAgent', () => {
       liteLlmClient as unknown as LiteLlmClient,
       threadsDao as unknown as ThreadsDao,
       messagesDao as unknown as MessagesDao,
+      gitTokenResolver,
     );
     agent.setConfig(AGENT_CONFIG);
     agent.setRuntimeProvider(runtimeProvider);

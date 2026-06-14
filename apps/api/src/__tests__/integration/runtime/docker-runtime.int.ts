@@ -1,18 +1,16 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { environment } from '../../../environments';
+import { resolveDockerOptions } from '../../../v1/runtime/runtime.utils';
 import { DockerRuntime } from '../../../v1/runtime/services/docker-runtime';
 
 describe('DockerRuntime Timeout Recovery Integration', () => {
   let runtime: DockerRuntime;
 
   beforeAll(async () => {
-    runtime = new DockerRuntime(
-      { socketPath: environment.dockerSocket },
-      {
-        image: 'node:22-alpine',
-      },
-    );
+    runtime = new DockerRuntime(resolveDockerOptions(environment), {
+      image: 'node:22-alpine',
+    });
 
     await runtime.start({
       containerName: `test-timeout-recovery-${Date.now()}`,

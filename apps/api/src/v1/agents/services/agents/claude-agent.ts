@@ -9,6 +9,7 @@ import { DefaultLogger, InternalException } from '@packages/common';
 import { v4 } from 'uuid';
 
 import type { BuiltAgentTool } from '../../../agent-tools/tools/base-tool';
+import { GitTokenResolverService } from '../../../git-auth/services/git-token-resolver.service';
 import { MessageRole } from '../../../graphs/graphs.types';
 import { RequestTokenUsage } from '../../../litellm/litellm.types';
 import { LiteLlmClient } from '../../../litellm/services/litellm.client';
@@ -129,6 +130,7 @@ export class ClaudeAgent
     private readonly liteLlmClient: LiteLlmClient,
     private readonly threadsDao: ThreadsDao,
     private readonly messagesDao: MessagesDao,
+    private readonly gitTokenResolver: GitTokenResolverService,
   ) {
     super();
   }
@@ -267,7 +269,24 @@ export class ClaudeAgent
         },
       });
       virtualKey = issued.key;
-      const env = buildClaudeSessionEnv(virtualKey);
+      // The thread owner's default GitHub App installation token authenticates
+      // Claude's native gh/git (same resolver the proxied gh_* tools use). It
+      // is owner-scoped, not repo-scoped, because the agent may touch any repo
+      // the owner can reach. Absent (no GitHub App / no linked install) leaves
+      // native GitHub access unauthenticated.
+      const ownerUserId =
+        configurable.thread_created_by ?? configurable.graph_created_by;
+      const githubToken = ownerUserId
+        ? (await this.gitTokenResolver.resolveDefaultToken(ownerUserId))?.token
+        : undefined;
+      const env = buildClaudeSessionEnv(virtualKey, githubToken);
+      // Native gh/git become usable from Claude's Bash only once the session
+      // carries a GH_TOKEN; install the matching credential helper then. The
+      // proxied gh_* tools stay forwarded as the authoritative path until this
+      // is verified end-to-end (native-github-auth plan, staged Phase 3).
+      if (githubToken) {
+        await this.bootstrap.configureGitAuth(runtime);
+      }
 
       // Resume-or-replay: resume when the container still has the session
       // transcript; otherwise replay prior history into a fresh session.

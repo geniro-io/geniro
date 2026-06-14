@@ -1,12 +1,17 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { BuiltAgentTool } from '../../../agent-tools/tools/base-tool';
 import {
   buildBridgeToolDefinitions,
+  buildClaudeSessionEnv,
   formatQuestionsAsText,
   isToolForwardableToClaude,
   redactGitUrl,
 } from './claude-session.utils';
+
+vi.mock('../../../../environments', () => ({
+  environment: { litellmSandboxUrl: 'http://litellm.sandbox:4000' },
+}));
 
 /**
  * redactGitUrl is the last barrier between a private-repo clone URL (which can
@@ -135,6 +140,32 @@ describe('buildBridgeToolDefinitions', () => {
       type: 'object',
       properties: {},
     });
+  });
+});
+
+describe('buildClaudeSessionEnv', () => {
+  it('always carries the virtual key as the Anthropic API key', () => {
+    const env = buildClaudeSessionEnv('vk_test');
+    expect(env.ANTHROPIC_API_KEY).toBe('vk_test');
+  });
+
+  it('omits GH_TOKEN when no GitHub token is supplied', () => {
+    expect(buildClaudeSessionEnv('vk_test')).not.toHaveProperty('GH_TOKEN');
+  });
+
+  it('injects GH_TOKEN when a GitHub token is supplied', () => {
+    const env = buildClaudeSessionEnv('vk_test', 'ghs_install_token');
+    expect(env.GH_TOKEN).toBe('ghs_install_token');
+  });
+
+  it('omits GH_TOKEN for an empty-string token (no half-wired credential)', () => {
+    expect(buildClaudeSessionEnv('vk_test', '')).not.toHaveProperty('GH_TOKEN');
+  });
+
+  it('omits GH_TOKEN for a null token', () => {
+    expect(buildClaudeSessionEnv('vk_test', null)).not.toHaveProperty(
+      'GH_TOKEN',
+    );
   });
 });
 
