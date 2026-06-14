@@ -35,6 +35,7 @@ import { LlmModelsService } from '../../../v1/litellm/services/llm-models.servic
 import { OpenaiService } from '../../../v1/openai/openai.service';
 import { ProjectsDao } from '../../../v1/projects/dao/projects.dao';
 import { RuntimeType } from '../../../v1/runtime/runtime.types';
+import { resolveDockerOptions } from '../../../v1/runtime/runtime.utils';
 import { BaseRuntime } from '../../../v1/runtime/services/base-runtime';
 import { DockerRuntime } from '../../../v1/runtime/services/docker-runtime';
 import { RuntimeProvider } from '../../../v1/runtime/services/runtime-provider';
@@ -153,7 +154,7 @@ describe('Files tools integration', () => {
     filesDeleteTool = moduleRef.get(FilesDeleteTool);
     shellTool = moduleRef.get(ShellTool);
 
-    runtime = new DockerRuntime({ socketPath: environment.dockerSocket });
+    runtime = new DockerRuntime(resolveDockerOptions(environment));
 
     await runtime.start({
       image: environment.dockerRuntimeImage,

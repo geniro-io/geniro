@@ -10,8 +10,7 @@ import {
 } from '@langchain/core/tools';
 import { LangGraphRunnableConfig } from '@langchain/langgraph';
 import { DefaultLogger } from '@packages/common';
-import { isPlainObject, keyBy } from 'lodash';
-import { stringify as stringifyYaml } from 'yaml';
+import { keyBy } from 'lodash';
 
 import {
   BuiltAgentTool,
@@ -26,6 +25,7 @@ import {
   BaseAgentStateChange,
 } from '../../agents.types';
 import {
+  formatToolOutputForLlm,
   stripProxyPrefix,
   updateMessagesListWithMetadata,
 } from '../../agents.utils';
@@ -271,7 +271,7 @@ export class ToolExecutorNode extends BaseNode<
               }
             : messageMetadata;
 
-          const content = this.formatToolOutputForLlm(output);
+          const content = formatToolOutputForLlm(output, this.maxOutputChars);
 
           if (content.length > this.maxOutputChars) {
             const trimmed = content.slice(0, this.maxOutputChars);
@@ -547,31 +547,5 @@ export class ToolExecutorNode extends BaseNode<
       this.consecutiveErrorMessage = batchErrorMessage;
       this.consecutiveErrorCount = 1;
     }
-  }
-
-  private formatToolOutputForLlm(output: unknown): string {
-    if (typeof output === 'string') {
-      const trimmed = output.trim();
-      if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) {
-        return output;
-      }
-
-      try {
-        const parsed = JSON.parse(trimmed) as unknown;
-        if (!isPlainObject(parsed) && !Array.isArray(parsed)) {
-          return output;
-        }
-
-        return stringifyYaml(parsed).trimEnd();
-      } catch {
-        return output;
-      }
-    }
-
-    if (isPlainObject(output) || Array.isArray(output)) {
-      return stringifyYaml(output).trimEnd();
-    }
-
-    return JSON.stringify(output);
   }
 }

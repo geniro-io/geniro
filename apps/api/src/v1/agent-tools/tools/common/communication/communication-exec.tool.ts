@@ -281,8 +281,14 @@ export class CommunicationExecTool extends BaseTool<
         [args.message],
         communicationRunnableConfig,
       );
+      // The callee's aggregate spend is a transport field, not part of the
+      // response the model reads: strip it from `output` and report it as
+      // this tool's own usage so the executor folds it into caller state.
+      // `calleeUsage` is a typed field on CommunicationAgentResult — no cast.
+      const { calleeUsage, ...visibleOutput } = output;
       return {
-        output,
+        output: visibleOutput,
+        ...(calleeUsage ? { toolRequestUsage: calleeUsage } : {}),
         messageMetadata: {
           __title: title,
           __interAgentCommunication: true,

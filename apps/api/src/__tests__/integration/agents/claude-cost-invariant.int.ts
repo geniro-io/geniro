@@ -291,4 +291,124 @@ describe('Claude Agent cost invariant (checkpoint-less threads)', () => {
       expect(byNodeSum).toBeCloseTo(usage!.totalPrice ?? 0, 10);
     },
   );
+
+  it(
+    'persists dispatcher-reported tool usage on the synthesized ToolMessage without disturbing the requestUsage invariant (M2 MCP-proxied tools)',
+    { timeout: 30000 },
+    async () => {
+      const events: AgentEventType[] = [];
+      const mapper = new ClaudeStreamMapper({
+        threadId: externalThreadId,
+        config: {
+          configurable: {
+            thread_id: externalThreadId,
+            graph_id: graphId,
+            node_id: NODE_ID,
+            run_id: 'run-int-2',
+          },
+        },
+        model: 'claude-sonnet-4-6',
+        emit: (event) => events.push(event),
+        calculatePriceUsd: () => PRICE_PER_CALL,
+      });
+
+      // Assistant calls a forwarded Geniro tool through the in-bridge MCP
+      // server; the host dispatcher reports the tool's own LLM usage.
+      const mcpToolUse: SdkAssistantMessage = {
+        ...assistantMessage('m10', 'searching the knowledge base'),
+        message: {
+          ...assistantMessage('m10', 'searching the knowledge base').message,
+          content: [
+            { type: 'text', text: 'searching the knowledge base' },
+            {
+              type: 'tool_use',
+              id: 'tu-mcp-1',
+              name: 'mcp__geniro__knowledge_search_docs',
+              input: { task: 'find persistence docs' },
+            },
+          ],
+        },
+      };
+      const toolOwnUsage: RequestTokenUsage = {
+        inputTokens: 40,
+        cachedInputTokens: 0,
+        outputTokens: 10,
+        totalTokens: 50,
+        totalPrice: 0.005,
+      };
+      const mcpToolResult: SdkUserMessage = {
+        type: 'user',
+        session_id: 'sess-int-1',
+        parent_tool_use_id: null,
+        message: {
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: 'tu-mcp-1',
+              content: 'PASSAGE: messages persist in PostgreSQL',
+            },
+          ],
+        },
+      };
+
+      mapper.onSdkMessage(mcpToolUse);
+      mapper.recordToolUsage('knowledge_search_docs', toolOwnUsage);
+      mapper.onSdkMessage(mcpToolResult);
+      mapper.onSdkMessage(assistantMessage('m11', 'found it'));
+      mapper.flush();
+
+      for (const event of events) {
+        if (event.type !== 'message') {
+          continue;
+        }
+        await messageHandler.handle({
+          type: NotificationEvent.AgentMessage,
+          graphId,
+          nodeId: NODE_ID,
+          threadId: externalThreadId,
+          parentThreadId: externalThreadId,
+          data: { messages: event.data.messages },
+        });
+      }
+
+      // Writer side: the ToolMessage row carries the dispatcher-reported
+      // usage in the dedicated column (and still no request usage).
+      const rows = await messagesDao.getAll(
+        { threadId: internalThreadId },
+        { orderBy: { createdAt: 'ASC' } },
+      );
+      const mcpToolRow = rows.find(
+        (row) =>
+          row.role === MessageRole.Tool && row.name === 'knowledge_search_docs',
+      );
+      expect(mcpToolRow).toBeDefined();
+      expect(mcpToolRow!.toolTokenUsage).toMatchObject({
+        inputTokens: 40,
+        outputTokens: 10,
+        totalTokens: 50,
+        totalPrice: 0.005,
+      });
+      expect(mcpToolRow!.requestTokenUsage ?? null).toBeNull();
+      // The tool name reaches persistence with the mcp__geniro__ prefix
+      // stripped — per-tool cost surfaces group by the Geniro name.
+      expect(JSON.stringify(mcpToolRow!.message)).not.toContain(
+        'mcp__geniro__',
+      );
+
+      // Reader side: byNode still reconciles with the direct message scan
+      // for every node (tool usage is display-only and must not leak into
+      // the requestUsage buckets).
+      const usage = await checkpointState.getThreadTokenUsage(externalThreadId);
+      const directBuckets =
+        await messagesDao.aggregateUsageByNodeId(internalThreadId);
+      for (const [nodeId, direct] of directBuckets) {
+        expect(usage!.byNode![nodeId]).toMatchObject({
+          inputTokens: direct.inputTokens,
+          outputTokens: direct.outputTokens,
+          totalTokens: direct.totalTokens,
+          totalPrice: direct.totalPrice,
+        });
+      }
+    },
+  );
 });

@@ -5,7 +5,9 @@ export { JsonLineParser, serializeFrame } from './json-line-parser';
 export type {
   BridgeCommand,
   BridgeEvent,
+  BridgeQuestion,
   BridgeStartOptions,
+  BridgeToolDefinition,
   SdkAssistantMessage,
   SdkContentBlock,
   SdkMessage,
@@ -17,6 +19,7 @@ export type {
   SdkUserMessage,
 } from './protocol.types';
 export { BRIDGE_PROTOCOL_VERSION } from './protocol.types';
+export { sanitizeBridgeQuestions } from './question-sanitizer';
 
 /**
  * Reduce a package.json dependency range to the exact version to install into

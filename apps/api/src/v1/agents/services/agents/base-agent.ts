@@ -25,6 +25,13 @@ export type AgentOutput = {
   threadId: string;
   checkpointNs?: string;
   needsMoreInfo?: boolean;
+  /**
+   * Run-scoped aggregate spend (LLM + tool usage of THIS run only). Relays
+   * fold it into the caller's state as the invocation's cost — summing the
+   * returned messages instead would re-count a checkpointed callee's whole
+   * history on repeat invocations.
+   */
+  statistics?: { usage: RequestTokenUsage };
   waiting?: boolean;
   waitMetadata?: {
     durationSeconds: number;

@@ -1,6 +1,17 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
-import { redactGitUrl } from './claude-session.utils';
+import type { BuiltAgentTool } from '../../../agent-tools/tools/base-tool';
+import {
+  buildBridgeToolDefinitions,
+  buildClaudeSessionEnv,
+  formatQuestionsAsText,
+  isToolForwardableToClaude,
+  redactGitUrl,
+} from './claude-session.utils';
+
+vi.mock('../../../../environments', () => ({
+  environment: { litellmSandboxUrl: 'http://litellm.sandbox:4000' },
+}));
 
 /**
  * redactGitUrl is the last barrier between a private-repo clone URL (which can
@@ -59,5 +70,125 @@ describe('redactGitUrl', () => {
       "fatal: unable to access 'HTTPS://ghp_LEAK@github.com/acme/private'",
     );
     expect(redacted).not.toContain('ghp_LEAK');
+  });
+});
+
+describe('isToolForwardableToClaude', () => {
+  it.each([
+    'finish',
+    'wait_for',
+    'tool_search',
+    'subagents_list',
+    'subagents_run_task',
+    'communication_exec',
+  ])('never forwards agent-context-bound tool %s', (name) => {
+    expect(isToolForwardableToClaude(name)).toBe(false);
+  });
+
+  it.each(['shell', 'files_read', 'files_write_file', 'files_apply_changes'])(
+    'skips Claude-native overlap tool %s',
+    (name) => {
+      expect(isToolForwardableToClaude(name)).toBe(false);
+    },
+  );
+
+  it.each([
+    'knowledge_search_docs',
+    'codebase_search',
+    'web_search',
+    'gh_clone',
+    'thread_store_get',
+  ])('forwards regular Geniro tool %s', (name) => {
+    expect(isToolForwardableToClaude(name)).toBe(true);
+  });
+});
+
+describe('buildBridgeToolDefinitions', () => {
+  it('maps name/description/__ajvSchema into wire definitions', () => {
+    const definitions = buildBridgeToolDefinitions([
+      {
+        name: 'knowledge_search_docs',
+        description: 'Search docs.',
+        __ajvSchema: {
+          type: 'object',
+          properties: { query: { type: 'string' } },
+        },
+      } as unknown as BuiltAgentTool,
+    ]);
+
+    expect(definitions).toEqual([
+      {
+        name: 'knowledge_search_docs',
+        description: 'Search docs.',
+        inputSchema: {
+          type: 'object',
+          properties: { query: { type: 'string' } },
+        },
+      },
+    ]);
+  });
+
+  it('falls back to an empty object schema when __ajvSchema is missing', () => {
+    const definitions = buildBridgeToolDefinitions([
+      {
+        name: 'bare',
+        description: 'No schema.',
+      } as unknown as BuiltAgentTool,
+    ]);
+
+    expect(definitions[0]?.inputSchema).toEqual({
+      type: 'object',
+      properties: {},
+    });
+  });
+});
+
+describe('buildClaudeSessionEnv', () => {
+  it('always carries the virtual key as the Anthropic API key', () => {
+    const env = buildClaudeSessionEnv('vk_test');
+    expect(env.ANTHROPIC_API_KEY).toBe('vk_test');
+  });
+
+  it('omits GH_TOKEN when no GitHub token is supplied', () => {
+    expect(buildClaudeSessionEnv('vk_test')).not.toHaveProperty('GH_TOKEN');
+  });
+
+  it('injects GH_TOKEN when a GitHub token is supplied', () => {
+    const env = buildClaudeSessionEnv('vk_test', 'ghs_install_token');
+    expect(env.GH_TOKEN).toBe('ghs_install_token');
+  });
+
+  it('omits GH_TOKEN for an empty-string token (no half-wired credential)', () => {
+    expect(buildClaudeSessionEnv('vk_test', '')).not.toHaveProperty('GH_TOKEN');
+  });
+
+  it('omits GH_TOKEN for a null token', () => {
+    expect(buildClaudeSessionEnv('vk_test', null)).not.toHaveProperty(
+      'GH_TOKEN',
+    );
+  });
+});
+
+describe('formatQuestionsAsText', () => {
+  it('renders questions with labeled options', () => {
+    expect(
+      formatQuestionsAsText([
+        {
+          question: 'Which DB?',
+          options: [
+            { label: 'Postgres', description: 'relational' },
+            { label: 'MySQL' },
+          ],
+        },
+        { question: 'Deploy now?' },
+      ]),
+    ).toBe('Which DB?\n- Postgres: relational\n- MySQL\n\nDeploy now?');
+  });
+
+  it('falls back to an explanatory line when no question text survived sanitization', () => {
+    expect(formatQuestionsAsText([])).toContain('could not be read');
+    expect(formatQuestionsAsText([{ header: 'DB' }])).toContain(
+      'could not be read',
+    );
   });
 });

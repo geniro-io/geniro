@@ -7,11 +7,13 @@ import { z } from 'zod';
 
 import { BuiltAgentTool } from '../../../agent-tools/tools/base-tool';
 import { CommunicationToolGroup } from '../../../agent-tools/tools/common/communication/communication-tool-group';
-import { AgentInfo } from '../../../agent-tools/tools/common/communication/communication-tools.types';
+import {
+  AgentInfo,
+  CommunicationAgentResult,
+} from '../../../agent-tools/tools/common/communication/communication-tools.types';
 import type { RunnableAgent } from '../../../agents/agents.types';
 import { BaseAgentConfigurable } from '../../../agents/agents.types';
 import { extractExploredFilesFromMessages } from '../../../agents/agents.utils';
-import { AgentOutput } from '../../../agents/services/agents/base-agent';
 import { GraphNode, NodeKind } from '../../../graphs/graphs.types';
 import { parseStructuredContent } from '../../../graphs/graphs.utils';
 import { GraphRegistry } from '../../../graphs/services/graph-registry';
@@ -40,12 +42,22 @@ export class AgentCommunicationToolTemplate extends ToolNodeBaseTemplate<
       value: NodeKind.SimpleAgent,
       multiple: true,
     },
+    {
+      type: 'kind',
+      value: NodeKind.ClaudeAgent,
+      multiple: true,
+    },
   ] as const;
 
   readonly outputs = [
     {
       type: 'kind',
       value: NodeKind.SimpleAgent,
+      multiple: true,
+    },
+    {
+      type: 'kind',
+      value: NodeKind.ClaudeAgent,
       multiple: true,
     },
   ] as const;
@@ -108,10 +120,10 @@ export class AgentCommunicationToolTemplate extends ToolNodeBaseTemplate<
             );
           }
 
-          const invokeAgent = async <T = AgentOutput>(
+          const invokeAgent = async (
             messages: string[],
             runnableConfig: ToolRunnableConfig<BaseAgentConfigurable>,
-          ): Promise<T> => {
+          ): Promise<CommunicationAgentResult> => {
             const currentAgentNode = this.graphRegistry.getNode<RunnableAgent>(
               metadata.graphId,
               agentNodeId,
@@ -194,13 +206,24 @@ export class AgentCommunicationToolTemplate extends ToolNodeBaseTemplate<
               response.messages,
             );
 
+            // Checkpoint-less callees (ClaudeAgent) signal questions via the
+            // AgentOutput flag rather than a finish-tool message — honor both.
+            //
+            // Cost fold uses ONLY the callee's run-scoped statistics: summing
+            // response.messages would re-count a checkpointed callee's whole
+            // history on repeat invocations. A callee that doesn't report
+            // statistics (SimpleAgent today) keeps its existing
+            // own-thread-only cost accounting.
+            const calleeUsage = response.statistics?.usage;
+
             return {
               message: responseMessage || 'No response message available',
-              needsMoreInfo,
+              needsMoreInfo: needsMoreInfo || response.needsMoreInfo === true,
               ...(exploredFiles.length > 0 ? { exploredFiles } : {}),
               threadId: response.threadId,
               checkpointNs: response.checkpointNs,
-            } as T;
+              ...(calleeUsage ? { calleeUsage } : {}),
+            };
           };
 
           return {

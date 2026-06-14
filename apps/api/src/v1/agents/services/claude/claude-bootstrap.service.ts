@@ -13,6 +13,7 @@ import {
   InternalException,
 } from '@packages/common';
 
+import { GIT_CREDENTIAL_HELPER_CONFIG } from '../../../git-auth/git-auth.types';
 import { BaseRuntime } from '../../../runtime/services/base-runtime';
 import type { ClaudePluginSource } from './claude-session.types';
 import { CLAUDE_INSTALL_DIR, CLAUDE_PLUGINS_DIR } from './claude-session.types';
@@ -174,6 +175,53 @@ export class ClaudeBootstrapService {
       cmd: `ls "$HOME"/.claude/projects/*/${sessionId}.jsonl >/dev/null 2>&1`,
     });
     return probe.exitCode === 0;
+  }
+
+  /**
+   * Wires native git/gh GitHub auth inside the session so Claude's own Bash
+   * tooling can use `gh` and git push/pull without the proxied gh_* tools: a
+   * credential helper that feeds the session's GH_TOKEN to git over HTTPS,
+   * plus a baseline commit identity. Mirrors the GithubResource init script.
+   *
+   * Idempotent — `git config --global` overwrites the same keys each run. The
+   * helper resolves ${GH_TOKEN} lazily at git-invocation time, so this only
+   * makes sense once buildClaudeSessionEnv has injected a GH_TOKEN; with no
+   * token the helper would hand git an empty password. Best-effort: a non-zero
+   * exit is logged, never thrown — the proxied gh_* tools remain the
+   * authoritative GitHub path. Never logs the token (it lives only in the
+   * session env, never in the configured command).
+   *
+   * A version-keyed marker gates the work: the config is token-VALUE-independent
+   * (the helper reads ${GH_TOKEN} lazily), so a warm/resumed container only
+   * needs it once. run() re-enters per turn via runOrAppend, so without the gate
+   * this would re-exec the multi-command git/gh round-trip on every turn. Mirrors
+   * ensureBridgeInstalled's `test -f` marker. Bump the version suffix if the
+   * configured commands below change so existing containers reconfigure.
+   */
+  async configureGitAuth(runtime: BaseRuntime): Promise<void> {
+    const marker = `${CLAUDE_INSTALL_DIR}/.git-auth-configured-v1`;
+    const markerCheck = await runtime.exec({ cmd: `test -f ${marker}` });
+    if (markerCheck.exitCode === 0) {
+      return;
+    }
+
+    const setup = await runtime.exec({
+      cmd: [
+        GIT_CREDENTIAL_HELPER_CONFIG,
+        'gh config set git_protocol https',
+        'git config --global pull.rebase false',
+        'git config --global user.name "Geniro Bot"',
+        'git config --global user.email "bot@geniro.io"',
+        // Touch the marker LAST: the `&&` chain stops on the first failure, so
+        // the marker only lands when every config command above succeeded.
+        `touch ${marker}`,
+      ].join(' && '),
+    });
+    if (setup.exitCode !== 0) {
+      this.logger.warn(
+        `Failed to configure native git/gh auth in Claude session (exit ${setup.exitCode}); native GitHub access may be unauthenticated — proxied gh_* tools remain available`,
+      );
+    }
   }
 
   private async ensureBridgeInstalled(runtime: BaseRuntime): Promise<string> {

@@ -13,6 +13,7 @@ import {
   extractExploredFilesFromMessages,
   extractTextFromResponseContent,
   filterMessagesForLlm,
+  formatToolOutputForLlm,
   isRunnableAgent,
   markMessageHideForLlm,
   prepareMessagesForLlm,
@@ -749,5 +750,60 @@ describe('isRunnableAgent', () => {
     expect(isRunnableAgent(undefined)).toBe(false);
     expect(isRunnableAgent('agent')).toBe(false);
     expect(isRunnableAgent(42)).toBe(false);
+  });
+});
+
+describe('formatToolOutputForLlm', () => {
+  it('returns a string when a tool produced no output (undefined) — both callers take .length of the result', () => {
+    // ToolExecutorNode and ClaudeToolDispatcher immediately read `.length`
+    // on the returned value to apply their output caps; the declared `string`
+    // return type must hold for every input, including a void tool result.
+    const formatted = formatToolOutputForLlm(undefined);
+    expect(typeof formatted).toBe('string');
+  });
+
+  it('short-circuits the JSON→YAML conversion for a raw string already past 2x the cap', () => {
+    // A multi-MB tool output (e.g. files_read of a long-line file) arrives as a
+    // JSON string the caller trims anyway; trimmed JSON is exactly as
+    // (un)parseable for the model as trimmed YAML, so the expensive parse +
+    // re-serialize is skipped rather than burning event-loop time on work the
+    // cap discards.
+    const maxChars = 1000;
+    const huge = `{"data":"${'x'.repeat(3000)}"}`;
+    expect(huge.length).toBeGreaterThan(2 * maxChars);
+
+    const formatted = formatToolOutputForLlm(huge, maxChars);
+
+    // Byte-identical to the input — proof the YAML conversion never ran.
+    expect(formatted).toBe(huge);
+  });
+
+  it('still converts a JSON string inside the 2x band (YAML compaction may fit under the cap)', () => {
+    const maxChars = 1000;
+    const payload = JSON.stringify({ alpha: 'one', beta: 'two' });
+    expect(payload.length).toBeLessThanOrEqual(2 * maxChars);
+
+    const formatted = formatToolOutputForLlm(payload, maxChars);
+
+    expect(formatted).not.toBe(payload);
+    expect(formatted).toContain('alpha: one');
+    expect(formatted).toContain('beta: two');
+  });
+
+  it('always converts a JSON string when no cap is supplied (back-compat)', () => {
+    const payload = JSON.stringify({ alpha: 'one' });
+    expect(formatToolOutputForLlm(payload)).toBe('alpha: one');
+  });
+
+  it('does not short-circuit a non-string object output — the maxChars guard is string-only', () => {
+    const maxChars = 10;
+    const obj = { items: Array.from({ length: 50 }, (_, i) => `item-${i}`) };
+
+    const formatted = formatToolOutputForLlm(obj, maxChars);
+
+    // An already-parsed object always serializes to YAML (no raw string to fall
+    // back to), even past 2x the cap — the caller trims the result.
+    expect(formatted).toContain('items:');
+    expect(formatted).not.toBe(JSON.stringify(obj));
   });
 });

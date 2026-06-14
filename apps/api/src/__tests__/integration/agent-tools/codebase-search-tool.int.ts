@@ -15,6 +15,7 @@ import { LiteLlmClient } from '../../../v1/litellm/services/litellm.client';
 import { ProjectsDao } from '../../../v1/projects/dao/projects.dao';
 import { QdrantService } from '../../../v1/qdrant/services/qdrant.service';
 import { RuntimeType } from '../../../v1/runtime/runtime.types';
+import { resolveDockerOptions } from '../../../v1/runtime/runtime.utils';
 import { BaseRuntime } from '../../../v1/runtime/services/base-runtime';
 import { DockerRuntime } from '../../../v1/runtime/services/docker-runtime';
 import { RuntimeProvider } from '../../../v1/runtime/services/runtime-provider';
@@ -140,7 +141,7 @@ describe('Codebase search tool (integration)', () => {
       ],
     );
 
-    runtime = new DockerRuntime({ socketPath: environment.dockerSocket });
+    runtime = new DockerRuntime(resolveDockerOptions(environment));
     await runtime.start({
       image: environment.dockerRuntimeImage,
       recreate: true,

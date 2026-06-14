@@ -68,6 +68,30 @@ export class ClaudeStreamMapper {
     totalTokens: 0,
     totalPrice: 0,
   };
+  /**
+   * Usage incurred INSIDE proxied Geniro tools (embeddings, nested LLM calls),
+   * reported by the host dispatcher. Tracked apart from `usageTotals`: the
+   * SDK's result-message turn totals know nothing about host-side tool spend,
+   * so folding it into `usageTotals` would corrupt the residual reconciliation
+   * in `reconcileTurnUsage`. Rollup surfaces (snapshot, total price) sum both.
+   */
+  private toolUsageTotals = {
+    inputTokens: 0,
+    cachedInputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+    totalPrice: 0,
+  };
+  /**
+   * FIFO of dispatcher-reported usages per tool name, stamped as
+   * `__toolTokenUsage` onto the next synthesized ToolMessage of that name.
+   * The bridge correlation id and the SDK `tool_use_id` are different id
+   * spaces, so name-FIFO is the only available join; concurrent same-name
+   * calls can at worst swap attribution between sibling calls of the same
+   * tool on the same node — every rollup above per-call granularity is
+   * unaffected.
+   */
+  private readonly pendingToolUsage = new Map<string, RequestTokenUsage[]>();
   private currentContext: number | undefined;
   /**
    * Lag-1 buffer: an assistant batch is emitted when the NEXT stream message
@@ -90,7 +114,38 @@ export class ClaudeStreamMapper {
   }
 
   getTotalPriceUsd(): number {
-    return this.usageTotals.totalPrice;
+    return this.usageTotals.totalPrice + this.toolUsageTotals.totalPrice;
+  }
+
+  /**
+   * Run-scoped aggregate (LLM + proxied-tool spend) — the source for
+   * `AgentOutput.statistics.usage`, which relays fold into a caller's state.
+   */
+  getTotalUsage(): RequestTokenUsage {
+    return {
+      inputTokens:
+        this.usageTotals.inputTokens + this.toolUsageTotals.inputTokens,
+      cachedInputTokens:
+        this.usageTotals.cachedInputTokens +
+        this.toolUsageTotals.cachedInputTokens,
+      outputTokens:
+        this.usageTotals.outputTokens + this.toolUsageTotals.outputTokens,
+      totalTokens:
+        this.usageTotals.totalTokens + this.toolUsageTotals.totalTokens,
+      totalPrice: this.usageTotals.totalPrice + this.toolUsageTotals.totalPrice,
+    };
+  }
+
+  /** Host-dispatcher hook: usage a proxied Geniro tool incurred while executing. */
+  recordToolUsage(toolName: string, usage: RequestTokenUsage): void {
+    const queue = this.pendingToolUsage.get(toolName) ?? [];
+    queue.push(usage);
+    this.pendingToolUsage.set(toolName, queue);
+    this.toolUsageTotals.inputTokens += usage.inputTokens;
+    this.toolUsageTotals.cachedInputTokens += usage.cachedInputTokens ?? 0;
+    this.toolUsageTotals.outputTokens += usage.outputTokens;
+    this.toolUsageTotals.totalTokens += usage.totalTokens;
+    this.toolUsageTotals.totalPrice += usage.totalPrice ?? 0;
   }
 
   /** Emit any buffered assistant batch. Call after the stream ends. */
@@ -249,9 +304,11 @@ export class ClaudeStreamMapper {
         name: name ?? 'tool',
         content: this.stringifyToolResult(block),
       });
+      const toolUsage = name ? this.takeToolUsage(name) : undefined;
       toolMessage.additional_kwargs = {
         ...this.subagentKwargs(message.parent_tool_use_id),
         ...(block.is_error === true && { __toolError: true }),
+        ...(toolUsage && { __toolTokenUsage: toolUsage }),
       };
       built.push(toolMessage);
     }
@@ -290,6 +347,13 @@ export class ClaudeStreamMapper {
    * empty assistant message carrying the residual `__requestUsage`; the caller
    * emits it AFTER flushing the buffer so persistence (insert-only) still
    * captures the spend under the parent node id.
+   *
+   * Multi-result sessions (a mid-run `user_message` injection can extend the
+   * query past its first result): the math assumes the SDK reports
+   * `usage`/`total_cost_usd` CUMULATIVELY per query() call, so subtracting
+   * the running totals yields each result's increment. If a future SDK
+   * reports per-turn numbers instead, residuals clamp to 0 and under-count —
+   * verify empirically when the live-LLM harness is available (M3).
    */
   private reconcileTurnUsage(message: SdkResultMessage): AIMessage | null {
     const turnUsage = this.toRequestTokenUsage(
@@ -385,6 +449,18 @@ export class ClaudeStreamMapper {
     });
   }
 
+  private takeToolUsage(name: string): RequestTokenUsage | undefined {
+    const queue = this.pendingToolUsage.get(name);
+    if (!queue?.length) {
+      return undefined;
+    }
+    const usage = queue.shift();
+    if (queue.length === 0) {
+      this.pendingToolUsage.delete(name);
+    }
+    return usage;
+  }
+
   private emitStateSnapshot(): void {
     const configuredLimit =
       this.params.config.configurable?.effective_cost_limit_usd;
@@ -393,11 +469,19 @@ export class ClaudeStreamMapper {
       data: {
         threadId: this.params.threadId,
         stateChange: {
-          inputTokens: this.usageTotals.inputTokens,
-          cachedInputTokens: this.usageTotals.cachedInputTokens,
-          outputTokens: this.usageTotals.outputTokens,
-          totalTokens: this.usageTotals.totalTokens,
-          totalPrice: this.usageTotals.totalPrice,
+          // LLM + proxied-tool usage combined — same fold ToolExecutorNode
+          // applies when it spreads aggregated tool usage into agent state.
+          inputTokens:
+            this.usageTotals.inputTokens + this.toolUsageTotals.inputTokens,
+          cachedInputTokens:
+            this.usageTotals.cachedInputTokens +
+            this.toolUsageTotals.cachedInputTokens,
+          outputTokens:
+            this.usageTotals.outputTokens + this.toolUsageTotals.outputTokens,
+          totalTokens:
+            this.usageTotals.totalTokens + this.toolUsageTotals.totalTokens,
+          totalPrice:
+            this.usageTotals.totalPrice + this.toolUsageTotals.totalPrice,
           currentContext: this.currentContext,
           effectiveCostLimitUsd:
             typeof configuredLimit === 'number' ? configuredLimit : null,

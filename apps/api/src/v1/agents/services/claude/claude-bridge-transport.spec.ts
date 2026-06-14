@@ -22,6 +22,8 @@ describe('ClaudeBridgeTransport', () => {
     onDone: ReturnType<typeof vi.fn>;
     onAborted: ReturnType<typeof vi.fn>;
     onFatal: ReturnType<typeof vi.fn>;
+    onToolCallRequest: ReturnType<typeof vi.fn>;
+    onQuestionRequest: ReturnType<typeof vi.fn>;
   };
 
   beforeEach(() => {
@@ -39,6 +41,8 @@ describe('ClaudeBridgeTransport', () => {
       onDone: vi.fn(),
       onAborted: vi.fn(),
       onFatal: vi.fn(),
+      onToolCallRequest: vi.fn(),
+      onQuestionRequest: vi.fn(),
     };
   });
 
@@ -84,6 +88,56 @@ describe('ClaudeBridgeTransport', () => {
       expect.objectContaining({ type: 'system', session_id: 's-1' }),
     );
     expect(handlers.onFatal).not.toHaveBeenCalled();
+
+    transport.close();
+  });
+
+  it('fails the transport instead of letting a throwing message handler escape the stdout data handler', async () => {
+    // The catch in onStdout is the last guard keeping a throwing handler from
+    // escaping a runtime stream's 'data' handler uncaught in the API process.
+    // A handler crash must become a graceful transport-fail, not a blast.
+    const transport = await startTransport();
+
+    handlers.onSdkMessage.mockImplementation(() => {
+      throw new Error('handler boom');
+    });
+
+    expect(() =>
+      stdout.emit(
+        'data',
+        Buffer.from(
+          serializeFrame({
+            type: 'sdk_message',
+            message: { type: 'assistant', session_id: 's-1' },
+          }),
+        ),
+      ),
+    ).not.toThrow();
+
+    expect(handlers.onFatal).toHaveBeenCalledTimes(1);
+    expect(handlers.onFatal).toHaveBeenCalledWith(
+      expect.stringContaining('bridge stdout processing error'),
+    );
+    expect(handlers.onFatal.mock.calls[0]![0]).toContain('handler boom');
+
+    // After the fatal, the `finished` latch must suppress further frames: a
+    // second sandbox-controlled stdout frame neither re-fires onFatal nor
+    // reaches the (still-throwing) handler again.
+    const sdkCallsAtFatal = handlers.onSdkMessage.mock.calls.length;
+    expect(() =>
+      stdout.emit(
+        'data',
+        Buffer.from(
+          serializeFrame({
+            type: 'sdk_message',
+            message: { type: 'assistant', session_id: 's-2' },
+          }),
+        ),
+      ),
+    ).not.toThrow();
+
+    expect(handlers.onFatal).toHaveBeenCalledTimes(1);
+    expect(handlers.onSdkMessage.mock.calls.length).toBe(sdkCallsAtFatal);
 
     transport.close();
   });
@@ -182,6 +236,156 @@ describe('ClaudeBridgeTransport', () => {
 
     expect(handlers.onSdkMessage).not.toHaveBeenCalled();
     expect(handlers.onFatal).not.toHaveBeenCalled();
+    transport.close();
+  });
+
+  it('forwards a valid tool_call_request with args passed through verbatim', async () => {
+    const transport = await startTransport();
+
+    stdout.emit(
+      'data',
+      Buffer.from(
+        serializeFrame({
+          type: 'tool_call_request',
+          id: 'tool-1',
+          toolName: 'knowledge_search_docs',
+          args: { query: 'threads', nested: { deep: true } },
+        }),
+      ),
+    );
+
+    expect(handlers.onToolCallRequest).toHaveBeenCalledWith({
+      id: 'tool-1',
+      toolName: 'knowledge_search_docs',
+      args: { query: 'threads', nested: { deep: true } },
+    });
+    transport.close();
+  });
+
+  it('drops tool_call_request frames with missing/empty id or toolName (trust boundary)', async () => {
+    const transport = await startTransport();
+
+    expect(() => {
+      stdout.emit(
+        'data',
+        Buffer.from(serializeFrame({ type: 'tool_call_request' })),
+      );
+      stdout.emit(
+        'data',
+        Buffer.from(
+          serializeFrame({ type: 'tool_call_request', id: '', toolName: 't' }),
+        ),
+      );
+      stdout.emit(
+        'data',
+        Buffer.from(
+          serializeFrame({ type: 'tool_call_request', id: 42, toolName: 't' }),
+        ),
+      );
+      stdout.emit(
+        'data',
+        Buffer.from(
+          serializeFrame({
+            type: 'tool_call_request',
+            id: 'tool-1',
+            toolName: { evil: true },
+          }),
+        ),
+      );
+    }).not.toThrow();
+
+    expect(handlers.onToolCallRequest).not.toHaveBeenCalled();
+    expect(handlers.onFatal).not.toHaveBeenCalled();
+    transport.close();
+  });
+
+  it('forwards a question_request keeping only structurally valid question entries', async () => {
+    const transport = await startTransport();
+
+    stdout.emit(
+      'data',
+      Buffer.from(
+        serializeFrame({
+          type: 'question_request',
+          id: 'question-1',
+          questions: [
+            null,
+            'garbage',
+            {
+              question: 'Which DB?',
+              header: 'DB',
+              multiSelect: false,
+              options: [42, { label: 'Postgres', description: 'pg' }],
+            },
+            { question: 7, options: 'nope' },
+          ],
+        }),
+      ),
+    );
+
+    expect(handlers.onQuestionRequest).toHaveBeenCalledWith({
+      id: 'question-1',
+      questions: [
+        {
+          question: 'Which DB?',
+          header: 'DB',
+          multiSelect: false,
+          options: [{ label: 'Postgres', description: 'pg' }],
+        },
+        {},
+      ],
+    });
+    transport.close();
+  });
+
+  it('drops question_request frames without a string id and survives non-array questions', async () => {
+    const transport = await startTransport();
+
+    expect(() => {
+      stdout.emit(
+        'data',
+        Buffer.from(
+          serializeFrame({ type: 'question_request', questions: [] }),
+        ),
+      );
+      stdout.emit(
+        'data',
+        Buffer.from(
+          serializeFrame({
+            type: 'question_request',
+            id: 'question-2',
+            questions: { not: 'an array' },
+          }),
+        ),
+      );
+    }).not.toThrow();
+
+    expect(handlers.onQuestionRequest).toHaveBeenCalledTimes(1);
+    expect(handlers.onQuestionRequest).toHaveBeenCalledWith({
+      id: 'question-2',
+      questions: [],
+    });
+    transport.close();
+  });
+
+  it('writes tool_call_response and question_response commands to stdin', async () => {
+    const transport = await startTransport();
+    const written: string[] = [];
+    stdin.on('data', (chunk: Buffer) => written.push(chunk.toString()));
+
+    transport.send({ type: 'tool_call_response', id: 'tool-1', result: 'ok' });
+    transport.send({
+      type: 'question_response',
+      id: 'question-1',
+      answers: ['Postgres'],
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    const joined = written.join('');
+    expect(joined).toContain('"type":"tool_call_response"');
+    expect(joined).toContain('"id":"tool-1"');
+    expect(joined).toContain('"type":"question_response"');
+    expect(joined).toContain('"answers":["Postgres"]');
     transport.close();
   });
 

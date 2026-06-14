@@ -643,5 +643,58 @@ describe('AgentCommunicationToolTemplate', () => {
       // Should fall back to "No response message available" when no non-system messages exist
       expect(result.message).toBe('No response message available');
     });
+
+    it('honors AgentOutput.needsMoreInfo and reports callee usage (checkpoint-less callee)', async () => {
+      const questionMessage = new AIMessage('Which DB?\n- Postgres: pg');
+      vi.mocked(mockAgent.runOrAppend).mockResolvedValue({
+        messages: [questionMessage],
+        threadId: 'callee-thread',
+        needsMoreInfo: true,
+        // Run-scoped statistics are the ONLY source of the cost fold —
+        // message kwargs would re-count history on repeat invocations.
+        statistics: {
+          usage: {
+            inputTokens: 100,
+            cachedInputTokens: 0,
+            outputTokens: 50,
+            totalTokens: 150,
+            totalPrice: 0.05,
+          },
+        },
+      } as never);
+
+      const handle = await template.create();
+      const init: GraphNode<Record<string, never>> = {
+        config: {},
+        inputNodeIds: new Set(),
+        outputNodeIds: new Set(['agent-1']),
+        metadata: {
+          graphId: 'graph-1',
+          nodeId: 'tool-node',
+          version: '1',
+          graph_created_by: 'user-1',
+          graph_project_id: '11111111-1111-1111-1111-111111111111',
+        },
+      };
+      const instance = await handle.provide(init);
+      await handle.configure(init, instance);
+      const buildConfig = vi.mocked(mockCommunicationToolGroup.buildTools).mock
+        .calls[0]![0] as any;
+      const agentInfo = buildConfig.agents[0];
+
+      const result = await agentInfo.invokeAgent(['Hello'], {
+        configurable: { thread_id: 'parent-thread' },
+      } as any);
+
+      expect(result.needsMoreInfo).toBe(true);
+      expect(result.message).toContain('Which DB?');
+      expect(result.calleeUsage).toEqual({
+        inputTokens: 100,
+        cachedInputTokens: 0,
+        outputTokens: 50,
+        totalTokens: 150,
+        totalPrice: 0.05,
+      });
+    });
   });
 });

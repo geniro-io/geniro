@@ -126,7 +126,11 @@ export const environment = () =>
     ),
 
     // LLM model defaults for tools (do not override per-call)
-    dockerSocket: getEnv('DOCKER_SOCKET', '/var/run/docker.sock'),
+    // Explicit socket-path override only. Left unset, the runtime defers to
+    // dockerode's standard env resolution (DOCKER_HOST, TLS, then the default
+    // socket) via resolveDockerOptions — so Colima/Podman/Docker-Desktop work
+    // with no app-specific config. A hardcoded default here would suppress it.
+    dockerSocket: getEnv('DOCKER_SOCKET'),
     dockerRuntimeImage: getEnv(
       'DOCKER_RUNTIME_IMAGE',
       'razumru/geniro-runtime:latest',
