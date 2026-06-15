@@ -1,3 +1,7 @@
+import { existsSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+
 import Docker from 'dockerode';
 import { Client } from 'pg';
 import {
@@ -21,7 +25,41 @@ const RUNTIME_TYPE_LABEL = 'geniro.io/type=runtime';
  * or schema state happens before vitest spawns its workers, so the worker-side
  * `setup.ts` can read deterministic values from `process.env`.
  */
+/**
+ * macOS Colima exposes no host-side `/var/run/docker.sock`, and testcontainers
+ * v12 only auto-detects Docker Desktop — so on a Colima box Ryuk tries to
+ * bind-mount the host socket path into its VM and dies with `operation not
+ * supported`. Detect Colima here and set the two env vars the suite needs,
+ * unless the developer already exported their own. This runs before any
+ * container boots — and `globalSetup` mutations land before vitest spawns its
+ * workers (see the env-propagation note in `globalSetup`), so the worker-side
+ * Dockerode in the NestJS app sees `DOCKER_HOST` too. CI (Linux, native
+ * `/var/run/docker.sock`, no `~/.colima`) never trips the socket-existence
+ * guard, so it is untouched and needs no override.
+ */
+function ensureColimaDockerEnv(): void {
+  const colimaSocket = join(homedir(), '.colima', 'default', 'docker.sock');
+  if (!existsSync(colimaSocket)) {
+    return;
+  }
+  const applied: string[] = [];
+  if (!process.env.DOCKER_HOST) {
+    process.env.DOCKER_HOST = `unix://${colimaSocket}`;
+    applied.push('DOCKER_HOST');
+  }
+  if (!process.env.TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE) {
+    process.env.TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE = '/var/run/docker.sock';
+    applied.push('TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE');
+  }
+  if (applied.length > 0) {
+    process.stdout.write(
+      `[integration] Colima detected — auto-configured ${applied.join(' + ')}\n`,
+    );
+  }
+}
+
 export default async function globalSetup(): Promise<() => Promise<void>> {
+  ensureColimaDockerEnv();
   const startedAt = Date.now();
   const sessionStartedAtUnixSec = Math.floor(startedAt / 1000);
   const [postgresContainer, redisContainer, qdrantContainer] =
