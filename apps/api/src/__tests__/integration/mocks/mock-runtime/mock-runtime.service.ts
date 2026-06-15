@@ -2,6 +2,7 @@
 import { Injectable } from '@nestjs/common';
 
 import type { RuntimeExecResult } from '../../../../v1/runtime/runtime.types';
+import type { MockBridgeScenario } from './mock-bridge';
 import {
   MockRuntimeExecFixture,
   MockRuntimeExecMatcher,
@@ -30,6 +31,8 @@ import {
 export class MockRuntimeService {
   private execFixtures: MockRuntimeExecFixture[] = [];
   private requestLog: MockRuntimeExecRequest[] = [];
+  /** FIFO queue of Claude bridge scenarios, consumed one per session start. */
+  private bridgeScenarios: MockBridgeScenario[] = [];
   private hostnameCounter = 0;
   private _callIndex = 0;
   /**
@@ -56,6 +59,20 @@ export class MockRuntimeService {
     this.strict = strict;
   }
 
+  /**
+   * Queue a Claude bridge scenario. `MockRuntime.execStream` plays one queued
+   * scenario per `node bridge.mjs` launch (FIFO), driving the bridge→host frame
+   * sequence a real subprocess would emit. See `mock-bridge.ts`.
+   */
+  public queueBridge(scenario: MockBridgeScenario): void {
+    this.bridgeScenarios.push(scenario);
+  }
+
+  /** Internal: MockRuntime pulls the next queued bridge scenario on launch. */
+  public takeBridgeScenario(): MockBridgeScenario | undefined {
+    return this.bridgeScenarios.shift();
+  }
+
   // ---------------------------------------------------------------------------
   // Request log access
   // ---------------------------------------------------------------------------
@@ -75,6 +92,7 @@ export class MockRuntimeService {
   public reset(): void {
     this.execFixtures = [];
     this.requestLog = [];
+    this.bridgeScenarios = [];
     this._callIndex = 0;
     this.strict = false;
   }

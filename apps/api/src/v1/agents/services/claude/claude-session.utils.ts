@@ -36,6 +36,26 @@ export function redactGitUrl(text: string): string {
 }
 
 /**
+ * Redacts secrets from a sandbox-derived error string before it crosses the
+ * trust boundary into a sink that retains it — a persisted/user-visible thread
+ * message OR an exception whose message/description reaches Pino/Sentry. A
+ * `fatal` bridge frame legitimately echoes either of two secret shapes: a
+ * failed `git clone` carries a PAT-bearing `https://…@` URL, and an LLM-proxy
+ * error carries the per-thread LiteLLM/Anthropic virtual key (`sk-…`). This
+ * composes {@link redactGitUrl} (the URL userinfo) with a mask for the bare
+ * `sk-` key. It also masks the bare GitHub installation token (`GH_TOKEN` —
+ * `ghp_`/`gho_`/`ghu_`/`ghs_`/`ghr_`/`github_pat_`): that token is the other
+ * sandbox-env secret, and the `gh` CLI echoes it verbatim (not URL-embedded) on
+ * an auth error, so `redactGitUrl` alone misses it. Apply at every sink that
+ * surfaces a sandbox-derived string verbatim (see sandbox-boundary rule).
+ */
+export function sanitizeSandboxError(text: string): string {
+  return redactGitUrl(text)
+    .replace(/\bsk-[A-Za-z0-9_-]{8,}/g, 'sk-***')
+    .replace(/\b(gh[oprsu]|github_pat)_[A-Za-z0-9_]{8,}/g, '$1_***');
+}
+
+/**
  * Exclusion policy for forwarding wired Geniro tools into a Claude SDK
  * session: agent-context-bound tools never cross (forbidden by the spec), and
  * tools wholly covered by Claude Code natives are skipped to avoid duplicate
@@ -113,13 +133,24 @@ export function buildBridgeToolDefinitions(
 export function buildClaudeSessionEnv(
   virtualKey: string,
   githubToken?: string | null,
+  options?: { isRemoteRuntime?: boolean },
 ): Record<string, string> {
-  const baseUrl = environment.litellmSandboxUrl;
+  // A remote runtime (Daytona, on a separate host) cannot reach the cluster-
+  // internal LiteLLM URL, so its session needs the public one. Fail closed with
+  // a precise error rather than handing the sandbox an unreachable URL.
+  const baseUrl = options?.isRemoteRuntime
+    ? environment.litellmPublicUrl
+    : environment.litellmSandboxUrl;
   if (!baseUrl) {
-    throw new InternalException(
-      'CLAUDE_SANDBOX_LLM_URL_MISSING',
-      'LITELLM_SANDBOX_URL is not configured — Claude Agent sessions need a LiteLLM URL reachable from inside sandbox runtimes',
-    );
+    throw options?.isRemoteRuntime
+      ? new InternalException(
+          'CLAUDE_PUBLIC_LLM_URL_MISSING',
+          'LITELLM_PUBLIC_URL is not configured — Claude Agent sessions on a remote (Daytona) runtime need a publicly reachable LiteLLM URL',
+        )
+      : new InternalException(
+          'CLAUDE_SANDBOX_LLM_URL_MISSING',
+          'LITELLM_SANDBOX_URL is not configured — Claude Agent sessions need a LiteLLM URL reachable from inside sandbox runtimes',
+        );
   }
 
   return {

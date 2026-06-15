@@ -17,7 +17,7 @@ import { GIT_CREDENTIAL_HELPER_CONFIG } from '../../../git-auth/git-auth.types';
 import { BaseRuntime } from '../../../runtime/services/base-runtime';
 import type { ClaudePluginSource } from './claude-session.types';
 import { CLAUDE_INSTALL_DIR, CLAUDE_PLUGINS_DIR } from './claude-session.types';
-import { redactGitUrl } from './claude-session.utils';
+import { redactGitUrl, sanitizeSandboxError } from './claude-session.utils';
 
 // Scheme-anchored: a bare character allowlist still admits git option
 // injection (leading-dash "urls" like --upload-pack=...) and code-executing
@@ -266,7 +266,9 @@ export class ClaudeBootstrapService {
     if (install.fail) {
       throw new BadRequestException(
         'CLAUDE_BRIDGE_INSTALL_FAILED',
-        `Failed to install the Claude bridge into the runtime: ${install.stderr.slice(-500)}`,
+        `Failed to install the Claude bridge into the runtime: ${sanitizeSandboxError(
+          install.stderr.slice(-500),
+        )}`,
       );
     }
 
@@ -310,8 +312,12 @@ export class ClaudeBootstrapService {
     if (clone.fail) {
       throw new BadRequestException(
         'CLAUDE_PLUGIN_CLONE_FAILED',
-        // git error output echoes the remote URL — redact embedded creds.
-        `Failed to clone the plugin repository: ${redactGitUrl(clone.stderr.slice(-500))}`,
+        // git stderr is sandbox-derived: it can echo the remote URL's embedded
+        // PAT AND a bare GH_TOKEN / sk- key — sanitizeSandboxError covers all
+        // three (it composes redactGitUrl).
+        `Failed to clone the plugin repository: ${sanitizeSandboxError(
+          clone.stderr.slice(-500),
+        )}`,
       );
     }
 

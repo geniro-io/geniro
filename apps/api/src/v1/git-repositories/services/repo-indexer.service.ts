@@ -33,6 +33,18 @@ const FILE_READ_CONCURRENCY = 20;
 // Guards against pathological repos with an extreme number of indexed chunks.
 const PREFETCH_MAX_POINTS = 500_000;
 
+// Conventional exit code the runtime returns when an exec is killed by a
+// timeout or session restart (vs a genuine git error). The Docker session-exec
+// path resolves a tail-timeout / session-restart with this code WITHOUT
+// throwing, so it is the signal used to distinguish a transient, retryable
+// failure from a legitimate non-zero exit (e.g. `[ -f missing ]` → 1).
+const GIT_EXEC_TIMEOUT_EXIT_CODE = 124;
+
+// Bounded retry for idempotent git reads that hit a transient exec timeout
+// under heavy parallel load. Total attempts including the first; linear backoff.
+const GIT_READ_RETRY_ATTEMPTS = 3;
+const GIT_READ_RETRY_DELAY_MS = 500;
+
 /** Shared prefix for all codebase index Qdrant collections. */
 export const CODEBASE_COLLECTION_PREFIX = 'codebase_';
 
@@ -240,6 +252,63 @@ export class RepoIndexerService {
       return Promise.race([execFn(params), timeoutPromise]).finally(() => {
         clearTimeout(timer);
       });
+    };
+  }
+
+  /**
+   * Wrap an `execFn` so transient exec failures on idempotent git commands
+   * (reads, plus idempotent fetch --deepen/--unshallow) are retried. The Docker
+   * session-exec path resolves a tail-timeout or
+   * session-restart with `exitCode: 124` (it does NOT throw), and `withTimeout`
+   * above rejects on its own deadline. Under heavy parallel load a slow `git`
+   * read can hit either path; without a retry the caller sees a failed read and
+   * — for callers that map a failed read to "no data" (listTrackedFiles,
+   * batchFileExists, prepareFileIndexInput, the incremental diff) — silently
+   * indexes zero files. A bounded retry with linear backoff absorbs the
+   * transient. Only the timeout exit code and thrown rejections are retried; a
+   * legitimate non-zero exit (e.g. `[ -f missing ]` → 1, `head -c` on a missing
+   * file) is returned as-is so callers that depend on it keep working.
+   *
+   * Compose OUTSIDE withTimeout (`withRetry(withTimeout(fn))`) so each attempt
+   * gets its own deadline and the retry spans attempts.
+   */
+  static withRetry(
+    execFn: RepoExecFn,
+    attempts = GIT_READ_RETRY_ATTEMPTS,
+    delayMs = GIT_READ_RETRY_DELAY_MS,
+  ): RepoExecFn {
+    if (attempts <= 1) {
+      return execFn;
+    }
+    return async (params) => {
+      let lastResult: {
+        exitCode: number;
+        stdout: string;
+        stderr: string;
+      } | null = null;
+      let lastError: unknown;
+      for (let attempt = 1; attempt <= attempts; attempt++) {
+        try {
+          const res = await execFn(params);
+          if (res.exitCode !== GIT_EXEC_TIMEOUT_EXIT_CODE) {
+            return res;
+          }
+          lastResult = res;
+          lastError = undefined;
+        } catch (error) {
+          lastError = error;
+          lastResult = null;
+        }
+        if (attempt < attempts) {
+          await new Promise((resolve) =>
+            setTimeout(resolve, delayMs * attempt),
+          );
+        }
+      }
+      if (lastResult) {
+        return lastResult;
+      }
+      throw lastError;
     };
   }
 
@@ -683,7 +752,9 @@ export class RepoIndexerService {
     onProgressUpdate?: (tokenCount: number) => Promise<void>,
     signal?: AbortSignal,
   ): Promise<void> {
-    const execFn = RepoIndexerService.withTimeout(rawExecFn);
+    const execFn = RepoIndexerService.withRetry(
+      RepoIndexerService.withTimeout(rawExecFn),
+    );
     await this.runFullIndexInternal(
       params,
       execFn,
@@ -759,7 +830,9 @@ export class RepoIndexerService {
     onProgressUpdate?: (tokenCount: number) => Promise<void>,
     signal?: AbortSignal,
   ): Promise<void> {
-    const execFn = RepoIndexerService.withTimeout(rawExecFn);
+    const execFn = RepoIndexerService.withRetry(
+      RepoIndexerService.withTimeout(rawExecFn),
+    );
 
     // Ensure lastIndexedCommit is reachable (shallow clones may not include it).
     // If deepening fails the diff below will also fail, triggering full-reindex
@@ -1275,7 +1348,15 @@ export class RepoIndexerService {
       cmd: `git -C ${shQuote(repoRoot)} ls-files`,
     });
     if (res.exitCode !== 0) {
-      return [];
+      // A failed read (e.g. a load-induced exec timeout that exhausted retries)
+      // is NOT an empty repository. Returning [] here would silently index zero
+      // files; fail loud instead, mirroring resolveCurrentCommit's empty guard.
+      // A genuinely empty repo exits 0 with empty stdout and still returns [].
+      throw new Error(
+        `Failed to list tracked files: ${
+          res.stderr || `git ls-files exited ${res.exitCode}`
+        }`,
+      );
     }
     return res.stdout
       .split('\n')
@@ -1308,6 +1389,15 @@ export class RepoIndexerService {
     const res = await execFn({
       cmd: `git -C ${shQuote(repoRoot)} status --porcelain`,
     });
+    if (res.exitCode === GIT_EXEC_TIMEOUT_EXIT_CODE) {
+      // A timed-out read (after retries) is not "no working-tree changes";
+      // swallowing it would skip indexing genuinely-modified files. Fail loud,
+      // consistent with listTrackedFiles. `git status` exits 0 with empty stdout
+      // for a genuinely clean tree, so the no-changes case still returns [].
+      throw new Error(
+        `Failed to list working-tree changes: ${res.stderr || 'exec timeout'}`,
+      );
+    }
     if (res.exitCode !== 0) {
       return [];
     }
@@ -1459,8 +1549,22 @@ export class RepoIndexerService {
         }),
       );
       for (let j = 0; j < slice.length; j++) {
+        const response = responses[j]!;
+        if (response.exitCode === GIT_EXEC_TIMEOUT_EXIT_CODE) {
+          // A timed-out / session-restarted existence check (exit 124, empty
+          // stdout) is NOT "every file in this batch is absent" — treating it
+          // so would mark live files deleted and drop their indexed chunks.
+          // Fail loud, mirroring listTrackedFiles. A genuine `[ -f ] && echo`
+          // chain exits 0 or 1, never 124, so real absences keep working.
+          throw new Error(
+            `File-existence check failed (exec timeout): ${
+              response.stderr || `exit ${response.exitCode}`
+            }`,
+          );
+        }
         const existingPaths = new Set(
-          responses[j]!.stdout.split('\n')
+          response.stdout
+            .split('\n')
             .map((l) => l.trim())
             .filter(Boolean),
         );

@@ -295,6 +295,7 @@ When all four are set, the `GET /api/system/settings` endpoint returns `githubAp
 - **Observability**: Pino structured logging, Prometheus metrics at `/metrics`, optional Sentry.
 - **Vector search**: Qdrant stores knowledge chunk embeddings; queries use `text-embedding-3-small` via LiteLLM.
 - **LLM routing**: All model calls go through a local LiteLLM proxy (port 4000). Supports OpenAI, and Ollama for offline use.
+- **Claude Agent (sandbox-bridged)**: A graph-node agent type running Claude Code (Anthropic Agent SDK) inside the thread's sandbox runtime via a JSON-line stdio bridge (`packages/claude-bridge`), on Docker / K8s / Daytona transports. No host-side LangGraph/checkpointer. Requires a node-based runtime image. Sandbox→LiteLLM reachability: `LITELLM_SANDBOX_URL` (in-cluster Docker/K8s) and `LITELLM_PUBLIC_URL` (remote Daytona sandboxes — required for Claude sessions on Daytona, fail-closed if unset). LLM calls use a per-thread LiteLLM virtual key (TTL-GC'd); the master key never enters a sandbox. Diverges from Simple Agent: no `newMessageMode`/`summarize*` (SDK auto-compaction → `stateUpdate`). Architecture details: `docs/project-structure.md` §"Claude Agent (sandbox-bridged)".
 
 ---
 

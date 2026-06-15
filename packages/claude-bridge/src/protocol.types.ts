@@ -156,11 +156,12 @@ export type BridgeCommand =
   /**
    * Resolves the pending `question_request` with the same id. `answers` align
    * by index with the request's `questions`; `deny: true` (or missing answers)
-   * makes the bridge deny the AskUserQuestion call gracefully. The current
-   * host always ends the turn via `interrupt` instead of answering live
-   * (NeedMoreInfo / parent-relay both resume the session with the answer as
-   * the next prompt); the answer path is exercised end-to-end by the SDK and
-   * reserved for a live-answer mode.
+   * makes the bridge deny the AskUserQuestion call gracefully. The host always
+   * ends the turn via `interrupt` instead of answering live (NeedMoreInfo
+   * resumes the session with the answer as the next prompt); the live-answer
+   * path is exercised end-to-end by the SDK and reserved for a future in-session
+   * answering mode, which additionally needs a synchronous inter-agent ask-back
+   * channel host-side before any code can send this command.
    */
   | {
       type: 'question_response';
@@ -188,6 +189,18 @@ export type BridgeEvent =
   | { type: 'tool_call_request'; id: string; toolName: string; args: unknown }
   /** Intercepted AskUserQuestion; the host replies with `question_response` carrying the same id. */
   | { type: 'question_request'; id: string; questions: BridgeQuestion[] }
+  /**
+   * Periodic keepalive the bridge writes to stdout while a session runs. It
+   * carries no payload — its only job is to put bytes on the exec channel
+   * during long model-think or tool-exec gaps so a runtime that idle-times-out
+   * an inactive exec stream (the K8s apiserver / load-balancer exec WebSocket,
+   * Daytona remote sessions) does not close it mid-turn. The host treats it as a
+   * no-op beyond the per-chunk activity hook. Additive and host-ignorable, so it
+   * deliberately does NOT bump BRIDGE_PROTOCOL_VERSION: host and bridge always
+   * ship from the same build, and bumping the version would needlessly
+   * invalidate the sandbox SDK-install marker (claude-bootstrap.service.ts).
+   */
+  | { type: 'heartbeat' }
   | { type: 'done'; sessionId?: string }
   | { type: 'aborted'; sessionId?: string }
   | { type: 'fatal'; error: string };

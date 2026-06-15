@@ -24,6 +24,7 @@ describe('ClaudeBridgeTransport', () => {
     onFatal: ReturnType<typeof vi.fn>;
     onToolCallRequest: ReturnType<typeof vi.fn>;
     onQuestionRequest: ReturnType<typeof vi.fn>;
+    onActivity: ReturnType<typeof vi.fn>;
   };
 
   beforeEach(() => {
@@ -43,6 +44,7 @@ describe('ClaudeBridgeTransport', () => {
       onFatal: vi.fn(),
       onToolCallRequest: vi.fn(),
       onQuestionRequest: vi.fn(),
+      onActivity: vi.fn(),
     };
   });
 
@@ -365,6 +367,45 @@ describe('ClaudeBridgeTransport', () => {
       id: 'question-2',
       questions: [],
     });
+    transport.close();
+  });
+
+  it('treats a heartbeat frame as a keepalive no-op that fires onActivity only (trust boundary)', async () => {
+    const transport = await startTransport();
+
+    // onActivity fires for every stdout chunk (the ready frame already counted),
+    // so measure the delta the heartbeat itself contributes.
+    const activityBefore = handlers.onActivity.mock.calls.length;
+
+    expect(() => {
+      stdout.emit('data', Buffer.from(serializeFrame({ type: 'heartbeat' })));
+      // Extra junk fields on a heartbeat are harmless — it carries no payload,
+      // so there is nothing to structurally dereference.
+      stdout.emit(
+        'data',
+        Buffer.from(
+          serializeFrame({ type: 'heartbeat', evil: { nested: true } }),
+        ),
+      );
+    }).not.toThrow();
+
+    expect(handlers.onActivity.mock.calls.length).toBeGreaterThan(
+      activityBefore,
+    );
+    expect(handlers.onSdkMessage).not.toHaveBeenCalled();
+    expect(handlers.onDone).not.toHaveBeenCalled();
+    expect(handlers.onAborted).not.toHaveBeenCalled();
+    expect(handlers.onFatal).not.toHaveBeenCalled();
+    expect(handlers.onToolCallRequest).not.toHaveBeenCalled();
+    expect(handlers.onQuestionRequest).not.toHaveBeenCalled();
+
+    // The pump survives the heartbeat: a real frame after it still routes.
+    stdout.emit(
+      'data',
+      Buffer.from(serializeFrame({ type: 'done', sessionId: 's-hb' })),
+    );
+    expect(handlers.onDone).toHaveBeenCalledWith('s-hb');
+
     transport.close();
   });
 

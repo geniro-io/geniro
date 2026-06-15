@@ -43,6 +43,23 @@ const HARD_TIMEOUT_MS = 3_600_000;
 const POLL_INTERVAL_MS = 200;
 
 /**
+ * `execStream` stdin retry budget: an async session command may not have opened
+ * its input pipe yet when the first bytes are written. Mirrors the proven retry
+ * in DaytonaExecTransport.
+ */
+const EXEC_STREAM_INPUT_RETRY_ATTEMPTS = 10;
+const EXEC_STREAM_INPUT_RETRY_DELAY_MS = 500;
+
+/**
+ * Upper bound on the echo-suppression set. A genuine stdin echo returns within
+ * milliseconds of its write, so an entry still unmatched after this many later
+ * writes never will — evict the oldest to keep the set from growing unbounded
+ * over a long-lived session when the toolbox honors `suppressInputEcho` (in
+ * which case no echo ever arrives and entries would otherwise leak forever).
+ */
+const ECHO_FILTER_MAX_ENTRIES = 256;
+
+/**
  * Grace period before the snapshot fallback kicks in (ms).
  * Only used in the streaming (runAsync: true) path.
  */
@@ -1189,17 +1206,18 @@ export class DaytonaRuntime extends BaseRuntime {
     }
   }
 
-  private static stripAnsi(str: string): string {
-    /* eslint-disable no-control-regex */
-    return str
-      .replace(
-        /[\x1b\x9b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><~]/g,
-        '',
-      )
-      .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '');
-    /* eslint-enable no-control-regex */
-  }
-
+  /**
+   * Persistent duplex exec over Daytona's session process API — NOT a PTY.
+   *
+   * A PTY shell echoes stdin back on stdout and injects prompt/ANSI noise that
+   * corrupts the bridge's newline-delimited JSON protocol (the spike's blocking
+   * defect). The session API instead gives cleanly separated stdout/stderr
+   * callbacks and a dedicated stdin pipe. `suppressInputEcho` asks the toolbox
+   * to drop the echo server-side; the client-side `pendingEchoLines` filter is
+   * the fallback for toolbox versions that ignore the flag (mirrors the proven
+   * DaytonaExecTransport). This is the transport the Claude bridge runs on when
+   * a graph executes on a Daytona runtime.
+   */
   public override async execStream(
     command: string[],
     options?: {
@@ -1215,84 +1233,163 @@ export class DaytonaRuntime extends BaseRuntime {
     if (!this.sandbox) {
       throw new Error('Runtime not started');
     }
+    const sandbox = this.sandbox;
 
-    const stdoutStream = new PassThrough();
-    const stderrStream = new PassThrough();
+    const stdout = new PassThrough();
+    const stderr = new PassThrough();
 
     const cwd = options?.workdir || this.workdir;
     const envPrefix = buildEnvPrefix(options?.env);
-    const escapedArgs = command.map(shellEscape);
-    const cmd = `${envPrefix}${escapedArgs.join(' ')}`;
-    let accumulated = '';
+    const baseCmd = `${envPrefix}${command.map(shellEscape).join(' ')}`;
+    const fullCmd = cwd ? `cd ${shellEscape(cwd)} && ${baseCmd}` : baseCmd;
 
-    const ptyId = `pty-${randomUUID()}`;
-    this.activeSessions.add(ptyId);
-    const ptyHandle = await this.sandbox.process.createPty({
-      id: ptyId,
-      cwd,
-      envs: { SHELL: '/bin/sh', TERM: 'xterm-256color', ...options?.env },
-      cols: 220,
-      rows: 50,
-      onData: (data: Uint8Array) => {
-        const text = new TextDecoder().decode(data);
-        const stripped = DaytonaRuntime.stripAnsi(text);
-        if (stripped) {
-          accumulated += stripped;
-          stdoutStream.write(stripped);
-        }
-      },
+    const sessionId = `bridge-${randomUUID()}`;
+    this.activeSessions.add(sessionId);
+    await sandbox.process.createSession(sessionId);
+
+    const { cmdId } = await sandbox.process.executeSessionCommand(sessionId, {
+      command: fullCmd,
+      runAsync: true,
+      suppressInputEcho: true,
     });
 
-    await ptyHandle.waitForConnection();
+    // Lines we wrote to stdin that Daytona may echo back on stdout; strip the
+    // first match so a bridge command is never re-read by the host as if it
+    // were a bridge event. Command and event `type`s are disjoint, so a strip
+    // can only ever remove a genuine echo, never a real event.
+    const pendingEchoLines = new Set<string>();
+    let stdoutBuffer = '';
+    let closed = false;
 
-    // Send the command to the PTY shell
-    await ptyHandle.sendInput(cmd + '\n');
-
-    // Wait for completion in the background and handle exit
-    void ptyHandle
-      .wait()
-      .then((result) => {
-        const exitCode = result.exitCode ?? 0;
-        if (exitCode !== 0 && accumulated) {
-          stderrStream.write(accumulated);
-        }
-        stderrStream.end();
-        stdoutStream.end();
-      })
+    void sandbox.process
+      .getSessionCommandLogs(
+        sessionId,
+        cmdId,
+        (chunk: string) => {
+          if (closed) {
+            return; // streams ended by close(); drop late chunks
+          }
+          stdoutBuffer += chunk;
+          const lines = stdoutBuffer.split('\n');
+          stdoutBuffer = lines.pop() ?? '';
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (trimmed && pendingEchoLines.has(trimmed)) {
+              pendingEchoLines.delete(trimmed);
+              continue;
+            }
+            stdout.write(`${line}\n`);
+          }
+        },
+        (chunk: string) => {
+          if (closed) {
+            return;
+          }
+          stderr.write(chunk);
+        },
+      )
       .catch(() => {
-        stderrStream.end();
-        stdoutStream.end();
+        // A stream error surfaces to the consumer as an unexpected stream end
+        // (stdout/stderr end below); nothing else is actionable here.
+      })
+      .finally(() => {
+        stdout.end();
+        stderr.end();
       });
 
-    const stdinDuplex = new Duplex({
+    const stdin = new Duplex({
       write(
         chunk: Buffer,
         _encoding: BufferEncoding,
         callback: (error?: Error | null) => void,
       ) {
-        void ptyHandle
-          .sendInput(chunk.toString())
+        const data = chunk.toString();
+        for (const line of data.split('\n')) {
+          const trimmed = line.trim();
+          if (trimmed) {
+            pendingEchoLines.add(trimmed);
+            if (pendingEchoLines.size > ECHO_FILTER_MAX_ENTRIES) {
+              // Evict the oldest unmatched entry (Set preserves insertion order)
+              // so the suppression set stays bounded when echoes never return.
+              const oldest = pendingEchoLines.values().next().value;
+              if (oldest !== undefined) {
+                pendingEchoLines.delete(oldest);
+              }
+            }
+          }
+        }
+        void DaytonaRuntime.sendSessionInputWithRetry(
+          sandbox,
+          sessionId,
+          cmdId,
+          data,
+        )
           .then(() => callback())
-          .catch((err: Error) => callback(err));
+          .catch((err: Error) => {
+            // Undo the echo registrations for a line we never delivered.
+            for (const line of data.split('\n')) {
+              pendingEchoLines.delete(line.trim());
+            }
+            callback(err);
+          });
       },
       read() {
-        // No-op — stdin is write-only from the caller's perspective
+        // Write-only from the caller's perspective.
       },
     });
 
-    const close = () => {
-      this.activeSessions.delete(ptyId);
-      void ptyHandle
-        .kill()
-        .catch(() => {})
-        .then(() => ptyHandle.disconnect());
+    const close = (): void => {
+      if (closed) {
+        return;
+      }
+      closed = true;
+      // End the local streams directly rather than relying solely on the
+      // getSessionCommandLogs `.finally` — if deleteSession does not promptly
+      // settle the log-stream promise (network detach, swallowed error), the
+      // consumer's `stdout.on('end')` would otherwise never fire and the
+      // PassThroughs (with buffered data + listeners) would leak for the
+      // sandbox lifetime. The finally's end() then becomes a harmless no-op.
+      stdout.end();
+      stderr.end();
+      this.activeSessions.delete(sessionId);
+      void sandbox.process.deleteSession(sessionId).catch(() => {
+        // Session may already be gone (process exited / sandbox torn down).
+      });
     };
 
-    return {
-      stdin: stdinDuplex,
-      stdout: stdoutStream,
-      stderr: stderrStream,
-      close,
-    };
+    return { stdin, stdout, stderr, close };
+  }
+
+  /**
+   * Write to a session command's stdin, retrying while the async command's
+   * input pipe is still being created. Mirrors DaytonaExecTransport.send.
+   */
+  private static async sendSessionInputWithRetry(
+    sandbox: Sandbox,
+    sessionId: string,
+    cmdId: string,
+    data: string,
+  ): Promise<void> {
+    for (
+      let attempt = 1;
+      attempt <= EXEC_STREAM_INPUT_RETRY_ATTEMPTS;
+      attempt += 1
+    ) {
+      try {
+        await sandbox.process.sendSessionCommandInput(sessionId, cmdId, data);
+        return;
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        const isInputPipeNotReady =
+          msg.includes('input.pipe') || msg.includes('no such file');
+        if (isInputPipeNotReady && attempt < EXEC_STREAM_INPUT_RETRY_ATTEMPTS) {
+          await new Promise((resolve) =>
+            setTimeout(resolve, EXEC_STREAM_INPUT_RETRY_DELAY_MS),
+          );
+          continue;
+        }
+        throw error instanceof Error ? error : new Error(msg);
+      }
+    }
   }
 }

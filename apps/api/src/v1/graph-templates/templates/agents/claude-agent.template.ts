@@ -135,6 +135,14 @@ export class ClaudeAgentTemplate extends ClaudeAgentNodeBaseTemplate<
         params: GraphNode<ClaudeAgentTemplateSchemaType>,
         instance: ClaudeAgent,
       ) => {
+        // A revision deploy can land while this node has a live Claude session.
+        // Re-wiring runtime/tools/config under a streaming run would strand it
+        // against a swapped-out instance, so fail any live run visibly first.
+        // No-op on the initial configure() (no live runs yet).
+        await instance.failActiveRunsForRedeploy(
+          'a new graph revision was deployed',
+        );
+
         const graphId = params.metadata.graphId;
 
         const runtimeNodeId = Array.from(params.outputNodeIds).find(

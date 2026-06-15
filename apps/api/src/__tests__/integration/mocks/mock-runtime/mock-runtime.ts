@@ -10,6 +10,7 @@ import {
   BaseRuntime,
   RuntimeEvent,
 } from '../../../../v1/runtime/services/base-runtime';
+import { createMockBridgeStreams } from './mock-bridge';
 import { MockRuntimeService } from './mock-runtime.service';
 
 /**
@@ -116,7 +117,7 @@ export class MockRuntime extends BaseRuntime {
   }
 
   public override async execStream(
-    _command: string[],
+    command: string[],
     _options?: { workdir?: string; env?: Record<string, string> },
   ): Promise<{
     stdin: Duplex;
@@ -124,6 +125,20 @@ export class MockRuntime extends BaseRuntime {
     stderr: PassThrough;
     close: () => void;
   }> {
+    // A Claude bridge launch (`node …/bridge.mjs`) is driven by the scripted
+    // MockBridge so a full ClaudeAgent.run() exercises the real transport →
+    // stream-mapper → persistence path. Any other execStream caller keeps the
+    // old idle-pipes behavior.
+    const isBridgeLaunch =
+      command[0] === 'node' &&
+      typeof command[1] === 'string' &&
+      command[1].endsWith('bridge.mjs');
+    if (isBridgeLaunch) {
+      return createMockBridgeStreams(() =>
+        this.mockService.takeBridgeScenario(),
+      );
+    }
+
     const stdin = new PassThrough();
     const stdout = new PassThrough();
     const stderr = new PassThrough();

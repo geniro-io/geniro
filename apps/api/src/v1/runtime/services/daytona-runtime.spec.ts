@@ -17,6 +17,7 @@ const mockSandbox = {
     executeSessionCommand: vi.fn(),
     getSessionCommand: vi.fn(),
     getSessionCommandLogs: vi.fn(),
+    sendSessionCommandInput: vi.fn(),
     deleteSession: vi.fn(),
     listSessions: vi.fn().mockResolvedValue([]),
     createPty: vi.fn(),
@@ -397,40 +398,38 @@ describe('DaytonaRuntime', () => {
     });
   });
 
-  describe('execStream()', () => {
-    function createMockPtyHandle(overrides?: {
-      exitCode?: number;
-      onDataCb?: (fn: (data: Uint8Array) => void) => void;
-    }) {
-      let onDataFn: ((data: Uint8Array) => void) | undefined;
-      let waitResolve: ((result: { exitCode?: number }) => void) | undefined;
+  describe('execStream() — session-API bridge transport', () => {
+    function wireSessionLogs() {
+      let onStdout: ((chunk: string) => void) | undefined;
+      let onStderr: ((chunk: string) => void) | undefined;
+      let resolveLogs: (() => void) | undefined;
 
-      const handle = {
-        waitForConnection: vi.fn().mockResolvedValue(undefined),
-        sendInput: vi.fn().mockResolvedValue(undefined),
-        kill: vi.fn().mockResolvedValue(undefined),
-        disconnect: vi.fn().mockResolvedValue(undefined),
-        wait: vi.fn(
-          () =>
-            new Promise<{ exitCode?: number }>((resolve) => {
-              waitResolve = resolve;
-            }),
-        ),
-      };
-
-      mockSandbox.process.createPty.mockImplementation(
-        (opts: { onData: (data: Uint8Array) => void }) => {
-          onDataFn = opts.onData;
-          overrides?.onDataCb?.(onDataFn);
-          return Promise.resolve(handle);
+      mockSandbox.process.createSession.mockResolvedValue(undefined);
+      mockSandbox.process.executeSessionCommand.mockResolvedValue({
+        cmdId: 'cmd-1',
+      });
+      mockSandbox.process.deleteSession.mockResolvedValue(undefined);
+      mockSandbox.process.sendSessionCommandInput.mockResolvedValue(undefined);
+      mockSandbox.process.getSessionCommandLogs.mockImplementation(
+        (
+          _sessionId: string,
+          _cmdId: string,
+          stdoutCb: (chunk: string) => void,
+          stderrCb: (chunk: string) => void,
+        ) => {
+          onStdout = stdoutCb;
+          onStderr = stderrCb;
+          return new Promise<void>((resolve) => {
+            resolveLogs = resolve;
+          });
         },
       );
 
       return {
-        handle,
-        emitData: (text: string) => onDataFn?.(new TextEncoder().encode(text)),
-        resolveWait: (exitCode?: number) =>
-          waitResolve?.({ exitCode: exitCode ?? overrides?.exitCode ?? 0 }),
+        emitStdout: (text: string) => onStdout?.(text),
+        emitStderr: (text: string) => onStderr?.(text),
+        endLogs: () => resolveLogs?.(),
+        flush: () => new Promise<void>((r) => setImmediate(r)),
       };
     }
 
@@ -445,84 +444,124 @@ describe('DaytonaRuntime', () => {
       );
     });
 
-    it('returns stdin/stdout/stderr streams and calls createPty', async () => {
-      const pty = createMockPtyHandle();
+    it('runs an async session command (suppressInputEcho) with cwd prepended and streams stdout line-by-line — NOT a PTY', async () => {
+      const logs = wireSessionLogs();
 
       const { stdin, stdout, stderr, close } = await runtime.execStream(
-        ['echo', 'hello'],
-        { workdir: '/test' },
+        ['node', 'bridge.mjs'],
+        { workdir: '/ws' },
       );
 
-      expect(mockSandbox.process.createPty).toHaveBeenCalledWith(
-        expect.objectContaining({
-          cwd: '/test',
-          cols: 220,
-          rows: 50,
-          envs: expect.objectContaining({ TERM: 'xterm-256color' }),
-        }),
+      expect(mockSandbox.process.createPty).not.toHaveBeenCalled();
+      expect(mockSandbox.process.executeSessionCommand).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({ runAsync: true, suppressInputEcho: true }),
       );
-      expect(pty.handle.waitForConnection).toHaveBeenCalled();
-      expect(pty.handle.sendInput).toHaveBeenCalledWith("'echo' 'hello'\n");
-
-      // Simulate PTY output
-      pty.emitData('hello\n');
+      const command = (
+        mockSandbox.process.executeSessionCommand.mock.calls[0]![1] as {
+          command: string;
+        }
+      ).command;
+      expect(command).toContain("cd '/ws' &&");
+      expect(command).toContain("'node' 'bridge.mjs'");
 
       const chunks: string[] = [];
       stdout.on('data', (chunk: Buffer) => chunks.push(chunk.toString()));
+      logs.emitStdout('{"type":"ready"}\n{"type":"heartbeat"}\n');
+      await logs.flush();
 
-      // Resolve wait to end streams
-      pty.resolveWait(0);
-      await new Promise<void>((r) => stdout.on('end', r));
-
-      expect(chunks.join('')).toContain('hello');
+      expect(chunks.join('')).toBe('{"type":"ready"}\n{"type":"heartbeat"}\n');
       expect(stdin).toBeDefined();
       expect(stderr).toBeDefined();
       expect(close).toBeInstanceOf(Function);
     });
 
-    it('strips ANSI escape codes from PTY output', async () => {
-      const pty = createMockPtyHandle();
+    it('strips an echoed stdin line from stdout while passing genuine events through (echo filter)', async () => {
+      const logs = wireSessionLogs();
 
-      const { stdout } = await runtime.execStream(['echo', 'test']);
-
+      const { stdin, stdout } = await runtime.execStream(['node', 'b.mjs']);
       const chunks: string[] = [];
       stdout.on('data', (chunk: Buffer) => chunks.push(chunk.toString()));
 
-      pty.emitData('\x1b[32mgreen text\x1b[0m\n');
+      stdin.write('{"type":"interrupt"}\n');
+      await logs.flush();
 
-      pty.resolveWait(0);
-      await new Promise<void>((r) => stdout.on('end', r));
+      // Daytona may echo the command we sent back on stdout; a genuine event
+      // follows. Only the genuine event must reach the host.
+      logs.emitStdout('{"type":"interrupt"}\n{"type":"aborted"}\n');
+      await logs.flush();
 
-      expect(chunks.join('')).toBe('green text\n');
+      expect(chunks.join('')).toBe('{"type":"aborted"}\n');
+      expect(mockSandbox.process.sendSessionCommandInput).toHaveBeenCalledWith(
+        expect.any(String),
+        'cmd-1',
+        '{"type":"interrupt"}\n',
+      );
     });
 
-    it('close() terminates PTY and ends streams', async () => {
-      const pty = createMockPtyHandle();
+    it('routes stderr through and ends both streams when the command exits', async () => {
+      const logs = wireSessionLogs();
+
+      const { stdout, stderr } = await runtime.execStream(['node', 'b.mjs']);
+      const errChunks: string[] = [];
+      stderr.on('data', (chunk: Buffer) => errChunks.push(chunk.toString()));
+      // A paused PassThrough never emits 'end'; consume stdout so it flows.
+      stdout.on('data', () => {});
+      logs.emitStderr('boom\n');
+
+      const stdoutEnded = new Promise<void>((r) => stdout.on('end', r));
+      const stderrEnded = new Promise<void>((r) => stderr.on('end', r));
+      logs.endLogs();
+      await Promise.all([stdoutEnded, stderrEnded]);
+
+      expect(errChunks.join('')).toContain('boom');
+    });
+
+    it('retries a stdin write while the session input pipe is not ready yet', async () => {
+      const logs = wireSessionLogs();
+      mockSandbox.process.sendSessionCommandInput
+        .mockRejectedValueOnce(new Error('input.pipe: no such file'))
+        .mockResolvedValueOnce(undefined);
+
+      const { stdin } = await runtime.execStream(['node', 'b.mjs']);
+      stdin.write('{"type":"shutdown"}\n');
+
+      await vi.waitFor(() => {
+        expect(
+          mockSandbox.process.sendSessionCommandInput,
+        ).toHaveBeenCalledTimes(2);
+      });
+    });
+
+    it('close() deletes the session', async () => {
+      wireSessionLogs();
 
       const { close } = await runtime.execStream(['ls']);
-
       close();
-
-      // Allow microtasks to flush
       await new Promise<void>((r) => setImmediate(r));
 
-      expect(pty.handle.kill).toHaveBeenCalled();
+      expect(mockSandbox.process.deleteSession).toHaveBeenCalled();
     });
 
-    it('routes output to stderr on non-zero exit', async () => {
-      const pty = createMockPtyHandle();
+    it('close() ends stdout/stderr even if the log-stream promise never settles', async () => {
+      wireSessionLogs(); // getSessionCommandLogs stays pending (endLogs not called)
 
-      const { stderr } = await runtime.execStream(['failing-cmd']);
+      const { stdout, stderr, close } = await runtime.execStream([
+        'node',
+        'b.mjs',
+      ]);
+      stdout.on('data', () => {});
+      stderr.on('data', () => {});
+      const stdoutEnded = new Promise<void>((r) => stdout.on('end', r));
+      const stderrEnded = new Promise<void>((r) => stderr.on('end', r));
 
-      const stderrChunks: string[] = [];
-      stderr.on('data', (chunk: Buffer) => stderrChunks.push(chunk.toString()));
+      // The log promise is deliberately left pending — close() must end the
+      // local streams itself so the consumer's 'end' handler fires and the
+      // PassThroughs do not leak for the sandbox lifetime.
+      close();
+      await Promise.all([stdoutEnded, stderrEnded]);
 
-      pty.emitData('error output\n');
-
-      pty.resolveWait(1);
-      await new Promise<void>((r) => stderr.on('end', r));
-
-      expect(stderrChunks.join('')).toContain('error output');
+      expect(mockSandbox.process.deleteSession).toHaveBeenCalled();
     });
   });
 

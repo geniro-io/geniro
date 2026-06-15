@@ -14,6 +14,7 @@ import { MessageRole } from '../../../graphs/graphs.types';
 import { RequestTokenUsage } from '../../../litellm/litellm.types';
 import { LiteLlmClient } from '../../../litellm/services/litellm.client';
 import { LitellmVirtualKeyService } from '../../../litellm/services/litellm-virtual-key.service';
+import { DaytonaRuntime } from '../../../runtime/services/daytona-runtime';
 import { RuntimeThreadProvider } from '../../../runtime/services/runtime-thread-provider';
 import { MessagesDao } from '../../../threads/dao/messages.dao';
 import { ThreadsDao } from '../../../threads/dao/threads.dao';
@@ -35,6 +36,7 @@ import {
   buildBridgeToolDefinitions,
   buildClaudeSessionEnv,
   formatQuestionsAsText,
+  sanitizeSandboxError,
   SMALL_FAST_MODEL_ALIAS,
 } from '../claude/claude-session.utils';
 import { ClaudeStreamMapper } from '../claude/claude-stream-mapper';
@@ -64,6 +66,11 @@ type ClaudeActiveRun = {
   pendingQuestion?: ClaudeQuestionRequest;
   /** Live transport — mid-run appends inject `user_message` frames through it. */
   transport?: ClaudeBridgeTransport;
+  /**
+   * Per-thread virtual key, stored on the run so the stop/redeploy seam can
+   * revoke it immediately (the run's own `finally` is the idempotent backstop).
+   */
+  virtualKey?: string;
   /**
    * Mid-run appends that arrived while the bridge was still booting (bootstrap
    * can take minutes); flushed as `user_message` frames right after `start`.
@@ -269,6 +276,7 @@ export class ClaudeAgent
         },
       });
       virtualKey = issued.key;
+      runEntry.virtualKey = issued.key;
       // Resolve the GitHub App installation token that authenticates Claude's
       // native gh/git (same resolver the proxied gh_* tools use). Prefer the
       // thread owner, then fall back to the graph owner so triggered/ownerless
@@ -285,7 +293,12 @@ export class ClaudeAgent
       const githubToken = ownerUserId
         ? (await this.gitTokenResolver.resolveDefaultToken(ownerUserId))?.token
         : undefined;
-      const env = buildClaudeSessionEnv(virtualKey, githubToken);
+      // A Daytona runtime runs on a separate host that cannot reach the
+      // cluster-internal LiteLLM URL — its session points ANTHROPIC_BASE_URL at
+      // the public LiteLLM URL instead (fail-closed if unset).
+      const env = buildClaudeSessionEnv(virtualKey, githubToken, {
+        isRemoteRuntime: runtime instanceof DaytonaRuntime,
+      });
       // Native gh/git become usable from Claude's Bash only once the session
       // carries a GH_TOKEN; install the matching credential helper then. The
       // proxied gh_* tools stay forwarded as the authoritative path until this
@@ -392,20 +405,22 @@ export class ClaudeAgent
             onFatal: (error) => resolve({ kind: 'fatal', error }),
             onActivity: toucher,
             onToolCallRequest: (request) => dispatcher.dispatch(request),
-            // Both top-level AND subagent/peer questions route through here in
-            // M2: the question ends the turn (NeedMoreInfo) and the user's
-            // answer resumes the same SDK session on the next run. There is no
-            // subagent branch yet — milestone-2 step 3's "parent answers while
-            // the query continues" (driving the bridge's in-session
-            // question_response primitive) is deferred to M3; M2 ships
-            // escalate-and-resume for both modes. Interrupting leaves the
-            // bridge's pending question unresolved on purpose — failAll settles
-            // it once the session aborts.
-            // Known cost residue (shared with the M1 user-stop abort): an
-            // aborted query emits no `result` frame, so the interrupted
-            // turn's LLM spend never reaches the message rollup — the
-            // virtual-key budget remains the hard backstop. Revisit with the
-            // SDK's graceful query.interrupt() on the M3 live harness.
+            // Both top-level AND subagent/peer questions route through here:
+            // the question ends the turn (NeedMoreInfo) and the user's answer
+            // resumes the same SDK session on the next run. There is no
+            // in-session "parent answers while the query continues" branch — M3
+            // confirmed that path needs a synchronous inter-agent ask-back
+            // channel that does not exist (a subagent's parent is blocked
+            // awaiting its result; caller_agent is .emit()-only; callees must
+            // finish synchronously), a separate subsystem beyond this milestone.
+            // Escalate-and-resume is the design for both modes until then.
+            // Interrupting leaves the bridge's pending question unresolved on
+            // purpose — failAll settles it once the session aborts.
+            // Known cost residue (shared with the user-stop abort): an aborted
+            // query emits no `result` frame, so the interrupted turn's LLM spend
+            // never reaches the message rollup — the virtual-key budget remains
+            // the hard backstop. A graceful query.interrupt() that drains a
+            // final `result` would close the gap (future work).
             onQuestionRequest: (request) => {
               runEntry.pendingQuestion = request;
               transport?.interrupt();
@@ -479,7 +494,24 @@ export class ClaudeAgent
       };
 
       if (outcome.kind === 'fatal') {
-        throw new InternalException('CLAUDE_BRIDGE_FAILED', outcome.error);
+        // A bridge/stream death must not leave a silently error-stopped thread:
+        // surface the reason as a visible message before the throw error-marks
+        // the thread via the catch's run-error event (which resolves to Stopped
+        // status — ThreadStatus has no Failed — but carries the error + message
+        // that distinguish it from a clean user stop). EXCEPTION: a run that was
+        // already stopped/redeployed had its terminal event + failure message
+        // emitted by stopThread / failActiveRunsForRedeploy, and the abort they
+        // issue can itself sever the stream and surface as 'fatal'. Re-emitting
+        // would duplicate the message (redeploy) or overwrite the user's clean
+        // Stopped with an error-marked one (stop) — so skip the emit, but still
+        // propagate.
+        if (!runEntry.stopped) {
+          this.emitSessionFailureMessage(runEntry, mergedConfig, outcome.error);
+        }
+        throw new InternalException(
+          'CLAUDE_BRIDGE_FAILED',
+          sanitizeSandboxError(outcome.error),
+        );
       }
 
       if (runEntry.stopReason === 'cost_limit') {
@@ -511,19 +543,30 @@ export class ClaudeAgent
       }
 
       if (mapper.isError) {
+        // Surface the failure as a visible thread message so an error-subtype
+        // session end explains itself instead of a bare error-Stopped status.
+        const subtype = sanitizeSandboxError(
+          mapper.resultSubtype ?? 'an unknown error',
+        );
+        const failureMsgs = this.emitSessionFailureMessage(
+          runEntry,
+          mergedConfig,
+          subtype,
+        );
+        const erroredMessages = [...output.messages, ...failureMsgs];
         this.emit({
           type: 'run',
           data: {
             threadId,
-            messages: output.messages,
+            messages: erroredMessages,
             config: mergedConfig,
             error: new InternalException(
               'CLAUDE_SESSION_ERROR',
-              `Claude session ended with ${mapper.resultSubtype ?? 'an unknown error'}`,
+              `Claude session ended with ${subtype}`,
             ),
           },
         });
-        return output;
+        return { ...output, messages: erroredMessages };
       }
 
       this.emit({
@@ -538,10 +581,16 @@ export class ClaudeAgent
       return output;
     } catch (error) {
       transport?.close();
-      this.emit({
-        type: 'run',
-        data: { threadId, messages: [], config: mergedConfig, error },
-      });
+      // A stopped/redeployed run already emitted its terminal 'run' event (and
+      // failure message) via stopThread / failActiveRunsForRedeploy; emitting
+      // here would duplicate it — and for a user stop, replace the clean Stopped
+      // with an error-marked one. Still propagate the error to the caller.
+      if (!runEntry.stopped) {
+        this.emit({
+          type: 'run',
+          data: { threadId, messages: [], config: mergedConfig, error },
+        });
+      }
       throw error;
     } finally {
       // Stops the dispatcher from draining queued tool frames after the
@@ -657,13 +706,65 @@ export class ClaudeAgent
   }
 
   /**
-   * Graph-destroy hook (template destroy handler). Aborts every active run.
+   * Abort every live run because the graph node is being reconfigured or
+   * destroyed under it (a revision deploy or teardown). A live SDK session
+   * cannot keep streaming against a swapped-out instance, so each run is failed
+   * VISIBLY: a user-facing message, a Failed run event, an interrupt of the
+   * bridge, and an immediate virtual-key revoke (idempotent with the run's own
+   * `finally`). No-op when there are no live runs — e.g. the initial
+   * `configure()` right after `provide()`, where the loop body never executes.
+   */
+  public async failActiveRunsForRedeploy(reason: string): Promise<void> {
+    for (const runEntry of Array.from(this.activeRuns.values())) {
+      if (runEntry.stopped) {
+        continue;
+      }
+      runEntry.stopped = true;
+      runEntry.stopReason = 'redeploy';
+
+      const config = runEntry.runnableConfig;
+      const failureMsgs = this.emitSessionFailureMessage(
+        runEntry,
+        config,
+        reason,
+      );
+      // An error-carrying run event (not a 'stop'): a revision deploy
+      // interrupting a live run leaves the thread error-stopped (Stopped status
+      // with an error event + failure message), distinct from a clean
+      // user-Stopped. run()'s settle path stays silent for stopped runs, so this
+      // is the only terminal event.
+      this.emit({
+        type: 'run',
+        data: {
+          threadId: runEntry.threadId,
+          messages: failureMsgs,
+          config,
+          error: new InternalException(
+            'CLAUDE_REDEPLOY_INTERRUPTED',
+            `Claude Agent run interrupted — ${reason}`,
+          ),
+        },
+      });
+
+      runEntry.transport?.interrupt();
+      if (runEntry.virtualKey) {
+        // Revoke now rather than waiting for the run's finally to unwind via
+        // the abort cascade — the key must stop billing the moment the live
+        // session is abandoned. Idempotent, so the finally double-revoke is safe.
+        await this.virtualKeys.revokeThreadKey(runEntry.virtualKey);
+      }
+      runEntry.abortController.abort();
+    }
+  }
+
+  /**
+   * Graph-destroy hook (template destroy handler). Fails every active run
+   * visibly (revision recreate / node teardown), then drops the run registry.
    */
   public async stop(): Promise<void> {
-    for (const run of this.activeRuns.values()) {
-      run.stopped = true;
-      run.abortController.abort();
-    }
+    await this.failActiveRunsForRedeploy(
+      'the graph node was redeployed or torn down',
+    );
     this.activeRuns.clear();
     this.currentConfig = undefined;
   }
@@ -673,6 +774,36 @@ export class ClaudeAgent
       return undefined;
     }
     return { invokeModelName: this.currentConfig.model };
+  }
+
+  /**
+   * Surface a bridge/stream failure as a user-visible (LLM-hidden) thread
+   * message so a failed Claude session explains itself in the conversation
+   * rather than a silently error-Stopped thread. Carries no token usage, so it
+   * does not perturb the cost rollup. Returns the persisted messages so the
+   * caller can fold them into its AgentOutput.
+   *
+   * `reason` is sandbox-derived (a `fatal` frame's error string), so it is
+   * routed through `sanitizeSandboxError` before persistence — a clone/LLM
+   * error can legitimately embed a PAT or the per-thread virtual key, which
+   * must never land in the durable conversation (sandbox trust boundary).
+   */
+  private emitSessionFailureMessage(
+    runEntry: ClaudeActiveRun,
+    config: RunnableConfig<BaseAgentConfigurable>,
+    reason: string,
+  ): BaseMessage[] {
+    const notice = markMessageHideForLlm(
+      new SystemMessage(
+        `Claude Agent session failed: ${sanitizeSandboxError(reason)}`,
+      ),
+    );
+    const msgs = updateMessagesListWithMetadata([notice], config);
+    this.emit({
+      type: 'message',
+      data: { threadId: runEntry.threadId, messages: msgs, config },
+    });
+    return msgs;
   }
 
   /**
