@@ -36,6 +36,17 @@ const REPO_ROOT = '/runtime-workspace';
 const REPO_ID = `local:${REPO_ROOT}`;
 const REPOSITORY_ID = uuidv5(REPO_ID, environment.codebaseUuidNamespace);
 
+// All vitest workers share ONE Qdrant container (global-setup boots a single
+// instance; only Postgres is cloned per worker). The codebase collection name is
+// derived from the repo identity AND the git branch, so two workers indexing
+// `/runtime-workspace` on the same branch collide on one shared collection — one
+// worker's delete/recreate races another's points, flaking the presence/absence
+// assertions below. Salt the git branch with the vitest worker id
+// (`VITEST_POOL_ID`, the same key worker-env.ts uses for the per-worker DB) so
+// each worker gets a unique branch → unique collection via deriveBranchSlug.
+const WORKER_ID = process.env.VITEST_POOL_ID ?? '0';
+const BRANCH = `w${WORKER_ID}`;
+
 /**
  * Deterministic embeddings that distinguish alpha-needle vs beta-needle tokens.
  * MockOpenaiAdapter pads these 3-dim vectors to the full llmEmbeddingDimensions.
@@ -59,7 +70,6 @@ describe('Codebase search tool (integration)', () => {
   let qdrantService: QdrantService;
   let repoIndexerService: RepoIndexerService;
   let repoIndexDao: RepoIndexDao;
-  let em: EntityManager;
   let runtime: BaseRuntime;
   let runtimeThreadProvider: RuntimeThreadProvider;
   let collectionName: string | null = null;
@@ -71,7 +81,7 @@ describe('Codebase search tool (integration)', () => {
     return res.stdout.trim();
   };
 
-  const resolveCollectionName = (repoRoot: string, branch = 'main') => {
+  const resolveCollectionName = (repoRoot: string, branch = BRANCH) => {
     if (collectionName) {
       return collectionName;
     }
@@ -136,7 +146,7 @@ describe('Codebase search tool (integration)', () => {
         REPO_ID,
         GitRepositoryProvider.GITHUB,
         randomUUID(),
-        'main',
+        BRANCH,
         testProjectId,
       ],
     );
@@ -240,7 +250,7 @@ export const handler = () => {
 };
 EOF`,
       );
-      await execInRuntime('git init -b main');
+      await execInRuntime(`git init -b ${BRANCH}`);
       await execInRuntime('git config user.email "test@example.com"');
       await execInRuntime('git config user.name "Test User"');
       await execInRuntime('git add .');
@@ -336,7 +346,7 @@ export const funcB = () => {
 };
 EOF`,
       );
-      await execInRuntime('git init -b main');
+      await execInRuntime(`git init -b ${BRANCH}`);
       await execInRuntime('git config user.email "test@example.com"');
       await execInRuntime('git config user.name "Test User"');
       await execInRuntime('git add .');
@@ -416,7 +426,7 @@ export const helperFunc = () => {
 };
 EOF`,
       );
-      await execInRuntime('git init -b main');
+      await execInRuntime(`git init -b ${BRANCH}`);
       await execInRuntime('git config user.email "test@example.com"');
       await execInRuntime('git config user.name "Test User"');
       await execInRuntime('git add .');
@@ -503,7 +513,7 @@ def main():
     return "${pyToken}"
 EOF`,
       );
-      await execInRuntime('git init -b main');
+      await execInRuntime(`git init -b ${BRANCH}`);
       await execInRuntime('git config user.email "test@example.com"');
       await execInRuntime('git config user.name "Test User"');
       await execInRuntime('git add .');
@@ -589,7 +599,7 @@ export const handler = () => {
 };
 EOF`,
       );
-      await execInRuntime('git init -b main');
+      await execInRuntime(`git init -b ${BRANCH}`);
       await execInRuntime('git config user.email "test@example.com"');
       await execInRuntime('git config user.name "Test User"');
       await execInRuntime('git add .');
@@ -639,7 +649,7 @@ export const func1 = () => {
 };
 EOF`,
       );
-      await execInRuntime('git init -b main');
+      await execInRuntime(`git init -b ${BRANCH}`);
       await execInRuntime('git config user.email "test@example.com"');
       await execInRuntime('git config user.name "Test User"');
       await execInRuntime('git add .');
@@ -725,7 +735,7 @@ export const handler = () => {
 };
 EOF`,
       );
-      await execInRuntime('git init -b main');
+      await execInRuntime(`git init -b ${BRANCH}`);
       await execInRuntime('git config user.email "test@example.com"');
       await execInRuntime('git config user.name "Test User"');
       await execInRuntime('git add .');

@@ -29,6 +29,12 @@ import { RuntimeInstanceDao } from '../../v1/runtime/dao/runtime-instance.dao';
 import { RuntimeProvider } from '../../v1/runtime/services/runtime-provider';
 import { mockLiteLlmClient } from './helpers/test-stubs';
 import {
+  installMockGithubPatch,
+  MockGithubModule,
+  MockGithubService,
+  setMockGithubService,
+} from './mocks/mock-github';
+import {
   installBaseAgentPatch,
   MockLlmModule,
 } from './mocks/mock-llm/mock-llm.module';
@@ -70,6 +76,10 @@ function getMockLlmServiceLazy(): MockLlmService {
 export const TEST_USER_ID = '00000000-0000-0000-0000-000000000001';
 export const TEST_ORG_ID = '00000000-0000-0000-0000-000000000001';
 
+// Upper bound for app.close() in tests. See the teardown wrapper in
+// createTestModule for the full rationale (knex/tarn pool-teardown deadlock).
+const TEARDOWN_DEADLINE_MS = 15_000;
+
 export interface CreateTestModuleOptions {
   /**
    * When `true` (default), `RuntimeProvider` is replaced with
@@ -85,6 +95,15 @@ export interface CreateTestModuleOptions {
    * subprocess entirely. Set to `false` to use the real MCP plumbing.
    */
   mockMcp?: boolean;
+  /**
+   * When `true` (default), `globalThis.fetch` is patched so GitHub HTTP calls
+   * (Octokit + the raw `fetch` in `GitHubAppService`) are served by
+   * `MockGithubService` instead of hitting the network. Default per-request
+   * reply is `404` (deterministic not-found); register fixtures via
+   * `getMockGithub(app).onRequest(...)` for success paths. Set to `false` for
+   * the rare test that needs real GitHub.
+   */
+  mockGithub?: boolean;
 }
 
 export const createTestModule = async (
@@ -93,6 +112,7 @@ export const createTestModule = async (
 ) => {
   const mockRuntimeEnabled = options.mockRuntime ?? true;
   const mockMcpEnabled = options.mockMcp ?? true;
+  const mockGithubEnabled = options.mockGithub ?? true;
 
   // Assign a unique instance fingerprint per app so File A's queued jobs
   // don't get picked up by File B's worker via the shared Redis namespace.
@@ -105,6 +125,9 @@ export const createTestModule = async (
   installBaseAgentPatch();
   if (mockMcpEnabled) {
     installMockMcpPatch();
+  }
+  if (mockGithubEnabled) {
+    installMockGithubPatch();
   }
 
   const testBootstrapper = buildBootstrapper({
@@ -158,6 +181,7 @@ export const createTestModule = async (
       testBootstrapper.buildModule([AppModule]),
       MockLlmModule,
       MockMcpModule,
+      MockGithubModule,
       MockRuntimeModule,
     ],
   })
@@ -228,6 +252,15 @@ export const createTestModule = async (
     setMockMcpService(mockMcp);
   }
 
+  if (mockGithubEnabled) {
+    // Bridge the DI instance to the global fetch patch. No defaults applied —
+    // the hermetic baseline is "no fixture → 404"; tests register success
+    // fixtures via getMockGithub(app).onRequest(...) as needed.
+    const mockGithub = moduleRef.get(MockGithubService, { strict: false });
+    mockGithub.reset();
+    setMockGithubService(mockGithub);
+  }
+
   if (mockRuntimeEnabled) {
     moduleRef.get(MockRuntimeService, { strict: false }).reset();
   }
@@ -236,6 +269,55 @@ export const createTestModule = async (
 
   const app = moduleRef.createNestApplication(adapter);
   await app.init();
+
+  // Bound app.close() against a teardown deadlock that intermittently surfaces
+  // when several integration workers tear down their NestJS app against the
+  // SHARED Postgres testcontainer at once. Root-caused empirically: app.close()
+  // stalls inside MikroORM's onApplicationShutdown (orm.close() -> knex/tarn
+  // connection-pool teardown) — reproduced down to a single idle pg socket with
+  // every other resource (BullMQ, Socket.IO, Redis cache) already closed. It is
+  // a library-level pool-teardown deadlock: force orm.close(true), bounded
+  // acquire/destroy pool timeouts, socket.destroy(), and lowering maxWorkers all
+  // fail to unblock it. It is test-only (production runs one app per pool with no
+  // cross-worker Postgres contention) and correctness-irrelevant (every assertion
+  // has already passed; only resource teardown stalls). Time-box the close so the
+  // deadlock cannot fail an otherwise-green run; the per-worker vitest process
+  // exits after its files and reclaims the orphaned connection. The 15s deadline
+  // clears the slowest legitimate teardown (real-runtime tests stop a Docker
+  // container, ~5-10s) while staying under the 30s integration hookTimeout.
+  const gracefulClose = app.close.bind(app);
+  (app as unknown as { close: () => Promise<void> }).close = async () => {
+    const closePromise = gracefulClose();
+    let deadlineTimer: NodeJS.Timeout | undefined;
+    const deadline = new Promise<'timeout'>((resolve) => {
+      deadlineTimer = setTimeout(
+        () => resolve('timeout'),
+        TEARDOWN_DEADLINE_MS,
+      );
+    });
+    let outcome: 'closed' | 'timeout';
+    try {
+      // A genuine teardown error still rejects here (preserved behaviour); only
+      // an unbounded stall is converted into a bounded, logged abandon.
+      outcome = await Promise.race([
+        closePromise.then(() => 'closed' as const),
+        deadline,
+      ]);
+    } finally {
+      if (deadlineTimer) {
+        clearTimeout(deadlineTimer);
+      }
+    }
+    if (outcome === 'timeout') {
+      // Suppress the orphaned graceful-close promise so a late rejection from the
+      // abandoned pool teardown does not surface as an unhandledRejection.
+      void closePromise.catch(() => undefined);
+
+      console.warn(
+        '[integration] app.close() exceeded the 15s teardown deadline — known knex/tarn Postgres pool-teardown deadlock under shared-Postgres contention; abandoning the graceful close (test-only, all assertions already passed).',
+      );
+    }
+  };
 
   return app;
 };
