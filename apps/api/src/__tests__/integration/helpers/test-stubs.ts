@@ -8,6 +8,14 @@ export const mockLiteLlmClient = {
   fetchModelList: async () => [],
   getModelInfo: async () => null,
   invalidateCache: () => undefined,
+  // Per-thread virtual keys for Claude Agent sessions: issue/revoke/update are
+  // in-memory no-ops so a full ClaudeAgent.run() exercises its key lifecycle
+  // without contacting the LiteLLM proxy. The mock bridge handles cost frames.
+  generateKey: async (params?: { keyAlias?: string }) => ({
+    key: `sk-mock-${params?.keyAlias ?? 'vkey'}`,
+  }),
+  deleteKeys: async () => undefined,
+  updateKeyBudget: async () => undefined,
 };
 
 export const mockThreadNameGenerator = {

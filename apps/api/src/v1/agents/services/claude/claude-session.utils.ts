@@ -113,13 +113,24 @@ export function buildBridgeToolDefinitions(
 export function buildClaudeSessionEnv(
   virtualKey: string,
   githubToken?: string | null,
+  options?: { isRemoteRuntime?: boolean },
 ): Record<string, string> {
-  const baseUrl = environment.litellmSandboxUrl;
+  // A remote runtime (Daytona, on a separate host) cannot reach the cluster-
+  // internal LiteLLM URL, so its session needs the public one. Fail closed with
+  // a precise error rather than handing the sandbox an unreachable URL.
+  const baseUrl = options?.isRemoteRuntime
+    ? environment.litellmPublicUrl
+    : environment.litellmSandboxUrl;
   if (!baseUrl) {
-    throw new InternalException(
-      'CLAUDE_SANDBOX_LLM_URL_MISSING',
-      'LITELLM_SANDBOX_URL is not configured — Claude Agent sessions need a LiteLLM URL reachable from inside sandbox runtimes',
-    );
+    throw options?.isRemoteRuntime
+      ? new InternalException(
+          'CLAUDE_PUBLIC_LLM_URL_MISSING',
+          'LITELLM_PUBLIC_URL is not configured — Claude Agent sessions on a remote (Daytona) runtime need a publicly reachable LiteLLM URL',
+        )
+      : new InternalException(
+          'CLAUDE_SANDBOX_LLM_URL_MISSING',
+          'LITELLM_SANDBOX_URL is not configured — Claude Agent sessions need a LiteLLM URL reachable from inside sandbox runtimes',
+        );
   }
 
   return {

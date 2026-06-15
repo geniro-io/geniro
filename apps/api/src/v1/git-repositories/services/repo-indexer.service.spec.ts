@@ -796,6 +796,41 @@ describe('RepoIndexerService', () => {
       expect(mockQdrantService.upsertPoints).toHaveBeenCalled();
     });
 
+    it(
+      'throws (no silent chunk deletion) when the existence check times out persistently',
+      { timeout: 10_000 },
+      async () => {
+        const execFn: RepoExecFn = vi
+          .fn()
+          .mockImplementation(async (params) => {
+            if (params.cmd.includes('diff --name-only')) {
+              return { exitCode: 0, stdout: 'src/changed.ts\n', stderr: '' };
+            }
+            if (params.cmd.includes('status --porcelain')) {
+              return { exitCode: 0, stdout: '', stderr: '' };
+            }
+            if (
+              params.cmd.includes('.codebaseindexignore') ||
+              params.cmd.includes('.gitignore')
+            ) {
+              return { exitCode: 0, stdout: '', stderr: '' };
+            }
+            // The existence check times out (exit 124) on every retry attempt.
+            if (params.cmd.includes('&& echo')) {
+              return { exitCode: 124, stdout: '', stderr: 'timed out' };
+            }
+            return { exitCode: 0, stdout: '', stderr: '' };
+          });
+
+        // A timed-out existence check must fail loud, NOT mark the file deleted
+        // and drop its chunks.
+        await expect(
+          service.runIncrementalIndex(baseParams, execFn),
+        ).rejects.toThrow(/File-existence check failed/);
+        expect(mockQdrantService.deleteByFilter).not.toHaveBeenCalled();
+      },
+    );
+
     it('falls back to full index when diff fails (shallow clone case)', async () => {
       const execFn: RepoExecFn = vi.fn().mockImplementation(async (params) => {
         // git diff --name-only fails (shallow clone missing commit)
@@ -1524,6 +1559,123 @@ describe('RepoIndexerService', () => {
       const wrapped = RepoIndexerService.withTimeout(execFn, 5000);
 
       await expect(wrapped({ cmd: 'bad cmd' })).rejects.toThrow('exec failed');
+    });
+  });
+
+  describe('withRetry', () => {
+    it('returns a successful result without retrying', async () => {
+      const execFn: RepoExecFn = vi
+        .fn()
+        .mockResolvedValue({ exitCode: 0, stdout: 'ok', stderr: '' });
+
+      const wrapped = RepoIndexerService.withRetry(execFn, 3, 1);
+      const result = await wrapped({ cmd: 'git ls-files' });
+
+      expect(result).toEqual({ exitCode: 0, stdout: 'ok', stderr: '' });
+      expect(execFn).toHaveBeenCalledTimes(1);
+    });
+
+    it('retries on a timeout exit code (124) then returns the success', async () => {
+      const execFn: RepoExecFn = vi
+        .fn()
+        .mockResolvedValueOnce({ exitCode: 124, stdout: '', stderr: 'timeout' })
+        .mockResolvedValueOnce({
+          exitCode: 0,
+          stdout: 'src/app.ts',
+          stderr: '',
+        });
+
+      const wrapped = RepoIndexerService.withRetry(execFn, 3, 1);
+      const result = await wrapped({ cmd: 'git ls-files' });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toBe('src/app.ts');
+      expect(execFn).toHaveBeenCalledTimes(2);
+    });
+
+    it('does NOT retry a legitimate non-zero exit (e.g. `[ -f missing ]` -> 1)', async () => {
+      const execFn: RepoExecFn = vi
+        .fn()
+        .mockResolvedValue({ exitCode: 1, stdout: '', stderr: '' });
+
+      const wrapped = RepoIndexerService.withRetry(execFn, 3, 1);
+      const result = await wrapped({ cmd: '[ -f missing ] && echo missing' });
+
+      expect(result.exitCode).toBe(1);
+      expect(execFn).toHaveBeenCalledTimes(1);
+    });
+
+    it('retries on a thrown rejection then resolves', async () => {
+      const execFn: RepoExecFn = vi
+        .fn()
+        .mockRejectedValueOnce(new Error('Git exec timed out after 60000ms'))
+        .mockResolvedValueOnce({ exitCode: 0, stdout: 'done', stderr: '' });
+
+      const wrapped = RepoIndexerService.withRetry(execFn, 3, 1);
+      const result = await wrapped({ cmd: 'git ls-files' });
+
+      expect(result.stdout).toBe('done');
+      expect(execFn).toHaveBeenCalledTimes(2);
+    });
+
+    it('returns the last timeout result after exhausting all attempts', async () => {
+      const execFn: RepoExecFn = vi
+        .fn()
+        .mockResolvedValue({ exitCode: 124, stdout: '', stderr: 'timeout' });
+
+      const wrapped = RepoIndexerService.withRetry(execFn, 3, 1);
+      const result = await wrapped({ cmd: 'git ls-files' });
+
+      expect(result.exitCode).toBe(124);
+      expect(execFn).toHaveBeenCalledTimes(3);
+    });
+
+    it('throws the last error when every attempt rejects', async () => {
+      const execFn: RepoExecFn = vi
+        .fn()
+        .mockRejectedValue(new Error('exec timed out'));
+
+      const wrapped = RepoIndexerService.withRetry(execFn, 3, 1);
+
+      await expect(wrapped({ cmd: 'git ls-files' })).rejects.toThrow(
+        'exec timed out',
+      );
+      expect(execFn).toHaveBeenCalledTimes(3);
+    });
+
+    it('returns the original execFn when attempts <= 1', () => {
+      const execFn: RepoExecFn = vi.fn();
+      expect(RepoIndexerService.withRetry(execFn, 1)).toBe(execFn);
+    });
+  });
+
+  describe('listTrackedFiles failure handling (via runFullIndex)', () => {
+    it('fails loud instead of silently indexing zero files when git ls-files fails', async () => {
+      // A failed read must NOT be mistaken for an empty repository — otherwise a
+      // load-induced exec timeout silently produces a 0-file index. exit 1 is a
+      // genuine (non-retryable) failure, so this surfaces immediately.
+      const execFn: RepoExecFn = vi.fn().mockImplementation(async (params) => {
+        if (params.cmd.includes('ls-files')) {
+          return { exitCode: 1, stdout: '', stderr: 'fatal: not a git repo' };
+        }
+        return { exitCode: 0, stdout: '', stderr: '' };
+      });
+
+      await expect(
+        service.runFullIndex(
+          {
+            repoId: 'https://github.com/owner/repo',
+            repoRoot: '/workspace/repo',
+            currentCommit: 'abc123',
+            collection: 'codebase_test_main_3',
+            vectorSize: 3,
+            embeddingModel: 'text-embedding-3-small',
+          },
+          execFn,
+        ),
+      ).rejects.toThrow(/Failed to list tracked files/);
+
+      expect(mockQdrantService.upsertPoints).not.toHaveBeenCalled();
     });
   });
 

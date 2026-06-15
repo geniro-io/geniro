@@ -55,6 +55,7 @@ describe('ClaudeAgentTemplate', () => {
       addTool: vi.fn(),
       setConfig: vi.fn(),
       stop: vi.fn(),
+      failActiveRunsForRedeploy: vi.fn().mockResolvedValue(undefined),
     } as unknown as ClaudeAgent;
 
     mockRuntimeProvider = {} as unknown as RuntimeThreadProvider;
@@ -182,6 +183,30 @@ describe('ClaudeAgentTemplate', () => {
       expect(mockClaudeAgent.setRuntimeProvider).toHaveBeenCalledWith(
         mockRuntimeProvider,
       );
+    });
+
+    it('fails any live run before re-wiring on reconfigure (revision deploy while live)', async () => {
+      vi.mocked(mockGraphRegistry.getNode).mockImplementation((_gid, id) =>
+        id === 'runtime-node' ? runtimeNode : undefined,
+      );
+
+      const handle = await template.create();
+      const init = makeInit(new Set(['runtime-node']));
+      const instance = await handle.provide(init);
+      await handle.configure(init, instance);
+
+      expect(mockClaudeAgent.failActiveRunsForRedeploy).toHaveBeenCalledWith(
+        expect.stringContaining('revision'),
+      );
+      // It must run BEFORE config/runtime are swapped under a live run.
+      const failOrder = vi.mocked(mockClaudeAgent.failActiveRunsForRedeploy)
+        .mock.invocationCallOrder[0]!;
+      const setConfigOrder = vi.mocked(mockClaudeAgent.setConfig).mock
+        .invocationCallOrder[0]!;
+      const setRuntimeOrder = vi.mocked(mockClaudeAgent.setRuntimeProvider).mock
+        .invocationCallOrder[0]!;
+      expect(failOrder).toBeLessThan(setConfigOrder);
+      expect(failOrder).toBeLessThan(setRuntimeOrder);
     });
 
     it('throws when no Runtime node is connected', async () => {

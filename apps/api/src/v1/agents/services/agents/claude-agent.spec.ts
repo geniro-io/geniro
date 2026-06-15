@@ -381,6 +381,128 @@ describe('ClaudeAgent', () => {
     expect(runEvents()[0]!.data.error).toBeDefined();
   });
 
+  it('surfaces a visible failure message when the bridge fails fatally', async () => {
+    const { runPromise } = await startRunAndOpenBridge();
+    capturedHandlers!.onFatal('bridge stdout error: boom');
+
+    await expect(runPromise).rejects.toMatchObject({
+      errorCode: 'CLAUDE_BRIDGE_FAILED',
+    });
+
+    // A bridge death must explain itself in the conversation, not leave a bare
+    // Failed thread: a visible SystemMessage names the reason.
+    const messageEvents = events.filter((e) => e.type === 'message') as Extract<
+      AgentEventType,
+      { type: 'message' }
+    >[];
+    const failure = messageEvents
+      .flatMap((e) => e.data.messages)
+      .find((m) => String(m.content).includes('Claude Agent session failed'));
+    expect(failure).toBeDefined();
+    expect(String(failure!.content)).toContain('bridge stdout error: boom');
+  });
+
+  it('surfaces a visible failure message and a Failed run event when the session ends with an error subtype', async () => {
+    const { runPromise } = await startRunAndOpenBridge();
+
+    capturedHandlers!.onSdkMessage({
+      type: 'result',
+      subtype: 'error_max_turns',
+      session_id: 'sess-1',
+      is_error: true,
+    });
+    capturedHandlers!.onDone('sess-1');
+    const output = await runPromise;
+
+    const failure = output.messages.find((m) =>
+      String(m.content).includes('Claude Agent session failed'),
+    );
+    expect(failure).toBeDefined();
+    expect(String(failure!.content)).toContain('error_max_turns');
+
+    // The run event carries the error (thread → Failed), not a success result.
+    const run = runEvents();
+    expect(run).toHaveLength(1);
+    expect(run[0]!.data.error).toBeDefined();
+    expect(run[0]!.data.result).toBeUndefined();
+  });
+
+  it('fails a live run visibly (message + Failed run event + revoke + interrupt) when the node is redeployed/torn down', async () => {
+    const { runPromise } = await startRunAndOpenBridge();
+
+    await agent.failActiveRunsForRedeploy('a new graph revision was deployed');
+
+    // The live bridge is interrupted and the per-thread key revoked at once.
+    expect(fakeTransport.interrupt).toHaveBeenCalled();
+    expect(virtualKeys.revokeThreadKey).toHaveBeenCalledWith('sk-vkey-test');
+
+    // The interruption explains itself: a visible message + a Failed run event.
+    const messageEvents = events.filter((e) => e.type === 'message') as Extract<
+      AgentEventType,
+      { type: 'message' }
+    >[];
+    const failure = messageEvents
+      .flatMap((e) => e.data.messages)
+      .find((m) => String(m.content).includes('Claude Agent session failed'));
+    expect(failure).toBeDefined();
+    expect(String(failure!.content)).toContain('a new graph revision');
+
+    const run = runEvents();
+    expect(run).toHaveLength(1);
+    expect(run[0]!.data.error).toBeDefined();
+    expect(run[0]!.data.result).toBeUndefined();
+
+    // The bridge reports the abort; run() must stay silent for the stopped run.
+    capturedHandlers!.onAborted('sess-1');
+    await runPromise;
+    expect(runEvents()).toHaveLength(1);
+  });
+
+  it('does not emit a second Failed run event when the bridge dies with a fatal frame after a redeploy abort', async () => {
+    const { runPromise } = await startRunAndOpenBridge();
+
+    await agent.failActiveRunsForRedeploy('a new graph revision was deployed');
+    // failActiveRunsForRedeploy already emitted exactly one Failed run event.
+    expect(runEvents()).toHaveLength(1);
+
+    // The abort tears the bridge stream down; instead of reporting a clean
+    // 'aborted' the dying bridge surfaces a 'fatal' (a crashed/severed stream
+    // during the interrupt). The run was already failed+stopped, so this must
+    // NOT produce a duplicate Failed run event or a duplicate failure message.
+    capturedHandlers!.onFatal('bridge stream severed during interrupt');
+    await expect(runPromise).rejects.toMatchObject({
+      errorCode: 'CLAUDE_BRIDGE_FAILED',
+    });
+
+    expect(runEvents()).toHaveLength(1);
+    const failureMessages = (
+      events.filter((e) => e.type === 'message') as Extract<
+        AgentEventType,
+        { type: 'message' }
+      >[]
+    )
+      .flatMap((e) => e.data.messages)
+      .filter((m) => String(m.content).includes('Claude Agent session failed'));
+    expect(failureMessages).toHaveLength(1);
+  });
+
+  it('does not overwrite a user Stop with a Failed run event when the bridge dies with a fatal frame after the stop', async () => {
+    const { runPromise } = await startRunAndOpenBridge();
+
+    // User stops the thread: a 'stop' event fires (thread → Stopped) and the
+    // session is aborted.
+    await agent.stopThread(THREAD_ID, 'user stop');
+    expect(stopEvents()).toHaveLength(1);
+
+    // The abort severs the bridge stream and it reports 'fatal' rather than a
+    // clean 'aborted'. The thread is already user-Stopped, so a Failed 'run'
+    // event here would clobber the Stopped status to Failed.
+    capturedHandlers!.onFatal('bridge stream severed during interrupt');
+    await runPromise.catch(() => undefined);
+
+    expect(runEvents()).toHaveLength(0);
+  });
+
   it('resumes the node-scoped session when the transcript is still on the container', async () => {
     threadsDao.getOne.mockResolvedValue({
       id: 'thread-int-1',

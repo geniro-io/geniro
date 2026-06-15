@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { environment } from '../../../../environments';
 import type { BuiltAgentTool } from '../../../agent-tools/tools/base-tool';
 import {
   buildBridgeToolDefinitions,
@@ -10,7 +11,10 @@ import {
 } from './claude-session.utils';
 
 vi.mock('../../../../environments', () => ({
-  environment: { litellmSandboxUrl: 'http://litellm.sandbox:4000' },
+  environment: {
+    litellmSandboxUrl: 'http://litellm.sandbox:4000',
+    litellmPublicUrl: 'http://litellm.public:4000',
+  },
 }));
 
 /**
@@ -166,6 +170,30 @@ describe('buildClaudeSessionEnv', () => {
     expect(buildClaudeSessionEnv('vk_test', null)).not.toHaveProperty(
       'GH_TOKEN',
     );
+  });
+
+  it('points ANTHROPIC_BASE_URL at the sandbox LiteLLM URL for a local runtime', () => {
+    const env = buildClaudeSessionEnv('vk_test');
+    expect(env.ANTHROPIC_BASE_URL).toBe('http://litellm.sandbox:4000');
+  });
+
+  it('points ANTHROPIC_BASE_URL at the public LiteLLM URL for a remote (Daytona) runtime', () => {
+    const env = buildClaudeSessionEnv('vk_test', null, {
+      isRemoteRuntime: true,
+    });
+    expect(env.ANTHROPIC_BASE_URL).toBe('http://litellm.public:4000');
+  });
+
+  it('fails closed when a remote runtime has no public LiteLLM URL configured', () => {
+    const original = environment.litellmPublicUrl;
+    (environment as { litellmPublicUrl: string }).litellmPublicUrl = '';
+    try {
+      expect(() =>
+        buildClaudeSessionEnv('vk_test', null, { isRemoteRuntime: true }),
+      ).toThrow(/LITELLM_PUBLIC_URL is not configured/);
+    } finally {
+      (environment as { litellmPublicUrl: string }).litellmPublicUrl = original;
+    }
   });
 });
 

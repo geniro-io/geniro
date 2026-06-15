@@ -26,12 +26,14 @@ export type ClaudeBridgeHandlers = {
   /** Proxied Geniro tool invocation; reply via send({type: 'tool_call_response', ...}). */
   onToolCallRequest?: (request: ClaudeToolCallRequest) => void;
   /**
-   * Intercepted AskUserQuestion. M2 routes every question as escalate-and-resume
+   * Intercepted AskUserQuestion. Every question routes as escalate-and-resume
    * (interrupt the turn → NeedMoreInfo → the user's answer resumes the session
    * on the next run), so the host does NOT drive the in-session
    * `question_response` reply path. That bridge command is the forward-compat
-   * primitive for M3's "parent answers while the query continues" subagent flow
-   * — kept and protocol-tested, but no host code sends it yet.
+   * primitive for a "parent answers while the query continues" subagent flow;
+   * wiring it needs a synchronous inter-agent ask-back channel that does not
+   * exist yet (a subagent's parent is blocked awaiting its result), so it stays
+   * kept and protocol-tested but no host code sends it.
    */
   onQuestionRequest?: (request: ClaudeQuestionRequest) => void;
 };
@@ -254,6 +256,15 @@ export class ClaudeBridgeTransport {
           id,
           questions: sanitizeBridgeQuestions(event.questions),
         });
+        return;
+      }
+      case 'heartbeat': {
+        // Keepalive only. `onActivity` already fired in `onStdout` for this
+        // chunk (refreshing lastUsedAt and keeping the exec channel warm past
+        // its idle timeout), so there is nothing more to do. Matched explicitly
+        // so the frame is a recognized no-op, not an unknown-type fall-through;
+        // it carries no payload, so there is nothing to structurally guard
+        // beyond the non-object check above.
         return;
       }
       case 'done': {

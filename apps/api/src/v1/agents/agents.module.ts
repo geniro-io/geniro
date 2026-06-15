@@ -17,6 +17,7 @@ import { SubAgent } from './services/agents/sub-agent';
 import { CheckpointStateService } from './services/checkpoint-state.service';
 import { ClaudeBootstrapService } from './services/claude/claude-bootstrap.service';
 import { ClaudeKeepaliveService } from './services/claude/claude-keepalive.service';
+import { ClaudeOrphanReaperService } from './services/claude/claude-orphan-reaper.service';
 import { PgCheckpointSaver } from './services/pg-checkpoint-saver';
 
 @Module({
@@ -35,6 +36,7 @@ import { PgCheckpointSaver } from './services/pg-checkpoint-saver';
     ClaudeAgent,
     ClaudeBootstrapService,
     ClaudeKeepaliveService,
+    ClaudeOrphanReaperService,
     SubAgent,
     PgCheckpointSaver,
     CheckpointStateService,

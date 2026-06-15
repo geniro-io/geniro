@@ -317,6 +317,46 @@ describe('bridge stdin command delivery', () => {
     expect(promptTexts).toContain(injectedText);
   });
 
+  it('emits keepalive heartbeat frames on a timer while a session runs', async () => {
+    // A small interval (the host can tune it via env) lets the assertion use the
+    // same real-timer harness as the rest of this file — several ticks land
+    // inside an 80ms turn that produces no other stdout.
+    process.env.GENIRO_CLAUDE_BRIDGE_HEARTBEAT_MS = '15';
+    try {
+      mocks.query.mockImplementation((args: QueryArgs) => {
+        drainPrompt(args.prompt, []);
+        return (async function* () {
+          await waitMs(80);
+          yield { type: 'result', subtype: 'success', session_id: 'session-1' };
+        })();
+      });
+
+      const harness = await bootBridge();
+      harness.sendChunk([
+        {
+          type: 'start',
+          options: { prompt: 'initial turn prompt', model: 'claude-test' },
+        },
+      ]);
+
+      await harness.exited;
+
+      const frames = harness.protocolFrames();
+      const heartbeats = frames.filter((frame) => frame.type === 'heartbeat');
+      expect(heartbeats.length).toBeGreaterThanOrEqual(1);
+      // The timer is cleared on session end: the terminal `done`/`result` frames
+      // are the last protocol frames, with no heartbeat after them.
+      const lastHeartbeatIdx = frames.lastIndexOf(
+        heartbeats[heartbeats.length - 1]!,
+      );
+      const doneIdx = frames.findIndex((frame) => frame.type === 'done');
+      expect(doneIdx).toBeGreaterThan(-1);
+      expect(lastHeartbeatIdx).toBeLessThan(doneIdx);
+    } finally {
+      delete process.env.GENIRO_CLAUDE_BRIDGE_HEARTBEAT_MS;
+    }
+  });
+
   it('aborts (not completes) the session when an interrupt is coalesced into the start chunk', async () => {
     const promptTexts: string[] = [];
 
@@ -343,5 +383,24 @@ describe('bridge stdin command delivery', () => {
     const frames = harness.protocolFrames();
     expect(frames.some((frame) => frame.type === 'aborted')).toBe(true);
     expect(frames.some((frame) => frame.type === 'done')).toBe(false);
+  });
+
+  it('exits without launching a session when shutdown/interrupt arrives before start', async () => {
+    // A stop landing while the bridge is still booting (before `start`) must
+    // never reach `query()` — the handshake rejects, main() emits fatal and
+    // exits, and no billable session begins. Covers the pre-start abort branch.
+    mocks.query.mockImplementation(() => (async function* () {})());
+
+    const harness = await bootBridge();
+    harness.sendChunk([{ type: 'shutdown' }]);
+
+    await harness.exited;
+
+    expect(mocks.query).not.toHaveBeenCalled();
+    const frames = harness.protocolFrames();
+    expect(frames.some((frame) => frame.type === 'fatal')).toBe(true);
+    expect(
+      frames.some((frame) => frame.type === 'done' || frame.type === 'aborted'),
+    ).toBe(false);
   });
 });

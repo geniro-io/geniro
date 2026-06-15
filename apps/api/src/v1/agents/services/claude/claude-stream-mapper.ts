@@ -318,8 +318,14 @@ export class ClaudeStreamMapper {
 
   private onResult(message: SdkResultMessage): void {
     this.sessionId = message.session_id || this.sessionId;
-    this.resultSubtype = message.subtype;
-    this.isError = message.is_error === true || message.subtype !== 'success';
+    // `subtype` crosses the sandbox trust boundary and is rendered verbatim into
+    // a user-visible failure message (claude-agent.emitSessionFailureMessage), so
+    // guard it structurally: a non-string (crafted/garbage frame) collapses to
+    // undefined rather than reaching the conversation as `[object Object]`.
+    this.resultSubtype =
+      typeof message.subtype === 'string' ? message.subtype : undefined;
+    this.isError =
+      message.is_error === true || this.resultSubtype !== 'success';
     if (typeof message.total_cost_usd === 'number') {
       this.sdkTotalCostUsd = message.total_cost_usd;
     }

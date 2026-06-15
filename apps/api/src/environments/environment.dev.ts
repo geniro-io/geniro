@@ -27,6 +27,10 @@ export const environment = () =>
       'LITELLM_SANDBOX_URL',
       'http://host.docker.internal:4000',
     ),
+    // LiteLLM URL reachable from a REMOTE (Daytona) sandbox host, which cannot
+    // reach the cluster-internal litellmSandboxUrl. Empty = Claude Agent
+    // sessions on a Daytona runtime fail with a clear error until configured.
+    litellmPublicUrl: getEnv('LITELLM_PUBLIC_URL', ''),
     redisUrl: getEnv('REDIS_URL', 'redis://localhost:6380'),
     qdrantUrl: getEnv('QDRANT_URL', 'http://localhost:6333'),
     qdrantApiKey: getEnv('QDRANT_API_KEY'),

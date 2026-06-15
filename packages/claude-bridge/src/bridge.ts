@@ -33,6 +33,25 @@ function emit(event: BridgeEvent): void {
   process.stdout.write(serializeFrame(event));
 }
 
+/**
+ * Cadence of the keepalive `heartbeat` the bridge writes to stdout while a
+ * session runs. Kept well under common exec-channel idle timeouts (an AWS ELB's
+ * 60s, the K8s apiserver streaming idle timeout, a Daytona proxy's) so a long
+ * model-think or tool-exec gap never lets the channel go idle and get reaped.
+ * Provider-agnostic: harmless extra bytes on Docker, load-bearing on K8s and
+ * Daytona-remote. The bridge reads an optional `GENIRO_CLAUDE_BRIDGE_HEARTBEAT_MS`
+ * override from its OWN process environment (a non-numeric or non-positive value
+ * falls back to 20s). NOTE: the host does not currently forward this var into the
+ * sandbox env — `buildClaudeSessionEnv` emits no such key — so in production the
+ * 20s default always applies. Plumb it through `buildClaudeSessionEnv` (the way
+ * `LITELLM_PUBLIC_URL` is wired) if an operator override behind a low-idle-timeout
+ * proxy becomes necessary.
+ */
+const HEARTBEAT_INTERVAL_MS = ((): number => {
+  const raw = Number(process.env.GENIRO_CLAUDE_BRIDGE_HEARTBEAT_MS);
+  return Number.isFinite(raw) && raw > 0 ? raw : 20_000;
+})();
+
 function logErr(message: string): void {
   process.stderr.write(`[claude-bridge] ${message}\n`);
 }
@@ -196,6 +215,16 @@ async function runSession(
     }
   }
 
+  // Keepalive: emit a heartbeat on a timer so the exec channel sees periodic
+  // traffic even when the SDK is mid-think and producing no sdk_message frames.
+  // `unref` so the timer alone never keeps the process alive past the turn; the
+  // `finally` clears it on every exit path.
+  const heartbeat = setInterval(
+    () => emit({ type: 'heartbeat' }),
+    HEARTBEAT_INTERVAL_MS,
+  );
+  heartbeat.unref();
+
   try {
     const session = query({
       prompt: inputQueue,
@@ -261,6 +290,7 @@ async function runSession(
     }
     throw error;
   } finally {
+    clearInterval(heartbeat);
     toolRequests.failAll('session ended');
     questionRequests.failAll('session ended');
     process.stdin.off('data', onStdin);

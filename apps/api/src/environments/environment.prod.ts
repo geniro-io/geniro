@@ -40,6 +40,9 @@ export const environment = () =>
     // LiteLLM URL reachable from INSIDE sandbox runtimes (Claude Agent bridge).
     // Empty = Claude Agent sessions fail with a clear error until configured.
     litellmSandboxUrl: getEnv('LITELLM_SANDBOX_URL', ''),
+    // LiteLLM URL reachable from a REMOTE (Daytona) sandbox host. Empty =
+    // Claude Agent sessions on a Daytona runtime fail with a clear error.
+    litellmPublicUrl: getEnv('LITELLM_PUBLIC_URL', ''),
     redisUrl: getEnv('REDIS_URL'),
     qdrantUrl: getEnv('QDRANT_URL'),
     qdrantApiKey: getEnv('QDRANT_API_KEY'),

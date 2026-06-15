@@ -951,16 +951,26 @@ export class RepoIndexService implements OnModuleInit {
           entity.repositoryId,
           branch,
         );
+      // Read-only discovery (commit resolution + strategy estimate) runs on the
+      // raw orchestrator execFn, which under heavy parallel load can resolve a
+      // git read as a transient exit-124 timeout. Wrap those reads with the same
+      // retry+timeout the index passes use, so a transient neither aborts the job
+      // (resolveCurrentCommit throws on a failed read) nor mis-sizes the
+      // inline-vs-background routing (estimate maps a failed read to 0). The
+      // clone/rm-rf above stay on the raw execFn — they are not safe to retry.
+      const readExecFn = RepoIndexerService.withRetry(
+        RepoIndexerService.withTimeout(execFn),
+      );
       const currentCommit = await this.repoIndexerService.resolveCurrentCommit(
         REPO_CLONE_DIR,
-        execFn,
+        readExecFn,
       );
 
       const strategy = await this.resolveIndexStrategy(
         entity,
         entity.repositoryId,
         REPO_CLONE_DIR,
-        execFn,
+        readExecFn,
         collection,
         currentCommit,
         { embeddingModel, vectorSize, chunkingSignatureHash },
