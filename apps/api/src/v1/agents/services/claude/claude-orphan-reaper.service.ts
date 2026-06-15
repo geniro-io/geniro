@@ -114,8 +114,14 @@ export class ClaudeOrphanReaperService
         const startedAt = thread.runningStartedAt
           ? new Date(thread.runningStartedAt).getTime()
           : null;
-        if (startedAt !== null && now - startedAt < ORPHAN_GRACE_MS) {
-          continue; // too fresh — the runtime-instance row may not exist yet
+        if (startedAt === null || now - startedAt < ORPHAN_GRACE_MS) {
+          // Too fresh, or unknown age: a null runningStartedAt on a Running
+          // thread is a known DB-invariant violation (threads.service logs it)
+          // that plausibly sits in the same startup window the grace covers —
+          // its runtime-instance row may not exist yet, so the empty-liveness
+          // check below would wrongly reap it. Fail safe: skip, never reap a
+          // thread whose age we cannot establish.
+          continue;
         }
 
         const liveRuntimes = await this.runtimeInstanceDao.getAll({

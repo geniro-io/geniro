@@ -4,7 +4,7 @@ import type {
   SdkResultMessage,
   SdkUserMessage,
 } from '@packages/claude-bridge';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 
 import { BaseAgentConfigurable } from '../../agents.types';
 import { AgentEventType } from '../agents/base-agent';
@@ -260,6 +260,25 @@ describe('ClaudeStreamMapper', () => {
     expect(mapper.sdkTotalCostUsd).toBe(0.42);
     expect(mapper.isError).toBe(true);
     expect(stateEvents()).toHaveLength(1);
+  });
+
+  it('collapses a non-string result subtype to undefined and marks the turn errored (trust-boundary guard)', () => {
+    // A crafted/garbage result frame can carry a non-string `subtype`; the
+    // guard must collapse it to undefined so it never renders verbatim (e.g.
+    // `[object Object]`) into the user-visible failure message, and a
+    // non-'success' subtype marks the turn errored.
+    const result = {
+      type: 'result',
+      subtype: { evil: true },
+      session_id: 'sess-evil',
+      total_cost_usd: 0,
+      is_error: false,
+    } as unknown as SdkResultMessage;
+
+    mapper.onSdkMessage(result);
+
+    expect(mapper.resultSubtype).toBeUndefined();
+    expect(mapper.isError).toBe(true);
   });
 
   it('stamps the residual turn usage and SDK cost onto the buffered last assistant message at result time', () => {

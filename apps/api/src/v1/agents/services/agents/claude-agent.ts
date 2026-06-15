@@ -36,6 +36,7 @@ import {
   buildBridgeToolDefinitions,
   buildClaudeSessionEnv,
   formatQuestionsAsText,
+  sanitizeSandboxError,
   SMALL_FAST_MODEL_ALIAS,
 } from '../claude/claude-session.utils';
 import { ClaudeStreamMapper } from '../claude/claude-stream-mapper';
@@ -507,7 +508,10 @@ export class ClaudeAgent
         if (!runEntry.stopped) {
           this.emitSessionFailureMessage(runEntry, mergedConfig, outcome.error);
         }
-        throw new InternalException('CLAUDE_BRIDGE_FAILED', outcome.error);
+        throw new InternalException(
+          'CLAUDE_BRIDGE_FAILED',
+          sanitizeSandboxError(outcome.error),
+        );
       }
 
       if (runEntry.stopReason === 'cost_limit') {
@@ -541,7 +545,9 @@ export class ClaudeAgent
       if (mapper.isError) {
         // Surface the failure as a visible thread message so an error-subtype
         // session end explains itself instead of a bare error-Stopped status.
-        const subtype = mapper.resultSubtype ?? 'an unknown error';
+        const subtype = sanitizeSandboxError(
+          mapper.resultSubtype ?? 'an unknown error',
+        );
         const failureMsgs = this.emitSessionFailureMessage(
           runEntry,
           mergedConfig,
@@ -776,6 +782,11 @@ export class ClaudeAgent
    * rather than a silently error-Stopped thread. Carries no token usage, so it
    * does not perturb the cost rollup. Returns the persisted messages so the
    * caller can fold them into its AgentOutput.
+   *
+   * `reason` is sandbox-derived (a `fatal` frame's error string), so it is
+   * routed through `sanitizeSandboxError` before persistence — a clone/LLM
+   * error can legitimately embed a PAT or the per-thread virtual key, which
+   * must never land in the durable conversation (sandbox trust boundary).
    */
   private emitSessionFailureMessage(
     runEntry: ClaudeActiveRun,
@@ -783,7 +794,9 @@ export class ClaudeAgent
     reason: string,
   ): BaseMessage[] {
     const notice = markMessageHideForLlm(
-      new SystemMessage(`Claude Agent session failed: ${reason}`),
+      new SystemMessage(
+        `Claude Agent session failed: ${sanitizeSandboxError(reason)}`,
+      ),
     );
     const msgs = updateMessagesListWithMetadata([notice], config);
     this.emit({

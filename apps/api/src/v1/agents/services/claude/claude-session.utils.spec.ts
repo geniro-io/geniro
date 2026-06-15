@@ -8,6 +8,7 @@ import {
   formatQuestionsAsText,
   isToolForwardableToClaude,
   redactGitUrl,
+  sanitizeSandboxError,
 } from './claude-session.utils';
 
 vi.mock('../../../../environments', () => ({
@@ -74,6 +75,67 @@ describe('redactGitUrl', () => {
       "fatal: unable to access 'HTTPS://ghp_LEAK@github.com/acme/private'",
     );
     expect(redacted).not.toContain('ghp_LEAK');
+  });
+});
+
+/**
+ * sanitizeSandboxError guards a sandbox-derived `fatal` error string before it
+ * reaches a persisted thread message or a Pino/Sentry exception. Both secret
+ * shapes a bridge fatal can echo — a clone-URL PAT and a bare `sk-` virtual
+ * key — must be masked; redactGitUrl alone catches only the URL.
+ */
+describe('sanitizeSandboxError', () => {
+  it('masks a bare LiteLLM/Anthropic sk- virtual key', () => {
+    const redacted = sanitizeSandboxError(
+      'LLM proxy rejected key sk-abcd1234EFGH5678_-xyz with 401',
+    );
+    expect(redacted).not.toContain('sk-abcd1234EFGH5678_-xyz');
+    expect(redacted).toContain('sk-***');
+  });
+
+  it('masks an sk-ant- prefixed Anthropic key', () => {
+    const redacted = sanitizeSandboxError(
+      'auth failed: sk-ant-api03-Z9z9z9z9z9',
+    );
+    expect(redacted).not.toContain('sk-ant-api03-Z9z9z9z9z9');
+    expect(redacted).toContain('sk-***');
+  });
+
+  it('still strips a PAT-bearing clone URL (composes redactGitUrl)', () => {
+    const redacted = sanitizeSandboxError(
+      "fatal: unable to access 'https://ghp_LEAK@github.com/acme/private'",
+    );
+    expect(redacted).not.toContain('ghp_LEAK');
+    expect(redacted).toContain('https://***@github.com/acme/private');
+  });
+
+  it('redacts both a clone-URL PAT and a virtual key in one string', () => {
+    const redacted = sanitizeSandboxError(
+      'clone https://x:ghp_LEAK@github.com/a/b failed; then sk-deadBEEF00112233 was rejected',
+    );
+    expect(redacted).not.toContain('ghp_LEAK');
+    expect(redacted).not.toContain('sk-deadBEEF00112233');
+    expect(redacted).toContain('https://***@github.com/a/b');
+    expect(redacted).toContain('sk-***');
+  });
+
+  it('leaves a secret-free error untouched', () => {
+    expect(sanitizeSandboxError('bridge exited with code 1')).toBe(
+      'bridge exited with code 1',
+    );
+  });
+
+  it('masks a bare GitHub installation token echoed by the gh CLI (not URL-embedded)', () => {
+    // GH_TOKEN is injected into the sandbox session env (buildClaudeSessionEnv)
+    // and consumed by TWO sinks: native git over HTTPS (URL-embedded → caught
+    // by redactGitUrl) AND the `gh` CLI directly, which surfaces auth errors
+    // echoing the bare token value with no surrounding URL. That bare token is
+    // a real per-thread sandbox secret; a `gh auth` fatal frame carrying it
+    // must not land verbatim in a persisted thread message or a Sentry line.
+    const redacted = sanitizeSandboxError(
+      'gh: authentication failed for token ghs_AbCdEf0123456789AbCdEf0123456789',
+    );
+    expect(redacted).not.toContain('ghs_AbCdEf0123456789AbCdEf0123456789');
   });
 });
 

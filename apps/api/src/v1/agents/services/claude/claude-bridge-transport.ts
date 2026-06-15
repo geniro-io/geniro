@@ -15,6 +15,7 @@ import {
   ClaudeQuestionRequest,
   ClaudeToolCallRequest,
 } from './claude-session.types';
+import { sanitizeSandboxError } from './claude-session.utils';
 
 export type ClaudeBridgeHandlers = {
   onSdkMessage: (message: SdkMessage) => void;
@@ -299,12 +300,22 @@ export class ClaudeBridgeTransport {
       return;
     }
     this.finished = true;
-    const exception = new InternalException('CLAUDE_BRIDGE_FAILED', error);
     if (this.readyReject) {
+      // A fatal during the bootstrap/ready window rejects start(), which the
+      // host catch re-emits as a run-error event and re-throws into Pino/Sentry
+      // with no agent-level redaction in between — so the sandbox-derived error
+      // (a clone PAT / virtual key during install) must be sanitized here. The
+      // onFatal path below stays raw: it is sanitized downstream at the agent's
+      // surfacing sinks.
       const reject = this.readyReject;
       this.readyResolve = null;
       this.readyReject = null;
-      reject(exception);
+      reject(
+        new InternalException(
+          'CLAUDE_BRIDGE_FAILED',
+          sanitizeSandboxError(error),
+        ),
+      );
       return;
     }
     this.handlers.onFatal(error);

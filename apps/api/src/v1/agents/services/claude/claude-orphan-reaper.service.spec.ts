@@ -123,6 +123,22 @@ describe('ClaudeOrphanReaperService.sweep', () => {
     expect(runtimeDao.getAll).not.toHaveBeenCalled();
   });
 
+  it('skips a Running Claude thread with a null runningStartedAt (unknown age — fail safe, never reap)', async () => {
+    // A Running thread with no start timestamp is a known DB-invariant
+    // violation that may sit in the startup window; its runtime row may not
+    // exist yet, so reaping on the empty-liveness check would clobber a live
+    // run. The grace guard must treat null age as too-fresh and skip.
+    threadsDao.getAll.mockResolvedValue([
+      makeThread({ runningStartedAt: null }),
+    ]);
+
+    const reaped = await service.sweep(NOW);
+
+    expect(reaped).toBe(0);
+    expect(runtimeDao.getAll).not.toHaveBeenCalled();
+    expect(threadsDao.updateById).not.toHaveBeenCalled();
+  });
+
   it('returns 0 without throwing when the thread query fails (sweep is best-effort)', async () => {
     threadsDao.getAll.mockRejectedValue(new Error('db down'));
 
