@@ -1,6 +1,13 @@
 {
   "$schema": "https://turborepo.org/schema.json",
   "globalDependencies": ["tsconfig.json", "tsconfig.build.json"],
+  "globalPassThroughEnv": [
+    "DOCKER_HOST",
+    "DOCKER_SOCKET",
+    "TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE",
+    "TESTCONTAINERS_HOST_OVERRIDE",
+    "TESTCONTAINERS_RYUK_DISABLED"
+  ],
   "tasks": {
     "build": {
       "dependsOn": ["^build"],

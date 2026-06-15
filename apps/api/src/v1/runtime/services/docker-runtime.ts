@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { Duplex, PassThrough } from 'node:stream';
+import { finished } from 'node:stream/promises';
 
 import { BadRequestException, extractErrorMessage } from '@packages/common';
 import Docker from 'dockerode';
@@ -1033,6 +1034,28 @@ export class DockerRuntime extends BaseRuntime {
 
         resetTailTimer();
       });
+
+      // Drain the demuxed output streams before reading the buffers. The
+      // promise above resolves on the RAW execStream's 'end'/'close', but
+      // `demuxStream` writes into these PassThroughs surface as 'data' events on
+      // later ticks, and those 'data' handlers are what append to
+      // stdout/stderrBuf. Under CPU contention the final chunk (e.g. the last
+      // line of a `git ls-files`/`diff`) can still be buffered when we read the
+      // buffer, yielding `exitCode 0` + spuriously-empty stdout — which silently
+      // breaks incremental repo indexing (empty file/diff lists treated as
+      // valid). Attach finished() BEFORE end() so a late stream error is caught
+      // by its listener rather than thrown unhandled; the 2s race is a defensive
+      // bound so a stalled stream can never hang exec.
+      const drained = Promise.all([
+        finished(stdoutStream),
+        finished(stderrStream),
+      ]).catch(() => undefined);
+      stdoutStream.end();
+      stderrStream.end();
+      await Promise.race([
+        drained,
+        new Promise<void>((resolve) => setTimeout(resolve, 2000).unref()),
+      ]);
 
       const info = await ex.inspect();
       const exitCode = timedOut || tailTimedOut ? 124 : info.ExitCode || 0;
