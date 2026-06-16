@@ -49,7 +49,7 @@ export const ClaudeAgentTemplateSchema = z.object({
     .string()
     .optional()
     .describe(
-      'Secret holding your Anthropic API key (must start with sk-ant-). Required when authMode is "byo-anthropic". The key is resolved host-side and injected only into this node\'s sandbox — set a spend limit on it in the Anthropic Console as a backstop.',
+      'Secret holding your Anthropic API key (must start with sk-ant-). Required when authMode is "byo-anthropic". The key is resolved host-side and injected only into this node\'s sandbox — set a spend limit on it in the Anthropic Console as a backstop. That Console limit is also your only ceiling for an interrupted turn: if a run is stopped mid-turn, the in-flight spend of that turn is not captured in the platform cost rollup.',
     )
     .meta({ 'x-ui:secret-select-host': true }),
   maxTurns: z

@@ -479,8 +479,12 @@ export class GraphValidationService {
         continue;
       }
 
-      // Single secret select
-      if (prop['x-ui:secret-select'] === true) {
+      // Single secret select (incl. the host-only BYO key marker, which is
+      // resolved host-side but still gets the same pre-flight "not found" check)
+      if (
+        prop['x-ui:secret-select'] === true ||
+        prop['x-ui:secret-select-host'] === true
+      ) {
         const value = nodeData.config[key];
         if (typeof value === 'string' && value && !availableSet.has(value)) {
           errors.push({
