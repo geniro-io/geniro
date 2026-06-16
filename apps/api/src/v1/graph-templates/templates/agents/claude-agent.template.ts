@@ -43,7 +43,7 @@ export const ClaudeAgentTemplateSchema = z.object({
     .int()
     .min(1)
     .max(2500)
-    .default(100)
+    .default(2500)
     .optional()
     .describe(
       'Maximum number of agentic turns the Claude session can execute during a single run.',

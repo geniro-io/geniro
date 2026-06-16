@@ -18,13 +18,22 @@ interface TemplateSidebarProps {
   templates: TemplateDto[];
 }
 
+const AGENT_CATEGORY_KEY = 'agents';
+const AGENT_KINDS = ['simpleagent', 'claudeagent'];
+
+// Simple and Claude agents are distinct node kinds but share one sidebar
+// category so users find every agent type under a single "Agents" section.
+const getCategoryKey = (kind: string): string => {
+  return AGENT_KINDS.includes(kind.toLowerCase()) ? AGENT_CATEGORY_KEY : kind;
+};
+
 export const TemplateSidebar = ({
   onTemplateClick,
   onClose,
   templates,
 }: TemplateSidebarProps) => {
   const [searchText, setSearchText] = useState('');
-  const [expandedKinds, setExpandedKinds] = useState<Set<string>>(
+  const [expandedCategories, setExpandedCategories] = useState<Set<string>>(
     () => new Set(),
   );
   const isSearchActive = searchText.trim().length > 0;
@@ -57,10 +66,10 @@ export const TemplateSidebar = ({
     const groups = new Map<string, TemplateDto[]>();
 
     filteredTemplates.forEach((template) => {
-      const kind = String(template.kind ?? 'Other');
-      const group = groups.get(kind) ?? [];
+      const category = getCategoryKey(String(template.kind ?? 'Other'));
+      const group = groups.get(category) ?? [];
       group.push(template);
-      groups.set(kind, group);
+      groups.set(category, group);
     });
 
     return Array.from(groups.entries()).sort(([a], [b]) => a.localeCompare(b));
@@ -76,11 +85,11 @@ export const TemplateSidebar = ({
     );
   }
 
-  const formatKindLabel = (kind: string) => {
-    const normalized = kind.toLowerCase();
+  const formatCategoryLabel = (category: string) => {
+    const normalized = category.toLowerCase();
     switch (normalized) {
-      case 'simpleagent':
-        return 'Agent';
+      case AGENT_CATEGORY_KEY:
+        return 'Agents';
       case 'tool':
         return 'Tools';
       case 'trigger':
@@ -94,20 +103,20 @@ export const TemplateSidebar = ({
       case 'instruction':
         return 'Instructions';
       default:
-        return kind;
+        return category;
     }
   };
 
-  const toggleKindExpanded = (kind: string) => {
+  const toggleCategoryExpanded = (category: string) => {
     if (isSearchActive) {
       return;
     }
-    setExpandedKinds((prev) => {
+    setExpandedCategories((prev) => {
       const next = new Set(prev);
-      if (next.has(kind)) {
-        next.delete(kind);
+      if (next.has(category)) {
+        next.delete(category);
       } else {
-        next.add(kind);
+        next.add(category);
       }
       return next;
     });
@@ -163,21 +172,22 @@ export const TemplateSidebar = ({
               <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide px-1 py-2">
                 Categories
               </p>
-              {groupedTemplates.map(([kind, kindTemplates]) => {
-                const isExpanded = isSearchActive || expandedKinds.has(kind);
-                const kindLabel = formatKindLabel(kind);
+              {groupedTemplates.map(([category, categoryTemplates]) => {
+                const isExpanded =
+                  isSearchActive || expandedCategories.has(category);
+                const categoryLabel = formatCategoryLabel(category);
 
                 return (
-                  <div key={kind}>
+                  <div key={category}>
                     <button
                       className="w-full flex items-center justify-between px-3 py-2.5 rounded-lg bg-card border border-border hover:bg-muted/40 transition-colors text-left"
-                      onClick={() => toggleKindExpanded(kind)}>
+                      onClick={() => toggleCategoryExpanded(category)}>
                       <div className="flex items-center gap-2.5 min-w-0">
                         <span className="text-sm font-medium text-foreground">
-                          {kindLabel}
+                          {categoryLabel}
                         </span>
                         <span className="text-xs text-muted-foreground tabular-nums">
-                          {kindTemplates.length}
+                          {categoryTemplates.length}
                         </span>
                       </div>
                       {isExpanded ? (
@@ -189,7 +199,7 @@ export const TemplateSidebar = ({
 
                     {isExpanded && (
                       <div className="mt-1 space-y-1">
-                        {kindTemplates.map((template) => (
+                        {categoryTemplates.map((template) => (
                           <div
                             key={template.id}
                             draggable
