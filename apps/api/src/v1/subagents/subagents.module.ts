@@ -1,10 +1,9 @@
 import { Module } from '@nestjs/common';
 
-import { SubagentSuspendService } from './subagent-suspend.service';
 import { SubagentsService } from './subagents.service';
 
 @Module({
-  providers: [SubagentsService, SubagentSuspendService],
-  exports: [SubagentsService, SubagentSuspendService],
+  providers: [SubagentsService],
+  exports: [SubagentsService],
 })
 export class SubagentsModule {}

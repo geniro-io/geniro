@@ -62,7 +62,7 @@ export const SYSTEM_AGENTS: SubagentDefinition[] = [
     - **Search convergence**: if two consecutive codebase_search calls return the same top results, stop searching and read those files directly.
 
     ## Rules
-    - Prefer to complete the task autonomously with sensible assumptions. If a required detail is genuinely missing and you cannot infer or discover it, you may ask your caller ONE focused question via the ask_caller tool — only when you truly cannot proceed.
+    - Complete the task autonomously. You cannot ask follow-up questions.
     - You have READ-ONLY access. Do NOT run destructive or modifying shell commands (no rm, mv, cp, chmod, chown, write operations, git push, npm publish, etc.). Only use shell for read operations like ls, cat, grep, find, git log, git diff, etc.
     - When done, respond with your findings as a structured text message. Include file paths and line numbers for key references.
     - If you cannot fully complete the task, return what you found and clearly state what remains unknown.
@@ -111,7 +111,7 @@ export const SYSTEM_AGENTS: SubagentDefinition[] = [
     - **Search convergence**: if two consecutive codebase_search calls return the same top results, stop searching and read those files directly.
 
     ## Rules
-    - Prefer to complete the task autonomously with sensible assumptions. If a required detail is genuinely missing and you cannot infer or discover it, you may ask your caller ONE focused question via the ask_caller tool — only when you truly cannot proceed.
+    - Complete the task autonomously. You cannot ask follow-up questions.
     - You have READ-ONLY access. Do NOT run destructive or modifying shell commands (no rm, mv, cp, chmod, chown, write operations, git push, npm publish, etc.). Only use shell for read operations like ls, cat, grep, find, git log, git diff, etc.
     - When done, respond with your findings as a structured text message. Include file paths and line numbers for key references, and explain the reasoning behind each conclusion.
     - Be concise but thorough — favor well-supported conclusions over speculation.
@@ -147,7 +147,7 @@ export const SYSTEM_AGENTS: SubagentDefinition[] = [
     4. When running build/test/lint/install commands via shell, prefer setting outputFocus to extract only the relevant information (pass/fail status, error messages) instead of consuming your small context with full output. If the focused result lacks detail, re-run without outputFocus.
 
     ## Rules
-    - Prefer to complete the task autonomously with sensible assumptions. If a required detail is genuinely missing and you cannot infer or discover it, you may ask your caller ONE focused question via the ask_caller tool — only when you truly cannot proceed.
+    - Complete the task autonomously. You cannot ask follow-up questions.
     - Be fast and efficient. You have a small context window — avoid reading large files or unnecessary exploration.
     - When done, respond with a short summary of what you did.
     - If you cannot complete the task, explain what went wrong briefly.
@@ -184,7 +184,7 @@ export const SYSTEM_AGENTS: SubagentDefinition[] = [
     5. When running build/test/lint/install commands via shell, prefer setting outputFocus to extract only the relevant information (pass/fail status, error messages) to conserve context window space. If the focused result lacks detail, re-run without outputFocus.
 
     ## Rules
-    - Prefer to complete the task autonomously with sensible assumptions. If a required detail is genuinely missing and you cannot infer or discover it, you may ask your caller ONE focused question via the ask_caller tool — only when you truly cannot proceed.
+    - Complete the task autonomously. You cannot ask follow-up questions.
     - Use tools efficiently. Minimize tool calls — batch file reads, use targeted searches.
     - Never read the same file twice. When you already know a file path, read it directly instead of searching for it.
     - When a tool returns an error with fallback instructions, follow those instructions immediately — do not retry the failed tool.

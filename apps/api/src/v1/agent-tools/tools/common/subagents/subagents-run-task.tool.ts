@@ -1,5 +1,3 @@
-import { randomUUID } from 'node:crypto';
-
 import { BaseMessage, HumanMessage } from '@langchain/core/messages';
 import { ToolRunnableConfig } from '@langchain/core/tools';
 import { Injectable } from '@nestjs/common';
@@ -9,10 +7,7 @@ import dedent from 'dedent';
 import { z } from 'zod';
 
 import { environment } from '../../../../../environments';
-import {
-  BaseAgentConfigurable,
-  SUBAGENT_THREAD_PREFIX,
-} from '../../../../agents/agents.types';
+import { BaseAgentConfigurable } from '../../../../agents/agents.types';
 import {
   SubAgent,
   SubagentRunResult,
@@ -20,11 +15,6 @@ import {
 import { LlmModelsService } from '../../../../litellm/services/llm-models.service';
 import { BASE_RUNTIME_WORKDIR } from '../../../../runtime/services/base-runtime';
 import { RuntimeThreadProvider } from '../../../../runtime/services/runtime-thread-provider';
-import {
-  CalleeSuspendRecord,
-  MAX_ASK_BACK_DEPTH,
-} from '../../../../subagents/subagent-ask-back.types';
-import { SubagentSuspendService } from '../../../../subagents/subagent-suspend.service';
 import { SubagentsService } from '../../../../subagents/subagents.service';
 import {
   SubagentDefinition,
@@ -38,7 +28,6 @@ import {
   ToolInvokeResult,
   ToolInvokeStream,
 } from '../../base-tool';
-import { AskCallerTool } from './ask-caller.tool';
 import { SubagentsToolGroupConfig } from './subagents.types';
 
 export const SubagentsRunTaskToolSchema = z.object({
@@ -58,8 +47,7 @@ export const SubagentsRunTaskToolSchema = z.object({
       'A clear, self-contained description of the task to delegate. Include all context needed: ' +
         'ABSOLUTE file paths (starting with /runtime-workspace/), specific questions, constraints, expected output format. ' +
         'Never use relative paths like "src/..." — always use absolute paths like "/runtime-workspace/repo/src/...". ' +
-        'The subagent CAN ask a focused follow-up question (via its ask_caller tool) when a required detail is genuinely missing, ' +
-        'but it is instructed to prefer completing autonomously — so a complete description avoids a round-trip back to you.',
+        'The subagent cannot ask follow-up questions — it must be able to complete the task from this description alone.',
     ),
   purpose: z
     .string()
@@ -79,16 +67,6 @@ export interface SubagentsRunTaskToolOutput {
   exploredFiles?: string[];
   statistics?: SubagentRunResult['statistics'];
   error?: string;
-  /**
-   * Set when the subagent paused with a question instead of completing (M4
-   * ask-back). The caller answers in-session by calling `answer_callee` with
-   * this `suspendId`, or escalates to the user via finish(needsMoreInfo).
-   */
-  needsAnswer?: boolean;
-  /** Resume handle to pass to `answer_callee`. Present only when needsAnswer is true. */
-  suspendId?: string;
-  /** The subagent's question. Present only when needsAnswer is true. */
-  question?: string;
 }
 
 @Injectable()
@@ -111,8 +89,6 @@ export class SubagentsRunTaskTool extends BaseTool<
     private readonly moduleRef: ModuleRef,
     private readonly llmModelsService: LlmModelsService,
     private readonly subagentsService: SubagentsService,
-    private readonly subagentSuspendService: SubagentSuspendService,
-    private readonly askCallerTool: AskCallerTool,
     private readonly logger: DefaultLogger,
   ) {
     super();
@@ -274,21 +250,12 @@ export class SubagentsRunTaskTool extends BaseTool<
       runnableConfig,
     );
 
-    const durableThreadId = `${SUBAGENT_THREAD_PREFIX}${randomUUID()}`;
     const loopResult = await subAgent.runSubagent(
       [new HumanMessage(args.task)],
       runnableConfig,
-      { durableThreadId },
     );
 
-    return this.buildResult(loopResult, title, {
-      agentId: args.agentId,
-      durableThreadId,
-      askBackCount: 0,
-      ...(typeof runnableConfig.configurable?.node_id === 'string'
-        ? { parentNodeId: runnableConfig.configurable.node_id }
-        : {}),
-    });
+    return this.buildResult(loopResult, title);
   }
 
   /**
@@ -320,8 +287,6 @@ export class SubagentsRunTaskTool extends BaseTool<
       config,
       runnableConfig,
     );
-
-    const durableThreadId = `${SUBAGENT_THREAD_PREFIX}${randomUUID()}`;
 
     // Queue-based message forwarding from subagent events
     const messageQueue: BaseMessage[][] = [];
@@ -371,9 +336,7 @@ export class SubagentsRunTaskTool extends BaseTool<
 
     try {
       const runPromise = subAgent
-        .runSubagent([new HumanMessage(args.task)], runnableConfig, {
-          durableThreadId,
-        })
+        .runSubagent([new HumanMessage(args.task)], runnableConfig)
         .then((result) => {
           runDone = true;
           if (resolveWaiting) {
@@ -410,14 +373,7 @@ export class SubagentsRunTaskTool extends BaseTool<
 
       const loopResult = await runPromise;
 
-      return this.buildResult(loopResult, title, {
-        agentId: args.agentId,
-        durableThreadId,
-        askBackCount: 0,
-        ...(typeof runnableConfig.configurable?.node_id === 'string'
-          ? { parentNodeId: runnableConfig.configurable.node_id }
-          : {}),
-      });
+      return this.buildResult(loopResult, title);
     } catch (err) {
       // SubAgent.runSubagent has its own catch that returns a SubagentRunResult
       // with `error: <message>` for known failure modes (cost limit, recursion,
@@ -454,7 +410,6 @@ export class SubagentsRunTaskTool extends BaseTool<
     definition: SubagentDefinition,
     config: SubagentsToolGroupConfig,
     runnableConfig: ToolRunnableConfig<BaseAgentConfigurable>,
-    includeAskCaller = true,
   ): Promise<{ subAgent: SubAgent }> {
     // Resolve tools from toolSets using definition's toolIds
     const tools: BuiltAgentTool[] = [];
@@ -511,63 +466,13 @@ export class SubagentsRunTaskTool extends BaseTool<
       subAgent.addTool(tool);
     }
 
-    // M4 ask-back: give the subagent the ability to ask its caller a focused
-    // question (durably suspending its run). Omitted when the ask-back budget is
-    // exhausted, so the cycle guard forces the subagent to complete instead.
-    if (includeAskCaller) {
-      subAgent.addTool(this.askCallerTool.build({}));
-    }
-
     return { subAgent };
   }
 
   private buildResult(
     loopResult: SubagentRunResult,
     title: string,
-    suspendCtx?: {
-      agentId: string;
-      durableThreadId: string;
-      askBackCount: number;
-      parentNodeId?: string;
-    },
   ): ToolInvokeResult<SubagentsRunTaskToolOutput> {
-    if (loopResult.needsAnswer && suspendCtx) {
-      // M4 ask-back: persist the suspend record so `answer_callee` can resume
-      // this exact subagent from its durable checkpoint, then surface the
-      // question to the caller LLM as this tool's result. The subagent's spend
-      // up to the pause still folds into the parent via toolRequestUsage.
-      this.subagentSuspendService.register({
-        suspendId: loopResult.needsAnswer.suspendId,
-        calleeType: 'subagent',
-        agentId: suspendCtx.agentId,
-        durableThreadId: suspendCtx.durableThreadId,
-        question: loopResult.needsAnswer.question,
-        askBackCount: suspendCtx.askBackCount,
-        ...(suspendCtx.parentNodeId
-          ? { parentNodeId: suspendCtx.parentNodeId }
-          : {}),
-      });
-
-      return {
-        output: {
-          result:
-            `The subagent paused and needs your answer to continue.\n\n` +
-            `Question: ${loopResult.needsAnswer.question}\n\n` +
-            `To answer in-session, call \`answer_callee\` with suspendId="${loopResult.needsAnswer.suspendId}" and your answer. ` +
-            `If you cannot answer and must ask the user, call finish with needsMoreInfo instead.`,
-          needsAnswer: true,
-          suspendId: loopResult.needsAnswer.suspendId,
-          question: loopResult.needsAnswer.question,
-          ...(loopResult.exploredFiles.length > 0
-            ? { exploredFiles: loopResult.exploredFiles }
-            : {}),
-          statistics: loopResult.statistics,
-        },
-        messageMetadata: { __title: title },
-        toolRequestUsage: loopResult.statistics.usage ?? undefined,
-      };
-    }
-
     return {
       output: {
         result: loopResult.result,
@@ -586,72 +491,6 @@ export class SubagentsRunTaskTool extends BaseTool<
           }
         : {}),
     };
-  }
-
-  /**
-   * Resume a subagent that suspended at an `ask_caller` question (M4 ask-back),
-   * delivering the caller's answer. Reconstructs the subagent with the same
-   * tools (toolSets are stable across the parent's turns) and resumes its
-   * durable pg-checkpoint. Called by the `answer_callee` tool, which shares this
-   * tool group's config. The resumed subagent either completes or suspends again
-   * with a new question; the cycle guard force-closes the loop once the ask-back
-   * budget is spent.
-   */
-  public async resumeSuspendedSubagent(
-    record: CalleeSuspendRecord,
-    answerText: string,
-    config: SubagentsToolGroupConfig,
-    runnableConfig: ToolRunnableConfig<BaseAgentConfigurable>,
-  ): Promise<ToolInvokeResult<SubagentsRunTaskToolOutput>> {
-    const title = `Answering subagent: ${record.agentId}`;
-    const definition = this.subagentsService.getById(record.agentId);
-
-    if (!definition) {
-      this.subagentSuspendService.remove(record.suspendId);
-      return {
-        output: {
-          result: `Cannot resume the paused subagent — unknown agent ID "${record.agentId}".`,
-          error: 'Invalid agentId',
-        },
-        messageMetadata: { __title: title },
-      };
-    }
-
-    // Cycle / recursion guard (M4 step-7): once the ask-back budget is spent,
-    // resume WITHOUT the ask_caller tool and append a nudge so the subagent must
-    // finish with what it has rather than asking again.
-    const nextCount = record.askBackCount + 1;
-    const budgetExhausted = nextCount >= MAX_ASK_BACK_DEPTH;
-
-    const { subAgent } = await this.prepareSubagent(
-      definition,
-      config,
-      runnableConfig,
-      !budgetExhausted,
-    );
-
-    const answerForSubagent = budgetExhausted
-      ? `${answerText}\n\n(You have reached the maximum number of follow-up questions for this task. Complete it now with your best judgment — you cannot ask again.)`
-      : answerText;
-
-    const loopResult = await subAgent.resumeSubagent(
-      record.durableThreadId,
-      answerForSubagent,
-      runnableConfig,
-    );
-
-    // Completed or errored — drop the record. Suspended again — buildResult
-    // re-registers it under the same suspendId with the incremented count.
-    if (!loopResult.needsAnswer) {
-      this.subagentSuspendService.remove(record.suspendId);
-    }
-
-    return this.buildResult(loopResult, title, {
-      agentId: record.agentId,
-      durableThreadId: record.durableThreadId,
-      askBackCount: nextCount,
-      ...(record.parentNodeId ? { parentNodeId: record.parentNodeId } : {}),
-    });
   }
 
   private getParentAgentModel(

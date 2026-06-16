@@ -5,7 +5,6 @@ import {
   AIMessageChunk,
   BaseMessage,
   ChatMessage,
-  HumanMessage,
   SystemMessage,
 } from '@langchain/core/messages';
 import { RunnableConfig } from '@langchain/core/runnables';
@@ -15,17 +14,13 @@ import {
   START,
   StateGraph,
 } from '@langchain/langgraph';
-import {
-  type BaseCheckpointSaver,
-  MemorySaver,
-} from '@langchain/langgraph-checkpoint';
+import { MemorySaver } from '@langchain/langgraph-checkpoint';
 import { Injectable, Scope } from '@nestjs/common';
 import { DefaultLogger } from '@packages/common';
 import { isPlainObject } from 'lodash';
 
 import { RequestTokenUsage } from '../../../litellm/litellm.types';
 import { LitellmService } from '../../../litellm/services/litellm.service';
-import { ASK_CALLER_TOOL_NAME } from '../../../subagents/subagent-ask-back.types';
 import { CostLimitExceededError } from '../../agents.errors';
 import {
   BaseAgentConfigurable,
@@ -42,7 +37,6 @@ import {
 } from '../../agents.utils';
 import { InvokeLlmNode } from '../nodes/invoke-llm-node';
 import { ToolExecutorNode } from '../nodes/tool-executor-node';
-import { PgCheckpointSaver } from '../pg-checkpoint-saver';
 import { AgentOutput, BaseAgent } from './base-agent';
 
 /** Maximum number of empty-response nudges before force-ending the subagent. */
@@ -76,19 +70,6 @@ export interface SubagentRunResult {
    * stopReason === 'cost_limit'.
    */
   stopCostUsd?: number;
-  /**
-   * Set when the subagent durably SUSPENDED at an `ask_caller` question instead
-   * of completing (M4 ask-back). The conversation state is persisted in the
-   * pg-checkpoint keyed by `suspendId`; the caller answers via `answer_callee`,
-   * which resumes the subagent from that checkpoint. Mutually exclusive with a
-   * normal completion result.
-   */
-  needsAnswer?: {
-    /** The question the subagent asked its caller. */
-    question: string;
-    /** Durable resume handle (the pg-checkpoint thread_id). */
-    suspendId: string;
-  };
 }
 
 export type SubAgentSchemaType = {
@@ -108,16 +89,12 @@ export type SubAgentSchemaType = {
 /**
  * Lightweight LangGraph-based subagent that runs a task autonomously.
  *
- * Checkpointer is mode-dependent (see `runSubagent`):
- *  - Default (no `durableThreadId`): an in-memory `MemorySaver` with a unique
- *    thread id per invocation — subagent state is ephemeral and GC'd on return,
- *    avoiding PostgreSQL I/O on every graph step.
- *  - Ask-back (M4, a `durableThreadId` is supplied): the durable
- *    `PgCheckpointSaver` installed AT run start, so the conversation survives
- *    the run returning and a later `answer_callee` can resume it from pg. Tool-
- *    invoked subagents currently always supply a `durableThreadId` (they can ask
- *    via `ask_caller`), so they take the durable path; the cost is per-step pg
- *    writes for runs that never actually ask.
+ * Uses an in-memory checkpointer with a unique thread ID per invocation so
+ * that LangGraph properly accumulates state across the invoke_llm → tools
+ * loop.  An in-memory saver is used instead of the database-backed one
+ * because subagent state is fully ephemeral — it never needs to survive a
+ * process restart, and writing to PostgreSQL on every graph step would add
+ * unnecessary I/O overhead.
  *
  * Has no finish tool / summarization, but includes an empty-response guard
  * that nudges the LLM when it returns an empty message without tool calls.
@@ -133,34 +110,12 @@ export class SubAgent extends BaseAgent<SubAgentSchemaType> {
   constructor(
     private readonly litellmService: LitellmService,
     private readonly logger: DefaultLogger,
-    private readonly pgCheckpointSaver: PgCheckpointSaver,
   ) {
     super();
   }
 
   /** No-op — SubAgent lifecycle is controlled by the parent's abort signal. */
   public async stop(): Promise<void> {}
-
-  /**
-   * Resume a subagent that durably SUSPENDED at an `ask_caller` question (M4
-   * ask-back). Reloads the conversation from the pg-checkpoint keyed by
-   * `durableThreadId`, appends the caller's answer as a follow-up message, and
-   * continues — the subagent either completes or suspends again with a new
-   * question. The resuming instance MUST be configured (setConfig) with the same
-   * tools the original run had so LangGraph re-binds an identical graph.
-   */
-  public async resumeSubagent(
-    durableThreadId: string,
-    answerText: string,
-    runnableConfig?: RunnableConfig<BaseAgentConfigurable>,
-  ): Promise<SubagentRunResult> {
-    const answerMessage = new HumanMessage(
-      `The agent you asked has answered your question:\n\n${answerText}`,
-    );
-    return await this.runSubagent([answerMessage], runnableConfig, {
-      durableThreadId,
-    });
-  }
 
   public setConfig(config: SubAgentSchemaType): void {
     this.currentConfig = config;
@@ -192,7 +147,6 @@ export class SubAgent extends BaseAgent<SubAgentSchemaType> {
   public async runSubagent(
     messages: BaseMessage[],
     runnableConfig?: RunnableConfig<BaseAgentConfigurable>,
-    opts?: { durableThreadId?: string },
   ): Promise<SubagentRunResult> {
     const abortSignal = runnableConfig?.signal;
 
@@ -203,19 +157,11 @@ export class SubAgent extends BaseAgent<SubAgentSchemaType> {
 
     const config = this.getConfig();
     const toolsArray = Array.from(this.tools.values());
-    // Ask-back mode (M4): a durable thread id means this subagent can suspend at
-    // an `ask_caller` question and be resumed later, so its conversation state
-    // must survive in the pg-checkpoint (installed AT run start — NOT a post-hoc
-    // swap of the GC'd in-memory MemorySaver, which never reaches pg). Default
-    // mode keeps the ephemeral MemorySaver + a fresh random thread id. On resume
-    // the same durable thread id is passed back so LangGraph loads the prior
-    // checkpoint and the appended answer continues the conversation.
-    const askBackEnabled = opts?.durableThreadId !== undefined;
-    const checkpointer: BaseCheckpointSaver = askBackEnabled
-      ? this.pgCheckpointSaver
-      : new MemorySaver();
-    const threadId =
-      opts?.durableThreadId ?? `${SUBAGENT_THREAD_PREFIX}${randomUUID()}`;
+    // Each subagent invocation gets a fresh in-memory checkpointer and thread
+    // ID.  The MemorySaver is scoped to this single run and will be GC'd when
+    // the method returns — no stale checkpoint data accumulates.
+    const checkpointer = new MemorySaver();
+    const threadId = `${SUBAGENT_THREAD_PREFIX}${randomUUID()}`;
 
     const initialMessages = updateMessagesListWithMetadata(
       messages,
@@ -372,24 +318,7 @@ export class SubAgent extends BaseAgent<SubAgentSchemaType> {
           (s) => (s.toolUsageGuardActivated ? 'invoke_llm' : END),
           { invoke_llm: 'invoke_llm', [END]: END },
         )
-        .addConditionalEdges(
-          'tools',
-          (s) => {
-            // Ask-back suspend (M4): end the run when the AI that triggered this
-            // tools batch issued a GENUINE, bound `ask_caller` call with a real
-            // question (so the durable checkpoint persists and the caller can
-            // answer). extractAskCallerQuestion is the single suspend predicate —
-            // a hallucinated call after the cycle guard removed the tool, or a
-            // malformed/empty question, loops back to invoke_llm instead.
-            const lastAi = [...s.messages]
-              .reverse()
-              .find((m): m is AIMessage => m instanceof AIMessage);
-            return this.extractAskCallerQuestion(lastAi) !== null
-              ? END
-              : 'invoke_llm';
-          },
-          { invoke_llm: 'invoke_llm', [END]: END },
-        );
+        .addEdge('tools', 'invoke_llm');
 
       const compiled = g.compile({
         checkpointer,
@@ -417,11 +346,6 @@ export class SubAgent extends BaseAgent<SubAgentSchemaType> {
       // leaked messages-mode chunks from nested graphs arrive after the parent's
       // updates/invoke_llm event, so we reject them by checking lastUpdatesNode.
       let lastUpdatesNode: string | null = null;
-
-      // Ask-back (M4): set to the question text when this run ends because the
-      // subagent called `ask_caller` (it suspended awaiting a caller answer),
-      // distinguishing a suspension from a normal completion.
-      let suspendedQuestion: string | null = null;
 
       for await (const event of stream) {
         const [mode, value] = event as ['updates' | 'messages', unknown];
@@ -461,11 +385,6 @@ export class SubAgent extends BaseAgent<SubAgentSchemaType> {
             if (nodeName === 'tools') {
               const lastMsg = prevMessages.at(-1) as AIMessage | undefined;
               toolCallsMade += lastMsg?.tool_calls?.length ?? 0;
-              // Ask-back (M4): capture the question if this tools batch was an
-              // `ask_caller` call — the conditional edge will route to END and
-              // the post-stream check below returns a needs-answer result.
-              suspendedQuestion =
-                this.extractAskCallerQuestion(lastMsg) ?? suspendedQuestion;
             }
 
             // Emit cloned copies of new messages for streaming to parent.
@@ -516,25 +435,6 @@ export class SubAgent extends BaseAgent<SubAgentSchemaType> {
             );
           }
         }
-      }
-
-      // Ask-back suspend (M4): the run ended because the subagent asked its
-      // caller a question. Return a needs-answer result (NOT a completion); the
-      // caller answers via `answer_callee`, which calls runSubagent again with
-      // this same durable thread id to resume from the pg-checkpoint.
-      if (askBackEnabled && suspendedQuestion !== null) {
-        return {
-          result: suspendedQuestion
-            ? `Subagent paused with a question for you: ${suspendedQuestion}`
-            : 'Subagent paused with a question for you.',
-          statistics: {
-            totalIterations,
-            toolCallsMade,
-            usage: this.extractUsageFromState(finalState),
-          },
-          exploredFiles: extractExploredFilesFromMessages(finalState.messages),
-          needsAnswer: { question: suspendedQuestion, suspendId: threadId },
-        };
       }
 
       // Extract result from last AI message.
@@ -821,37 +721,6 @@ export class SubAgent extends BaseAgent<SubAgentSchemaType> {
         ...(reasoningWasRemoved ? { content: strippedContent } : {}),
       },
     );
-  }
-
-  /**
-   * Returns the `ask_caller` question text when the given AI message is a
-   * GENUINE ask-back suspension (M4), or null otherwise. Single source of truth
-   * for "did this turn suspend" — used by both the `tools -> END` edge and the
-   * stream-loop detector. Three things must hold for a suspension:
-   *  1. `ask_caller` is actually bound (the cycle guard removes it on budget
-   *     exhaustion; a hallucinated call by name after removal must NOT suspend),
-   *  2. the AI message actually called it, and
-   *  3. the question is a non-empty string (a malformed call the tool's own Zod
-   *     schema would reject must NOT suspend with an empty question).
-   * A non-suspension falls through to invoke_llm, where the tool-not-found / Zod
-   * error result nudges the model to finish or re-ask correctly.
-   */
-  private extractAskCallerQuestion(
-    aiMessage: AIMessage | undefined,
-  ): string | null {
-    if (!this.tools.has(ASK_CALLER_TOOL_NAME)) {
-      return null;
-    }
-    const askCall = aiMessage?.tool_calls?.find(
-      (tc) => tc.name === ASK_CALLER_TOOL_NAME,
-    );
-    if (!askCall) {
-      return null;
-    }
-    const rawQuestion = (askCall.args as { question?: unknown })?.question;
-    return typeof rawQuestion === 'string' && rawQuestion.trim().length > 0
-      ? rawQuestion
-      : null;
   }
 
   private isAbortError(err: unknown): boolean {

@@ -36,18 +36,6 @@ type QueryArgs = {
   prompt: string | AsyncIterable<StreamedUserMessage>;
 };
 
-/** `canUseTool` as the bridge passes it into the SDK query options. */
-type CanUseToolFn = (
-  toolName: string,
-  input: Record<string, unknown>,
-  options: unknown,
-) => Promise<unknown>;
-
-/** Query args augmented with the options surface the M4 spike inspects. */
-type QueryArgsWithOptions = QueryArgs & {
-  options?: { canUseTool?: CanUseToolFn };
-};
-
 type Deferred<T> = { promise: Promise<T>; resolve: (value: T) => void };
 
 function deferred<T>(): Deferred<T> {
@@ -414,105 +402,5 @@ describe('bridge stdin command delivery', () => {
     expect(
       frames.some((frame) => frame.type === 'done' || frame.type === 'aborted'),
     ).toBe(false);
-  });
-});
-
-describe('bridge in-session question answering (M4 step-1 spike)', () => {
-  // Spike for the in-session inter-agent ask-back path: prove the bridge can
-  // answer an intercepted AskUserQuestion IN PLACE via a `question_response`
-  // command (NOT `interrupt`) and let the SAME SDK session continue to its
-  // result with the answer incorporated. The SDK `query` is mocked here, so
-  // this exercises the bridge's `canUseTool` -> `question_request` ->
-  // `question_response` plumbing end-to-end through the stdio protocol; it does
-  // NOT exercise the live Anthropic SDK's own resume semantics (that is an SDK
-  // contract the host-side resume path layers on top — see the step-1 approval
-  // checkpoint).
-  it('resolves a pending AskUserQuestion via question_response (not interrupt) and the SAME session continues to a result with the answer incorporated', async () => {
-    const promptTexts: string[] = [];
-    let questionDecision: unknown;
-    const decisionMade = deferred<void>();
-
-    mocks.query.mockImplementation((args: QueryArgsWithOptions) => {
-      drainPrompt(args.prompt, promptTexts);
-      return (async function* () {
-        // The SDK reaches an AskUserQuestion mid-turn: it invokes the bridge's
-        // canUseTool and AWAITS the host's answer. On a correct bridge this
-        // emits a question_request frame and blocks until a question_response
-        // command resolves it — without ending the turn.
-        const canUseTool = args.options?.canUseTool;
-        if (!canUseTool) {
-          throw new Error('bridge did not pass canUseTool to the SDK query');
-        }
-        const decision = await canUseTool(
-          'AskUserQuestion',
-          {
-            questions: [
-              {
-                question: 'Which database?',
-                header: 'DB',
-                multiSelect: false,
-                options: [
-                  { label: 'Postgres', description: 'pg' },
-                  { label: 'MySQL', description: 'my' },
-                ],
-              },
-            ],
-          },
-          {},
-        );
-        questionDecision = decision;
-        decisionMade.resolve();
-        // The answer was incorporated; the SAME session continues to its result
-        // — no interrupt, no aborted frame.
-        yield { type: 'result', subtype: 'success', session_id: 'session-1' };
-      })();
-    });
-
-    const harness = await bootBridge();
-    harness.sendChunk([
-      {
-        type: 'start',
-        options: { prompt: 'initial turn prompt', model: 'claude-test' },
-      },
-    ]);
-
-    // The bridge must forward the intercepted question to the host as a
-    // question_request before any answer can be supplied.
-    let questionId: string | undefined;
-    await vi.waitFor(() => {
-      const frame = harness
-        .protocolFrames()
-        .find((f) => f.type === 'question_request');
-      expect(frame).toBeDefined();
-      questionId = (frame as { id?: string }).id;
-      expect(typeof questionId).toBe('string');
-    });
-
-    // Answer in place — question_response, NOT interrupt.
-    harness.sendChunk([
-      { type: 'question_response', id: questionId!, answers: ['Postgres'] },
-    ]);
-
-    await decisionMade.promise;
-    await harness.exited;
-
-    const frames = harness.protocolFrames();
-    // The host's answer reached the SDK as the AskUserQuestion result.
-    expect(questionDecision).toMatchObject({
-      behavior: 'allow',
-      updatedInput: { answers: { 'Which database?': 'Postgres' } },
-    });
-    // The same session continued to a result and ended cleanly (done), never
-    // aborted — the live-answer path does not tear the turn down.
-    expect(
-      frames.some(
-        (f) =>
-          f.type === 'sdk_message' &&
-          isRecord(f.message) &&
-          f.message.type === 'result',
-      ),
-    ).toBe(true);
-    expect(frames.some((f) => f.type === 'done')).toBe(true);
-    expect(frames.some((f) => f.type === 'aborted')).toBe(false);
   });
 });

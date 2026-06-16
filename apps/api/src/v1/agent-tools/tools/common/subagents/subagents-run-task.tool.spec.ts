@@ -9,10 +9,8 @@ import { BaseAgentConfigurable } from '../../../../agents/agents.types';
 import type { AgentEventType } from '../../../../agents/services/agents/base-agent';
 import { SubagentRunResult } from '../../../../agents/services/agents/sub-agent';
 import { LlmModelsService } from '../../../../litellm/services/llm-models.service';
-import { SubagentSuspendService } from '../../../../subagents/subagent-suspend.service';
 import { SubagentsService } from '../../../../subagents/subagents.service';
 import { BuiltAgentTool, ToolInvokeResult } from '../../base-tool';
-import { AskCallerTool } from './ask-caller.tool';
 import { SubagentsToolGroupConfig } from './subagents.types';
 import {
   SubagentsRunTaskTool,
@@ -139,22 +137,10 @@ describe('SubagentsRunTaskTool', () => {
 
     const subagentsService = new SubagentsService();
 
-    const mockSubagentSuspendService = {
-      register: vi.fn(),
-      get: vi.fn(),
-      remove: vi.fn(),
-    } as unknown as SubagentSuspendService;
-
-    const mockAskCallerTool = {
-      build: vi.fn().mockReturnValue({ name: 'ask_caller' }),
-    } as unknown as AskCallerTool;
-
     tool = new SubagentsRunTaskTool(
       mockModuleRef,
       mockLlmModelsService,
       subagentsService,
-      mockSubagentSuspendService,
-      mockAskCallerTool,
       mockLogger,
     );
   });
@@ -205,18 +191,13 @@ describe('SubagentsRunTaskTool', () => {
       );
 
       // Explorer has toolIds: ['shell:read-only', 'files:read-only', 'thread-store:read-only']
-      // shell:read-only = 1 tool, files:read-only = 2 tools, thread-store:read-only = 2 tools,
-      // plus the M4 ask_caller tool appended to every subagent = 6 total.
-      expect(mockSubAgent.addTool).toHaveBeenCalledTimes(6);
+      // shell:read-only = 1 tool, files:read-only = 2 tools, thread-store:read-only = 2 tools
+      expect(mockSubAgent.addTool).toHaveBeenCalledTimes(5);
       const addedToolNames = mockSubAgent.addTool.mock.calls.map(
         (call) => (call[0] as BuiltAgentTool).name,
       );
       expect(addedToolNames).toEqual(
-        expect.arrayContaining([
-          'thread_store_get',
-          'thread_store_list',
-          'ask_caller',
-        ]),
+        expect.arrayContaining(['thread_store_get', 'thread_store_list']),
       );
       expect(addedToolNames).not.toContain('thread_store_put');
     });
@@ -233,9 +214,8 @@ describe('SubagentsRunTaskTool', () => {
       );
 
       // Simple has toolIds: ['shell', 'files:full', 'thread-store:full']
-      // shell = 1 tool, files:full = 3 tools, thread-store:full = 5 tools,
-      // plus the M4 ask_caller tool appended to every subagent = 10 total.
-      expect(mockSubAgent.addTool).toHaveBeenCalledTimes(10);
+      // shell = 1 tool, files:full = 3 tools, thread-store:full = 5 tools
+      expect(mockSubAgent.addTool).toHaveBeenCalledTimes(9);
       const addedToolNames = mockSubAgent.addTool.mock.calls.map(
         (call) => (call[0] as BuiltAgentTool).name,
       );
@@ -246,7 +226,6 @@ describe('SubagentsRunTaskTool', () => {
           'thread_store_get',
           'thread_store_list',
           'thread_store_delete',
-          'ask_caller',
         ]),
       );
     });

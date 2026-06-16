@@ -6,7 +6,6 @@ import {
   ExtendedLangGraphRunnableConfig,
 } from '../../base-tool';
 import { BaseToolGroup } from '../../base-tool-group';
-import { AnswerCalleeTool } from './answer-callee.tool';
 import { SubagentsToolGroupConfig } from './subagents.types';
 import { SubagentsListTool } from './subagents-list.tool';
 import { SubagentsRunTaskTool } from './subagents-run-task.tool';
@@ -16,7 +15,6 @@ export class SubagentsToolGroup extends BaseToolGroup<SubagentsToolGroupConfig> 
   constructor(
     private readonly subagentsListTool: SubagentsListTool,
     private readonly subagentsRunTaskTool: SubagentsRunTaskTool,
-    private readonly answerCalleeTool: AnswerCalleeTool,
   ) {
     super();
   }
@@ -28,9 +26,6 @@ export class SubagentsToolGroup extends BaseToolGroup<SubagentsToolGroupConfig> 
     return [
       this.subagentsListTool.build(config, lgConfig),
       this.subagentsRunTaskTool.build(config, lgConfig),
-      // M4 ask-back: lets the caller answer a subagent that paused with a
-      // question, resuming it in-session instead of escalating to the user.
-      this.answerCalleeTool.build(config, lgConfig),
     ];
   }
 
