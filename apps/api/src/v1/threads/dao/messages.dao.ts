@@ -46,6 +46,37 @@ export class MessagesDao extends BaseDao<MessageEntity> {
     return await this.aggregateUsageGroupedByNodeId(threadId, {}, txEm);
   }
 
+  /**
+   * Sums `toolTokenUsage.totalPrice` across all messages of a thread. Forwarded
+   * tools record their OWN spend as `tool_token_usage` on the caller's tool
+   * result message — the `request_token_usage` aggregation above never sees it.
+   * The Claude cross-turn cost seed (`aggregatePriorSpendUsd`) adds this so a
+   * prior turn's forwarded-tool spend (e.g. a `communication_exec` peer call) is
+   * not forgotten. Safe to sum unconditionally on a Claude thread: tool- and
+   * request-token usage live on disjoint messages, and a Claude thread never
+   * carries the LangGraph subagent-as-tool fold that would double-count a
+   * `::sub::` surrogate's spend across both columns.
+   */
+  async aggregateToolUsageTotalPrice(
+    threadId: string,
+    txEm?: EntityManager,
+  ): Promise<number> {
+    const rows = await (txEm ?? this.em)
+      .createQueryBuilder(MessageEntity, 'm')
+      .select([
+        raw(
+          `coalesce(sum((m.tool_token_usage->>'totalPrice')::numeric), 0) as total_price`,
+        ),
+      ])
+      // `$ne: null` is a row-pruning optimization, not a correctness guard —
+      // `coalesce(sum(...), 0)` already yields 0 for an all-null/empty set, and
+      // `sum()` skips request-usage-only rows (their tool_token_usage is null).
+      .where({ threadId, toolTokenUsage: { $ne: null } })
+      .execute<{ total_price: string }[]>();
+
+    return Number(rows[0]?.total_price ?? 0);
+  }
+
   private async aggregateUsageGroupedByNodeId(
     threadId: string,
     extraWhere: Record<string, unknown>,

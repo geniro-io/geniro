@@ -4,14 +4,22 @@ export const CLAUDE_INSTALL_DIR = '/opt/geniro-claude';
 export const CLAUDE_PLUGINS_DIR = `${CLAUDE_INSTALL_DIR}/plugins`;
 
 /**
- * Tools that only make sense inside a Geniro agent loop (turn control,
- * dynamic tool loading, subagent/peer listing and dispatch) — never forwarded
- * into a Claude SDK session, per the spec's forbidden actions. The SDK session
- * has its own turn lifecycle and subagent mechanics; forwarding these would
- * hand the sandboxed model control over host-side agent orchestration.
- * `subagents_list` is excluded alongside `subagents_run_task`: surfacing
- * subagents the SDK session cannot invoke is a fail-open leak across the trust
- * boundary, not a useful capability.
+ * Tools that only make sense inside a Geniro agent loop — never forwarded into
+ * a Claude SDK session. `finish`/`wait_for`/`tool_search` are turn control and
+ * dynamic tool loading the SDK session owns itself. `subagents_run_task` is
+ * excluded because the SDK has its OWN native subagent/Task mechanism —
+ * forwarding ours would duplicate it; `subagents_list` is excluded alongside it
+ * (surfacing subagents the SDK session cannot invoke is a fail-open leak, not a
+ * useful capability).
+ *
+ * `communication_exec` is deliberately NOT excluded. Unlike subagents, peer
+ * communication (a message to a distinct graph Agent node) has NO SDK-native
+ * equivalent, and the graph already wires Claude agents to communication-tool
+ * nodes (`agent-communication-tool` is a declared input/output for ClaudeAgent)
+ * — so a connected Claude agent MUST be able to call its peers, or the graph
+ * makes a promise the runtime breaks. Its returned tool usage folds via the
+ * standard forwarded-tool path (dispatcher recordToolUsage -> __toolTokenUsage
+ * -> caller node), and the cross-turn cost seed counts it (`aggregatePriorSpendUsd`).
  */
 export const CLAUDE_AGENT_CONTEXT_BOUND_TOOLS: ReadonlySet<string> = new Set([
   'finish',
@@ -19,7 +27,6 @@ export const CLAUDE_AGENT_CONTEXT_BOUND_TOOLS: ReadonlySet<string> = new Set([
   'tool_search',
   'subagents_list',
   'subagents_run_task',
-  'communication_exec',
 ]);
 
 /** Claude Code natives (Read/Write/Edit/Bash) already cover these in-sandbox. */

@@ -45,7 +45,7 @@ export class CommunicationExecTool extends BaseTool<
 > {
   public name = 'communication_exec';
   public description =
-    'Send a message to another agent in the system and receive their response. Use this for multi-agent collaboration — delegating specialized tasks, getting reviews, or breaking complex work across multiple agents. The agent parameter must exactly match one of the connected agent names listed in the detailed instructions. Provide clear, context-rich messages with file paths, specific requirements, and expected outputs for best results.';
+    'Send a message to another agent in the system and receive their response. Use this for multi-agent collaboration — delegating specialized tasks, getting reviews, or breaking complex work across multiple agents. The agent parameter must exactly match one of the connected agent names listed in the detailed instructions. Provide clear, context-rich messages with file paths, specific requirements, and expected outputs for best results. If the other agent replies with `needsMoreInfo: true`, it is pausing to ask YOU a question — answer it by sending another message to the SAME agent (it resumes from exactly where it paused), and only escalate to the user when the decision is genuinely theirs and you cannot answer it yourself.';
 
   private normalizeAgentName(name: string): string {
     // Normalize for matching:
@@ -187,6 +187,13 @@ export class CommunicationExecTool extends BaseTool<
       ### Output Format
       Returns the response from the target agent. Format varies by agent but typically includes their results, output, or completion status.
 
+      ### When the Other Agent Asks YOU a Question (\`needsMoreInfo: true\`)
+      A response with \`needsMoreInfo: true\` means the agent could NOT finish and is asking you for a decision or a missing detail — the question is in the \`message\` field. You are the caller; answer it yourself whenever you can:
+      - **Answer in-session (preferred):** call \`communication_exec\` again with the SAME \`agent\` and your answer as the \`message\`. The agent resumes from exactly where it paused (its prior context is preserved) — give just the answer, do not restate the whole task.
+      - **Escalate only when necessary:** if the decision is genuinely the user's to make and you cannot reasonably answer it yourself, finish with \`needsMoreInfo\` and relay the agent's question to the user.
+
+      Prefer answering over escalating — a question you can resolve from your own knowledge, the conversation, or the codebase must never force a human round-trip. The agent may pause again with a follow-up; answer each the same way until it completes.
+
       ### Common Patterns
 
       **Delegate and continue:**
@@ -286,8 +293,34 @@ export class CommunicationExecTool extends BaseTool<
       // this tool's own usage so the executor folds it into caller state.
       // `calleeUsage` is a typed field on CommunicationAgentResult — no cast.
       const { calleeUsage, ...visibleOutput } = output;
+
+      // In-session ask-back (M4): a peer that returns `needsMoreInfo` paused to
+      // ask the CALLER a question. Make the answer-or-escalate decision explicit
+      // in the model-visible output — the caller answers by re-invoking this
+      // tool with the SAME agent (the deterministic callee thread id makes that
+      // re-invocation resume the paused peer from its checkpoint), and escalates
+      // to the user only when it genuinely cannot answer. The callee's resume
+      // spend folds via the same `calleeUsage` path on that next call, so no
+      // separate answer tool or cost route is needed.
+      const finalOutput =
+        visibleOutput.needsMoreInfo === true
+          ? {
+              ...visibleOutput,
+              actionRequired: dedent`
+                Agent "${args.agent}" paused and needs more information to continue — it is asking YOU this question:
+                "${visibleOutput.message}"
+
+                You are the caller. Decide now and act in your next step:
+                - If you can answer from your own knowledge, the conversation so far, or by inspecting the codebase: call communication_exec again with agent="${args.agent}" and your answer as the message. The agent resumes from exactly where it paused — answer directly, do NOT repeat the whole task.
+                - Only if the decision is genuinely the user's to make and you cannot answer it yourself: finish with needsMoreInfo and relay this question to the user.
+
+                Prefer answering over escalating — a question you can resolve yourself must not force a human round-trip.
+              `,
+            }
+          : visibleOutput;
+
       return {
-        output: visibleOutput,
+        output: finalOutput,
         ...(calleeUsage ? { toolRequestUsage: calleeUsage } : {}),
         messageMetadata: {
           __title: title,

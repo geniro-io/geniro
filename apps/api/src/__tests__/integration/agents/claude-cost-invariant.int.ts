@@ -411,4 +411,265 @@ describe('Claude Agent cost invariant (checkpoint-less threads)', () => {
       }
     },
   );
+
+  it(
+    'folds a forwarded communication_exec peer call into the caller-node tool usage AND the cross-turn cost seed (M4 Claude peer)',
+    { timeout: 30000 },
+    async () => {
+      // Shared thread: assert on the DELTA this call adds to the seed.
+      const seedBefore =
+        await messagesDao.aggregateToolUsageTotalPrice(internalThreadId);
+
+      const events: AgentEventType[] = [];
+      const mapper = new ClaudeStreamMapper({
+        threadId: externalThreadId,
+        config: {
+          configurable: {
+            thread_id: externalThreadId,
+            graph_id: graphId,
+            node_id: NODE_ID,
+            run_id: 'run-int-3',
+          },
+        },
+        model: 'claude-sonnet-4-6',
+        emit: (event) => events.push(event),
+        calculatePriceUsd: () => PRICE_PER_CALL,
+      });
+
+      // A Claude caller invokes a connected peer via the forwarded
+      // communication_exec tool; the dispatcher reports the peer's run-scoped
+      // spend (calleeUsage) as this tool's own usage.
+      const commToolUse: SdkAssistantMessage = {
+        ...assistantMessage('m20', 'asking the peer'),
+        message: {
+          ...assistantMessage('m20', 'asking the peer').message,
+          content: [
+            { type: 'text', text: 'asking the peer' },
+            {
+              type: 'tool_use',
+              id: 'tu-comm-1',
+              name: 'mcp__geniro__communication_exec',
+              input: {
+                agent: 'Config Specialist',
+                message: 'Use auth.config.ts.',
+                purpose: 'answer the peer',
+              },
+            },
+          ],
+        },
+      };
+      const peerUsage: RequestTokenUsage = {
+        inputTokens: 120,
+        cachedInputTokens: 0,
+        outputTokens: 30,
+        totalTokens: 150,
+        totalPrice: 0.012,
+      };
+      const commToolResult: SdkUserMessage = {
+        type: 'user',
+        session_id: 'sess-int-1',
+        parent_tool_use_id: null,
+        message: {
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: 'tu-comm-1',
+              content: 'Done — modified auth.config.ts.',
+            },
+          ],
+        },
+      };
+
+      mapper.onSdkMessage(commToolUse);
+      mapper.recordToolUsage('communication_exec', peerUsage);
+      mapper.onSdkMessage(commToolResult);
+      mapper.onSdkMessage(assistantMessage('m21', 'peer finished'));
+      mapper.flush();
+
+      for (const event of events) {
+        if (event.type !== 'message') {
+          continue;
+        }
+        await messageHandler.handle({
+          type: NotificationEvent.AgentMessage,
+          graphId,
+          nodeId: NODE_ID,
+          threadId: externalThreadId,
+          parentThreadId: externalThreadId,
+          data: { messages: event.data.messages },
+        });
+      }
+
+      // Writer side: the peer's spend lands as toolTokenUsage on the
+      // communication_exec result row, attributed to the CALLER node (no
+      // ::sub:: surrogate), with no request usage on the tool message.
+      const rows = await messagesDao.getAll(
+        { threadId: internalThreadId },
+        { orderBy: { createdAt: 'ASC' } },
+      );
+      const commRow = rows.find(
+        (row) =>
+          row.role === MessageRole.Tool && row.name === 'communication_exec',
+      );
+      expect(commRow).toBeDefined();
+      expect(commRow!.nodeId).toBe(NODE_ID);
+      expect(commRow!.toolTokenUsage).toMatchObject({
+        inputTokens: 120,
+        outputTokens: 30,
+        totalTokens: 150,
+        totalPrice: 0.012,
+      });
+      expect(commRow!.requestTokenUsage ?? null).toBeNull();
+
+      // Cross-turn seed: aggregateToolUsageTotalPrice now picks up this peer
+      // spend (the term aggregatePriorSpendUsd adds), so a prior turn's peer
+      // call is not forgotten by the next turn's cost-limit gate.
+      const seedAfter =
+        await messagesDao.aggregateToolUsageTotalPrice(internalThreadId);
+      expect(seedAfter - seedBefore).toBeCloseTo(0.012, 10);
+    },
+  );
+
+  it(
+    'keeps request- and tool-token usage on disjoint messages so the cross-turn cost seed counts each spend once (M4 no double-count)',
+    { timeout: 30000 },
+    async () => {
+      // Persist a representative mixed turn into the (shared) thread: a parent
+      // assistant call, a forwarded communication_exec peer call (tool usage on
+      // the CALLER node), and a ::sub:: SDK-subagent assistant call (request
+      // usage on a surrogate node id). aggregatePriorSpendUsd sums BOTH the
+      // request-usage and tool-usage columns; that is only double-count-safe
+      // because the two columns never co-occur on one message and a ::sub::
+      // surrogate never carries tool usage. This test pins both invariants on
+      // real persisted rows — the safety claim in MessagesDao's docstring.
+      //
+      // This file shares one thread across tests (no beforeEach reset), so these
+      // rows accumulate onto prior tests' rows. That is benign by construction:
+      // both the seed and the ground truth below scan the FULL thread, so the
+      // reconciliation is superset-invariant — do not add a beforeEach reset
+      // assuming isolation, it would not change the result but would weaken the
+      // cross-turn-seed realism this pins.
+      const events: AgentEventType[] = [];
+      const mapper = new ClaudeStreamMapper({
+        threadId: externalThreadId,
+        config: {
+          configurable: {
+            thread_id: externalThreadId,
+            graph_id: graphId,
+            node_id: NODE_ID,
+            run_id: 'run-int-no-double-count',
+          },
+        },
+        model: 'claude-sonnet-4-6',
+        emit: (event) => events.push(event),
+        calculatePriceUsd: () => PRICE_PER_CALL,
+      });
+
+      const commToolUse: SdkAssistantMessage = {
+        ...assistantMessage('m30', 'asking the peer again'),
+        message: {
+          ...assistantMessage('m30', 'asking the peer again').message,
+          content: [
+            { type: 'text', text: 'asking the peer again' },
+            {
+              type: 'tool_use',
+              id: 'tu-comm-2',
+              name: 'mcp__geniro__communication_exec',
+              input: { agent: 'Peer', message: 'go', purpose: 'delegate' },
+            },
+          ],
+        },
+      };
+      const peerUsage: RequestTokenUsage = {
+        inputTokens: 200,
+        cachedInputTokens: 0,
+        outputTokens: 40,
+        totalTokens: 240,
+        totalPrice: 0.02,
+      };
+      const commToolResult: SdkUserMessage = {
+        type: 'user',
+        session_id: 'sess-int-1',
+        parent_tool_use_id: null,
+        message: {
+          content: [
+            { type: 'tool_result', tool_use_id: 'tu-comm-2', content: 'done' },
+          ],
+        },
+      };
+
+      mapper.onSdkMessage(commToolUse);
+      mapper.recordToolUsage('communication_exec', peerUsage);
+      mapper.onSdkMessage(commToolResult);
+      // A ::sub:: SDK-subagent assistant call — request usage on a surrogate id.
+      mapper.onSdkMessage(assistantMessage('m31', 'subagent work', 'tu-sub-9'));
+      mapper.onSdkMessage(assistantMessage('m32', 'wrapping up'));
+      mapper.flush();
+
+      for (const event of events) {
+        if (event.type !== 'message') {
+          continue;
+        }
+        await messageHandler.handle({
+          type: NotificationEvent.AgentMessage,
+          graphId,
+          nodeId: NODE_ID,
+          threadId: externalThreadId,
+          parentThreadId: externalThreadId,
+          data: { messages: event.data.messages },
+        });
+      }
+
+      const rows = await messagesDao.getAll(
+        { threadId: internalThreadId },
+        { orderBy: { createdAt: 'ASC' } },
+      );
+
+      // The thread really does carry both column families and a ::sub::
+      // surrogate (else the disjointness asserts below pass vacuously).
+      expect(rows.some((r) => r.requestTokenUsage != null)).toBe(true);
+      expect(rows.some((r) => r.toolTokenUsage != null)).toBe(true);
+      expect(rows.some((r) => r.nodeId.includes('::sub::'))).toBe(true);
+
+      // (1) No single message carries BOTH columns — the disjointness the
+      //     aggregatePriorSpendUsd docstring relies on.
+      expect(
+        rows.filter(
+          (r) => r.requestTokenUsage != null && r.toolTokenUsage != null,
+        ),
+      ).toHaveLength(0);
+
+      // (2) No ::sub:: surrogate row carries tool usage — the LangGraph
+      //     subagent-as-tool fold that would double-count never appears on a
+      //     Claude thread.
+      expect(
+        rows.filter(
+          (r) => r.nodeId.includes('::sub::') && r.toolTokenUsage != null,
+        ),
+      ).toHaveLength(0);
+
+      // (3) The two terms aggregatePriorSpendUsd adds reconcile with an
+      //     independent per-row ground truth — each spend counted exactly once.
+      const requestSeed = Array.from(
+        (await messagesDao.aggregateUsageByNodeId(internalThreadId)).values(),
+      ).reduce((sum, u) => sum + (u.totalPrice ?? 0), 0);
+      const toolSeed =
+        await messagesDao.aggregateToolUsageTotalPrice(internalThreadId);
+      const groundTruthRequest = rows.reduce(
+        (sum, r) => sum + (r.requestTokenUsage?.totalPrice ?? 0),
+        0,
+      );
+      const groundTruthTool = rows.reduce(
+        (sum, r) => sum + (r.toolTokenUsage?.totalPrice ?? 0),
+        0,
+      );
+
+      expect(requestSeed).toBeCloseTo(groundTruthRequest, 10);
+      expect(toolSeed).toBeCloseTo(groundTruthTool, 10);
+      expect(requestSeed + toolSeed).toBeCloseTo(
+        groundTruthRequest + groundTruthTool,
+        10,
+      );
+    },
+  );
 });

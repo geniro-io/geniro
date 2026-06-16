@@ -146,9 +146,15 @@ describe('isToolForwardableToClaude', () => {
     'tool_search',
     'subagents_list',
     'subagents_run_task',
-    'communication_exec',
   ])('never forwards agent-context-bound tool %s', (name) => {
     expect(isToolForwardableToClaude(name)).toBe(false);
+  });
+
+  it('forwards communication_exec so a Claude agent can call its connected peers (no SDK-native equivalent)', () => {
+    // Unlike subagents (the SDK has its own), peer communication has no native
+    // SDK mechanism; a Claude agent wired to a communication-tool node must be
+    // able to reach its peers. Its tool usage folds via the standard path.
+    expect(isToolForwardableToClaude('communication_exec')).toBe(true);
   });
 
   it.each(['shell', 'files_read', 'files_write_file', 'files_apply_changes'])(

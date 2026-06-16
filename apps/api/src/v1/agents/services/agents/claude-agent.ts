@@ -895,31 +895,40 @@ export class ClaudeAgent
   /**
    * Cross-turn cost seed: the pre-invocation gate compares
    * `priorSpendUsd + this run's getTotalPriceUsd()` against the limit, so the
-   * seed must carry every prior turn's spend on this thread.
+   * seed must carry every prior turn's spend on this thread — BOTH LLM
+   * (`request_token_usage`) and forwarded-tool (`tool_token_usage`) spend.
    *
-   * ACCEPTED RESIDUE (zero-impact today): `aggregateUsageByNodeId` sums
-   * `request_token_usage` only — never `tool_token_usage`. The in-run gate
-   * (`getTotalPriceUsd()` = LLM + tool) therefore counts tool spend within a
-   * turn, but this seed forgets it across turns. The delta is provably $0: the
-   * only tools that report tool usage are all excluded from forwarding into the
-   * Claude session — `subagents_run_task` and `communication_exec` via
-   * `CLAUDE_AGENT_CONTEXT_BOUND_TOOLS`, and `shell` via
-   * `CLAUDE_NATIVE_OVERLAP_TOOLS` — so no forwarded tool can ever produce
-   * `tool_token_usage`. Folding it into the seed is deliberately
-   * deferred — it would risk double-counting the `${parent}::sub::${toolCallId}`
-   * subagent surrogate node-ids cost-accounting.md describes, and buys nothing
-   * while the delta is zero. Revisit alongside the interrupted-turn residue if a
-   * forwardable tool ever reports tool usage.
+   * `communication_exec` is now forwardable (a Claude agent can call its peers),
+   * and its peer spend is recorded as `tool_token_usage` on the caller's tool
+   * result message. `aggregateUsageByNodeId` sums only `request_token_usage`, so
+   * we add `aggregateToolUsageTotalPrice` to fold the prior-turn tool spend in.
+   * This does NOT double-count the `${parent}::sub::${toolCallId}` subagent
+   * surrogates cost-accounting.md describes: a Claude thread never carries the
+   * LangGraph subagent-as-tool fold (the SDK's native subagents persist only as
+   * surrogate `request_token_usage`, never as a parent `tool_token_usage`), so
+   * the two columns are disjoint and summing both counts each cost exactly once.
    */
   private async aggregatePriorSpendUsd(
     internalThreadId: string,
   ): Promise<number> {
+    // Both aggregates are Postgres numerics coerced via Number(...), whose typed
+    // `number` return includes NaN. An unguarded `total += NaN` poisons the whole
+    // seed (1.0 + NaN = NaN) and the gate's `NaN >= limit` is false — a fail-OPEN
+    // that bills past an already-exhausted budget. Coerce every term through
+    // toFinite so a non-finite aggregate contributes 0 and the gate still trips on
+    // the known spend (cost-accounting.md "coerce unknown pricing to 0" + the
+    // Number.isFinite numeric-aggregation guard).
+    const toFinite = (n: number | null | undefined): number =>
+      typeof n === 'number' && Number.isFinite(n) ? n : 0;
     const byNode =
       await this.messagesDao.aggregateUsageByNodeId(internalThreadId);
     let total = 0;
     for (const usage of byNode.values()) {
-      total += usage.totalPrice ?? 0;
+      total += toFinite(usage.totalPrice);
     }
+    total += toFinite(
+      await this.messagesDao.aggregateToolUsageTotalPrice(internalThreadId),
+    );
     return total;
   }
 

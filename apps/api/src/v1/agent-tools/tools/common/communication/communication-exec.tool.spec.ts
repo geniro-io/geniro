@@ -145,8 +145,8 @@ describe('CommunicationExecTool', () => {
           name: 'claude-agent',
           description: 'Bridge-backed agent',
           invokeAgent: vi.fn().mockResolvedValue({
-            message: 'Which DB?',
-            needsMoreInfo: true,
+            message: 'I used Postgres.',
+            needsMoreInfo: false,
             threadId: 'callee-thread',
             calleeUsage,
           }),
@@ -164,11 +164,73 @@ describe('CommunicationExecTool', () => {
       );
 
       expect(result.toolRequestUsage).toEqual(calleeUsage);
+      // A normal (completed) response passes through verbatim — calleeUsage
+      // stripped, and NO actionRequired directive (the peer is not asking).
       expect(result.output).toEqual({
-        message: 'Which DB?',
-        needsMoreInfo: true,
+        message: 'I used Postgres.',
+        needsMoreInfo: false,
         threadId: 'callee-thread',
       });
+    });
+
+    it('adds an answer-or-escalate actionRequired directive when the peer returns needsMoreInfo (M4 ask-back)', async () => {
+      const calleeUsage = {
+        inputTokens: 10,
+        cachedInputTokens: 0,
+        outputTokens: 5,
+        totalTokens: 15,
+        totalPrice: 0.02,
+      };
+      const agents: AgentInfo[] = [
+        {
+          name: 'claude-agent',
+          description: 'Bridge-backed agent',
+          invokeAgent: vi.fn().mockResolvedValue({
+            message: 'Which DB should I use — Postgres or MySQL?',
+            needsMoreInfo: true,
+            threadId: 'callee-thread',
+            calleeUsage,
+          }),
+        },
+      ];
+
+      const result = await tool.invoke(
+        {
+          message: 'Pick a database',
+          purpose: 'Decision',
+          agent: 'claude-agent',
+        },
+        { agents },
+        { configurable: { thread_id: 'parent-thread' } },
+      );
+
+      // calleeUsage still folds as the tool's own usage.
+      expect(result.toolRequestUsage).toEqual(calleeUsage);
+
+      const output = result.output as {
+        message: string;
+        needsMoreInfo: boolean;
+        threadId: string;
+        actionRequired?: string;
+      };
+      // Base fields preserved (calleeUsage stripped).
+      expect(output.message).toBe('Which DB should I use — Postgres or MySQL?');
+      expect(output.needsMoreInfo).toBe(true);
+      expect(output.threadId).toBe('callee-thread');
+      expect(output).not.toHaveProperty('calleeUsage');
+
+      // The directive must carry the peer's question and steer the caller to
+      // answer in-session by re-invoking the SAME agent, escalating only as a
+      // fallback.
+      expect(output.actionRequired).toBeDefined();
+      expect(output.actionRequired).toContain(
+        'Which DB should I use — Postgres or MySQL?',
+      );
+      expect(output.actionRequired).toContain(
+        'communication_exec again with agent="claude-agent"',
+      );
+      expect(output.actionRequired).toContain('needsMoreInfo');
+      expect(output.actionRequired).toMatch(/resumes from exactly where it/i);
     });
 
     it('should throw error when no agents are configured', async () => {
@@ -315,6 +377,16 @@ describe('CommunicationExecTool', () => {
       expect(instructions).toContain('WAIT_FOR_FORBIDDEN_IN_CALLEE');
       expect(instructions).toContain('wait_for');
       expect(instructions).toContain('finish synchronously');
+    });
+
+    it('documents the answer-or-escalate behavior for a peer needsMoreInfo question (M4 ask-back)', () => {
+      const instructions = tool.getDetailedInstructions({ agents: [] });
+      expect(instructions).toContain('needsMoreInfo: true');
+      // Steers toward answering in-session by re-invoking the same agent...
+      expect(instructions).toMatch(/SAME `?agent`?/i);
+      expect(instructions).toContain('resumes from exactly where it paused');
+      // ...and escalating only as a fallback.
+      expect(instructions).toMatch(/escalate only when necessary/i);
     });
   });
 });
