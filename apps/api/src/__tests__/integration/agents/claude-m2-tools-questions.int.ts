@@ -1,4 +1,5 @@
 import { HumanMessage } from '@langchain/core/messages';
+import type { DynamicStructuredTool } from '@langchain/core/tools';
 import { INestApplication } from '@nestjs/common';
 import type { BridgeCommand } from '@packages/claude-bridge';
 import type { DefaultLogger } from '@packages/common';
@@ -554,6 +555,211 @@ describe('Claude Agent M2 — tools & questions (integration)', () => {
         expect(
           (answerResult.output as { needsMoreInfo: boolean }).needsMoreInfo,
         ).toBe(false);
+      } finally {
+        startSpy.mockRestore();
+        ensureSpy.mockRestore();
+        resumableSpy.mockRestore();
+        issueSpy.mockRestore();
+        revokeSpy.mockRestore();
+        modelInfoSpy.mockRestore();
+      }
+    },
+  );
+
+  it(
+    'dispatches a forwarded communication_exec peer call through the real ClaudeToolDispatcher and records the callee cost (Claude caller)',
+    { timeout: 60_000 },
+    async () => {
+      // A Claude CALLER reaches a connected peer by calling communication_exec.
+      // The host-side handler for that forwarded tool is the SAME
+      // ClaudeToolDispatcher ClaudeAgent.run wires to the bridge's
+      // onToolCallRequest (claude-agent.ts builds it from the agent's tools).
+      // This drives that dispatcher with the real communication tool + a real
+      // Claude peer, proving communication_exec is forwarded (no longer stripped
+      // from the Claude session), dispatches to the peer, and the peer's
+      // run-scoped spend is recorded as the caller node's tool usage — the fold
+      // that feeds aggregatePriorSpendUsd's cross-turn cost seed.
+      const bootstrap = app.get(ClaudeBootstrapService);
+      const virtualKeys = app.get(LitellmVirtualKeyService);
+      const liteLlmClient = app.get(LiteLlmClient);
+
+      const ensureSpy = vi
+        .spyOn(bootstrap, 'ensureSessionReady')
+        .mockResolvedValue({ bridgePath: '/opt/b.mjs', pluginPaths: [] });
+      const resumableSpy = vi
+        .spyOn(bootstrap, 'isSessionResumable')
+        .mockResolvedValue(false);
+      const issueSpy = vi
+        .spyOn(virtualKeys, 'issueThreadKey')
+        .mockResolvedValue({ key: 'sk-test-vkey' } as never);
+      const revokeSpy = vi
+        .spyOn(virtualKeys, 'revokeThreadKey')
+        .mockResolvedValue(undefined as never);
+      const modelInfoSpy = vi
+        .spyOn(liteLlmClient, 'getModelInfo')
+        .mockResolvedValue({
+          model_info: {
+            input_cost_per_token: 0.000001,
+            output_cost_per_token: 0.000002,
+          },
+        } as never);
+
+      let capturedHandlers: ClaudeBridgeHandlers | undefined;
+      const fakeTransport = {
+        send: vi.fn(),
+        interrupt: vi.fn(),
+        close: vi.fn(),
+        isFinished: vi.fn().mockReturnValue(false),
+      };
+      const startSpy = vi
+        .spyOn(ClaudeBridgeTransport, 'start')
+        .mockImplementation(async (params) => {
+          capturedHandlers = params.handlers;
+          return fakeTransport as unknown as ClaudeBridgeTransport;
+        });
+
+      try {
+        // Peer (callee) — a real ClaudeAgent reached as a peer.
+        const claudePeer = await app.resolve(ClaudeAgent);
+        claudePeer.setConfig({
+          name: 'Claude Peer',
+          description: 'callee under test',
+          instructions: 'be helpful',
+          model: 'claude-sonnet-4-6',
+        });
+        claudePeer.setRuntimeProvider({
+          provide: vi.fn().mockResolvedValue({ getWorkdir: () => '/ws' }),
+          getParams: () => ({ runtimeNodeId: 'rt-1' }),
+        } as unknown as RuntimeThreadProvider);
+
+        // Real communication tool wired to the Claude peer.
+        const claudeNode = {
+          type: NodeKind.ClaudeAgent,
+          instance: claudePeer,
+          config: { name: 'Claude Peer', description: 'callee under test' },
+        };
+        const registryStub = {
+          filterAgentNodeIds: () => ['claude-node-1'],
+          getNode: () => claudeNode,
+        } as unknown as GraphRegistry;
+        const template = new AgentCommunicationToolTemplate(
+          app.get(CommunicationToolGroup),
+          registryStub,
+        );
+        const handle = await template.create();
+        const instance = (await handle.provide({} as never)) as {
+          tools: { name: string; invoke: unknown }[];
+        };
+        await handle.configure(
+          {
+            config: {},
+            inputNodeIds: new Set<string>(),
+            outputNodeIds: new Set(['claude-node-1']),
+            metadata: {
+              graphId,
+              nodeId: 'comm-tool-1',
+              version: '1',
+              graph_created_by: TEST_USER_ID,
+              graph_project_id: projectId,
+            },
+          } as never,
+          instance as never,
+        );
+        const execTool = instance.tools.find(
+          (tool) => tool.name === 'communication_exec',
+        ) as unknown as DynamicStructuredTool;
+        expect(execTool).toBeDefined();
+
+        // The Claude caller's host-side tool handler. A recordToolUsage spy
+        // stands in for the caller's stream mapper.
+        const sent: BridgeCommand[] = [];
+        const recordToolUsage = vi.fn();
+        const dispatcher = new ClaudeToolDispatcher({
+          tools: new Map([['communication_exec', execTool]]),
+          config: {
+            configurable: {
+              thread_id: externalThreadId,
+              graph_id: graphId,
+              node_id: 'claude-caller-1',
+              graph_created_by: TEST_USER_ID,
+              graph_project_id: projectId,
+            } as BaseAgentConfigurable,
+          },
+          mapper: { recordToolUsage } as unknown as ClaudeStreamMapper,
+          logger: mockDeep<DefaultLogger>(),
+          signal: new AbortController().signal,
+          send: (command) => sent.push(command),
+        });
+
+        // Drive the peer to a clean completion: one priced assistant turn + done.
+        const runDriver = (async () => {
+          await vi.waitFor(() => expect(fakeTransport.send).toHaveBeenCalled());
+          capturedHandlers!.onSdkMessage({
+            type: 'assistant',
+            session_id: 'sess-comm-1',
+            parent_tool_use_id: null,
+            message: {
+              id: 'm-comm-1',
+              model: 'claude-sonnet-4-6',
+              content: [
+                { type: 'text', text: 'Updated auth.config.ts as requested.' },
+              ],
+              usage: { input_tokens: 100, output_tokens: 50 },
+            },
+          });
+          capturedHandlers!.onDone('sess-comm-1');
+        })();
+
+        // The Claude caller's bridge requested communication_exec; the
+        // dispatcher routes it to the real tool, which invokes the peer.
+        dispatcher.dispatch({
+          id: 'tu-comm-int-1',
+          toolName: 'communication_exec',
+          args: {
+            agent: 'Claude Peer',
+            message: 'Update auth.config.ts.',
+            purpose: 'delegate config update',
+          },
+        });
+
+        await vi.waitFor(() => expect(sent).toHaveLength(1));
+        await runDriver;
+
+        // The dispatcher answered the bridge with a successful tool_call_response
+        // carrying the peer's answer — communication_exec is forwarded into the
+        // Claude session and dispatched end-to-end.
+        const response = sent[0] as {
+          type: string;
+          id: string;
+          result?: string;
+          error?: string;
+        };
+        expect(response.type).toBe('tool_call_response');
+        expect(response.id).toBe('tu-comm-int-1');
+        expect(response.error).toBeUndefined();
+        expect(response.result).toContain('auth.config.ts');
+
+        // The peer's run-scoped spend was recorded as the caller node's tool
+        // usage (100 in @1e-6 + 50 out @2e-6 = 0.0002 USD) — the cost fold that
+        // feeds the cross-turn seed.
+        expect(recordToolUsage).toHaveBeenCalledTimes(1);
+        const [recordedName, recordedUsage] = recordToolUsage.mock
+          .calls[0]! as [
+          string,
+          {
+            inputTokens: number;
+            outputTokens: number;
+            totalTokens: number;
+            totalPrice: number;
+          },
+        ];
+        expect(recordedName).toBe('communication_exec');
+        expect(recordedUsage).toMatchObject({
+          inputTokens: 100,
+          outputTokens: 50,
+          totalTokens: 150,
+        });
+        expect(recordedUsage.totalPrice).toBeCloseTo(0.0002, 10);
       } finally {
         startSpy.mockRestore();
         ensureSpy.mockRestore();

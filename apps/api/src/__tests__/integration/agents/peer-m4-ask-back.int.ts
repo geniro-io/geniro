@@ -55,6 +55,10 @@ const MODEL = 'gpt-5-mini';
 // the peer's own LLM requests to prove its resume turn loaded the checkpoint.
 const PEER_SENTINEL = 'PEER_AGENT_SENTINEL_4F2A9C';
 
+// Marker in the CYCLE caller's system prompt — lets the cycle test's matchers
+// steer the caller (always re-invoke) apart from the peer (always re-ask).
+const CYCLE_CALLER_SENTINEL = 'CYCLE_CALLER_SENTINEL_9B7E1D';
+
 const CALLER_INSTRUCTIONS =
   'You are an orchestrator. Delegate the user request to the connected agent and coordinate the work. ' +
   'If that agent replies that it needs more information, answer its question yourself — from the user request and your own knowledge — by sending another message to the SAME agent. Do NOT ask the user. ' +
@@ -222,6 +226,66 @@ describe('Peer M4 ask-back (caller answers a peer in-session, peer resumes)', ()
     return {
       name: `Peer Ask-Back Integration Test ${Date.now()}`,
       description: 'Two agents connected via communication tool (M4 ask-back)',
+      temporary: true,
+      schema: {
+        nodes: [
+          { id: TRIGGER_NODE_ID, template: 'manual-trigger', config: {} },
+          {
+            id: CALLER_NODE_ID,
+            template: 'simple-agent',
+            config: callerConfig,
+          },
+          {
+            id: COMM_NODE_ID,
+            template: 'agent-communication-tool',
+            config: {},
+          },
+          { id: PEER_NODE_ID, template: 'simple-agent', config: peerConfig },
+        ],
+        edges: [
+          { from: TRIGGER_NODE_ID, to: CALLER_NODE_ID },
+          { from: CALLER_NODE_ID, to: COMM_NODE_ID },
+          { from: COMM_NODE_ID, to: PEER_NODE_ID },
+        ],
+      },
+    };
+  }
+
+  // A mutual ask-back cycle graph: the caller always answers by re-invoking the
+  // peer, and the peer always asks again. The caller's small maxIterations (the
+  // LangGraph recursionLimit) is the only thing that breaks the loop — the
+  // documented cycle guard (no bespoke counter). The peer's bound is set high so
+  // the CALLER's bound fires first, making the termination deterministic.
+  function createCycleGraphData(): CreateGraphDto {
+    const callerConfig: SimpleAgentSchemaType = {
+      instructions:
+        `${CYCLE_CALLER_SENTINEL} You are an orchestrator. Delegate to the connected agent and, ` +
+        'whenever it reports it needs more information, answer it yourself by sending another ' +
+        'message to the SAME agent. Keep the collaboration going — do not stop.',
+      name: 'Cycle Orchestrator',
+      description: 'Coordinates work across agents',
+      invokeModelName: MODEL,
+      invokeModelReasoningEffort: ReasoningEffort.None,
+      maxIterations: 6,
+      summarizeMaxTokens: 272000,
+      summarizeKeepTokens: 30000,
+    };
+    const peerConfig: SimpleAgentSchemaType = {
+      instructions:
+        `${PEER_SENTINEL} You are the Config Specialist. Every time you are asked, respond by ` +
+        'calling finish with needsMoreInfo=true and another clarifying question — never complete the task.',
+      name: PEER_AGENT_NAME,
+      description: 'Specialist that edits configuration files',
+      invokeModelName: MODEL,
+      invokeModelReasoningEffort: ReasoningEffort.None,
+      maxIterations: 30,
+      summarizeMaxTokens: 272000,
+      summarizeKeepTokens: 30000,
+    };
+
+    return {
+      name: `Peer Ask-Back Cycle Test ${Date.now()}`,
+      description: 'Mutual ask-back cycle bounded by caller maxIterations (M4)',
       temporary: true,
       schema: {
         nodes: [
@@ -488,6 +552,104 @@ describe('Peer M4 ask-back (caller answers a peer in-session, peer resumes)', ()
         .find((c) => c.needsMoreInfo === true);
       expect(askResult).toBeDefined();
       expect(typeof askResult!.actionRequired).toBe('string');
+    },
+  );
+
+  it(
+    'a mutual peer ask-back cycle terminates via the caller iteration bound rather than looping forever',
+    { timeout: 300_000 },
+    async () => {
+      // A<->B ask-back cycle with NO bespoke cycle counter: the caller keeps
+      // answering by re-invoking the peer (matcher), and the peer keeps asking
+      // (matcher) — an infinite logical loop. The only thing that breaks it is
+      // the caller's maxIterations -> LangGraph recursionLimit (the documented
+      // cycle guard; see spec.md "As-Shipped Divergence"). A small caller bound
+      // (6) fires well before the peer's (30), so the run terminates
+      // deterministically instead of hanging — reaching the assertion below
+      // (rather than the it() timeout) is itself the bounded-cycle proof.
+      const mockLlm = getMockLlm(app);
+
+      // The caller's first turn loads the deferred communication_exec tool
+      // (FIFO, consumed before matchers); every later caller turn re-invokes the
+      // peer, and every peer turn asks again — driven by content-stable matchers
+      // so the loop has no natural end.
+      mockLlm.queueChat({
+        kind: 'toolCall',
+        toolName: 'tool_search',
+        args: { query: 'communication' },
+      });
+      mockLlm.onChat(
+        { systemMessage: CYCLE_CALLER_SENTINEL },
+        {
+          kind: 'toolCall',
+          toolName: 'communication_exec',
+          args: {
+            agent: PEER_AGENT_NAME,
+            message:
+              'Here is the detail you asked for; continue and tell me if you need anything else.',
+            purpose: 'answer the peer and keep going',
+          },
+        },
+      );
+      mockLlm.onChat(
+        { systemMessage: PEER_SENTINEL },
+        {
+          kind: 'toolCall',
+          toolName: 'finish',
+          args: {
+            needsMoreInfo: true,
+            message:
+              'I need one more detail before I can proceed — which value should I use?',
+            purpose: 'keep asking the caller',
+          },
+        },
+      );
+
+      const cycleGraph = await graphsService.create(
+        contextDataStorage,
+        createCycleGraphData(),
+      );
+
+      try {
+        await graphsService.run(contextDataStorage, cycleGraph.id);
+        await waitForGraphStatus(cycleGraph.id, GraphStatus.Running);
+
+        // async:false: the caller's recursion-limit error propagates out of
+        // executeTrigger (simple-agent re-throws it; graphs.service rethrows
+        // after rolling the thread row back). The cycle is bounded if EITHER the
+        // call rejects with a recursion error OR (defensive) it resolves and the
+        // thread settled to a terminal status — never left Running, which a
+        // genuinely unbounded loop would do (and would have timed out first).
+        let threw = false;
+        let externalThreadId: string | undefined;
+        try {
+          const execution = await graphsService.executeTrigger(
+            contextDataStorage,
+            cycleGraph.id,
+            TRIGGER_NODE_ID,
+            {
+              messages: [
+                'Coordinate with the Config Specialist; keep answering its questions until the task is done.',
+              ],
+              async: false,
+              threadSubId: uniqueThreadSubId('peer-cycle'),
+            },
+          );
+          externalThreadId = execution.externalThreadId;
+        } catch (error: unknown) {
+          threw = true;
+          // The bound fired — distinguish a real recursion-limit stop from a
+          // mock-setup miss (a MockLlmNoMatchError would also reject here).
+          expect((error as Error).message).toMatch(/recursion limit/i);
+        }
+
+        if (!threw) {
+          const thread = await waitForThreadCompletion(externalThreadId!);
+          expect(thread.status).not.toBe(ThreadStatus.Running);
+        }
+      } finally {
+        await cleanupGraph(cycleGraph.id);
+      }
     },
   );
 });

@@ -245,6 +245,114 @@ describe('ClaudeAgent', () => {
     expect(runEvents()).toHaveLength(0);
   });
 
+  it('folds prior forwarded-tool spend alone into the cost seed (tool usage with no request usage trips the gate)', async () => {
+    // No prior request-usage rows at all, but $1.5 of prior forwarded-tool
+    // spend — a previous turn's communication_exec peer call recorded as
+    // tool_token_usage. aggregatePriorSpendUsd must add that term, so the seed
+    // is $1.5 ≥ the $1 limit and the session short-circuits before starting.
+    // If the `+= aggregateToolUsageTotalPrice` fold is removed, the seed reads
+    // $0, the session starts, and both asserts below fail — this pins the fold.
+    messagesDao.aggregateUsageByNodeId.mockResolvedValue(new Map());
+    messagesDao.aggregateToolUsageTotalPrice.mockResolvedValue(1.5);
+
+    const output = await agent.run(
+      THREAD_ID,
+      [new HumanMessage('hi')],
+      undefined,
+      runnableConfig(1),
+    );
+
+    expect(messagesDao.aggregateToolUsageTotalPrice).toHaveBeenCalled();
+    expect(output.messages).toEqual([]);
+    expect(startSpy).not.toHaveBeenCalled();
+    expect(virtualKeys.issueThreadKey).not.toHaveBeenCalled();
+    expect(stopEvents()).toHaveLength(1);
+    expect(stopEvents()[0]!.data).toMatchObject({
+      stopReason: 'cost_limit',
+      stopCostUsd: 1.5,
+    });
+    expect(runEvents()).toHaveLength(0);
+  });
+
+  it('does not let a non-finite forwarded-tool aggregate fail the cost gate open when request spend already meets the limit', async () => {
+    // The tool-usage aggregate is a Postgres numeric coerced via Number(...) in
+    // MessagesDao.aggregateToolUsageTotalPrice; its declared return is `number`,
+    // which includes NaN. aggregatePriorSpendUsd adds it unguarded
+    // (`total += await ...`), so a NaN tool term poisons the whole seed:
+    // 1.0 (request) + NaN = NaN, and the gate `NaN >= limit` is false. Prior
+    // REQUEST spend ALONE ($1.0) already meets the $1 limit, so the gate MUST
+    // trip regardless of the tool term — a session that starts here bills past
+    // an already-exhausted budget. On current code (no Number.isFinite guard)
+    // the gate fails open: the session starts and startSpy is called, so the
+    // assertion below fails. The transport start mock is released so the run
+    // settles deterministically instead of hanging on the blocked default.
+    messagesDao.aggregateUsageByNodeId.mockResolvedValue(
+      new Map([['claude-1', usage(1.0)]]),
+    );
+    messagesDao.aggregateToolUsageTotalPrice.mockResolvedValue(Number.NaN);
+    releaseTransportStart = () => undefined;
+    startSpy.mockImplementation(
+      async (params: Parameters<typeof ClaudeBridgeTransport.start>[0]) => {
+        capturedHandlers = params.handlers;
+        return fakeTransport as unknown as ClaudeBridgeTransport;
+      },
+    );
+
+    const runPromise = agent.run(
+      THREAD_ID,
+      [new HumanMessage('hi')],
+      undefined,
+      runnableConfig(1),
+    );
+    // If the gate fails open, the run reaches the (now non-blocking) bridge and
+    // waits for stream frames — drive it to a clean done so the run settles and
+    // the assertions evaluate rather than timing out.
+    await vi.waitFor(() => {
+      if (startSpy.mock.calls.length > 0) {
+        capturedHandlers!.onDone('sess-nan');
+      }
+      expect(stopEvents().length + runEvents().length).toBeGreaterThan(0);
+    });
+    await runPromise;
+
+    // The gate must have short-circuited on the already-exhausted request spend
+    // BEFORE touching the transport — a started session means the NaN poisoned
+    // the seed and the budget was billed anew.
+    expect(startSpy).not.toHaveBeenCalled();
+    expect(virtualKeys.issueThreadKey).not.toHaveBeenCalled();
+    expect(stopEvents()).toHaveLength(1);
+    expect(stopEvents()[0]!.data).toMatchObject({ stopReason: 'cost_limit' });
+    expect(runEvents()).toHaveLength(0);
+  });
+
+  it('sums request-usage and forwarded-tool spend into the cost seed (neither alone trips, together they do)', async () => {
+    // Prior request-usage ($0.6) and prior forwarded-tool spend ($0.6) are each
+    // under the $1 limit; the seed is their SUM ($1.2 ≥ $1), so the session
+    // short-circuits and reports the combined prior spend. A fold that replaced
+    // (rather than added) the tool term, or dropped it, would leave the seed at
+    // $0.6 < $1 and start the session — this pins additive summation.
+    messagesDao.aggregateUsageByNodeId.mockResolvedValue(
+      new Map([['claude-1', usage(0.6)]]),
+    );
+    messagesDao.aggregateToolUsageTotalPrice.mockResolvedValue(0.6);
+
+    const output = await agent.run(
+      THREAD_ID,
+      [new HumanMessage('hi')],
+      undefined,
+      runnableConfig(1),
+    );
+
+    expect(output.messages).toEqual([]);
+    expect(startSpy).not.toHaveBeenCalled();
+    expect(stopEvents()).toHaveLength(1);
+    expect(stopEvents()[0]!.data).toMatchObject({
+      stopReason: 'cost_limit',
+      stopCostUsd: 1.2,
+    });
+    expect(runEvents()).toHaveLength(0);
+  });
+
   it('issues a model-scoped key with the remaining budget, clamped to the 1-cent floor', async () => {
     messagesDao.aggregateUsageByNodeId.mockResolvedValue(
       new Map([['claude-1', usage(0.999)]]),

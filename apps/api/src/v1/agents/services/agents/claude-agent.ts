@@ -911,14 +911,24 @@ export class ClaudeAgent
   private async aggregatePriorSpendUsd(
     internalThreadId: string,
   ): Promise<number> {
+    // Both aggregates are Postgres numerics coerced via Number(...), whose typed
+    // `number` return includes NaN. An unguarded `total += NaN` poisons the whole
+    // seed (1.0 + NaN = NaN) and the gate's `NaN >= limit` is false — a fail-OPEN
+    // that bills past an already-exhausted budget. Coerce every term through
+    // toFinite so a non-finite aggregate contributes 0 and the gate still trips on
+    // the known spend (cost-accounting.md "coerce unknown pricing to 0" + the
+    // Number.isFinite numeric-aggregation guard).
+    const toFinite = (n: number | null | undefined): number =>
+      typeof n === 'number' && Number.isFinite(n) ? n : 0;
     const byNode =
       await this.messagesDao.aggregateUsageByNodeId(internalThreadId);
     let total = 0;
     for (const usage of byNode.values()) {
-      total += usage.totalPrice ?? 0;
+      total += toFinite(usage.totalPrice);
     }
-    total +=
-      await this.messagesDao.aggregateToolUsageTotalPrice(internalThreadId);
+    total += toFinite(
+      await this.messagesDao.aggregateToolUsageTotalPrice(internalThreadId),
+    );
     return total;
   }
 
