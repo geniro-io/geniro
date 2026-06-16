@@ -1,5 +1,7 @@
 import { HumanMessage } from '@langchain/core/messages';
+import type { DynamicStructuredTool } from '@langchain/core/tools';
 import { INestApplication } from '@nestjs/common';
+import type { BridgeCommand } from '@packages/claude-bridge';
 import {
   afterAll,
   beforeAll,
@@ -10,12 +12,20 @@ import {
   vi,
 } from 'vitest';
 
+import { CommunicationToolGroup } from '../../../v1/agent-tools/tools/common/communication/communication-tool-group';
 import { BaseAgentConfigurable } from '../../../v1/agents/agents.types';
 import { ClaudeAgent } from '../../../v1/agents/services/agents/claude-agent';
 import { ClaudeBootstrapService } from '../../../v1/agents/services/claude/claude-bootstrap.service';
+import { AgentCommunicationToolTemplate } from '../../../v1/graph-templates/templates/tools/agent-communication-tool.template';
 import { GraphDao } from '../../../v1/graphs/dao/graph.dao';
-import { GraphStatus, MessageRole } from '../../../v1/graphs/graphs.types';
+import {
+  GraphStatus,
+  MessageRole,
+  NodeKind,
+} from '../../../v1/graphs/graphs.types';
+import type { GraphRegistry } from '../../../v1/graphs/services/graph-registry';
 import { LiteLlmClient } from '../../../v1/litellm/services/litellm.client';
+import { LitellmVirtualKeyService } from '../../../v1/litellm/services/litellm-virtual-key.service';
 import { AgentMessageNotificationHandler } from '../../../v1/notification-handlers/services/event-handlers/agent-message-notification-handler';
 import { NotificationEvent } from '../../../v1/notifications/notifications.types';
 import type { RuntimeThreadProvider } from '../../../v1/runtime/services/runtime-thread-provider';
@@ -316,4 +326,166 @@ describe('Claude Agent M3 — MockBridge full loop (integration)', () => {
       ).toBe(true);
     });
   });
+
+  it(
+    'forwards communication_exec and round-trips a real peer call through the bridge frame (Claude caller → Claude peer)',
+    { timeout: 60_000 },
+    async () => {
+      // The M2 seam test drives ClaudeToolDispatcher.dispatch directly; this
+      // closes the last-mile gap. A real ClaudeAgent.run whose MockBridge session
+      // emits an actual `tool_call_request: communication_exec` frame — the exact
+      // wire a live SDK session takes when a cloud agent calls a peer — and the
+      // host's real transport → dispatcher must invoke the peer and answer the
+      // bridge with a `tool_call_response`, all without a sandbox or a live LLM.
+      const { agent: caller, config } = await prepareAgent();
+
+      // The peer's run issues a per-thread virtual key; keep it off LiteLLM.
+      const virtualKeys = app.get(LitellmVirtualKeyService);
+      const issueSpy = vi
+        .spyOn(virtualKeys, 'issueThreadKey')
+        .mockResolvedValue({ key: 'sk-test-vkey' } as never);
+      const revokeSpy = vi
+        .spyOn(virtualKeys, 'revokeThreadKey')
+        .mockResolvedValue(undefined as never);
+
+      try {
+        // PEER ("Developer") — a second real ClaudeAgent reached through the real
+        // communication tool, running on its own MockBridge scenario.
+        const peer = await app.resolve(ClaudeAgent);
+        peer.setConfig({
+          name: 'Developer',
+          description: 'implements changes',
+          instructions: 'be helpful',
+          model: 'claude-sonnet-4-6',
+        });
+        peer.setRuntimeProvider({
+          provide: async () => new MockRuntime(mockRuntimeSvc),
+          getParams: () => ({ runtimeNodeId: 'rt-peer' }),
+        } as unknown as RuntimeThreadProvider);
+
+        // Real communication tool wired to the peer via a stub registry.
+        const peerNode = {
+          type: NodeKind.ClaudeAgent,
+          instance: peer,
+          config: { name: 'Developer', description: 'implements changes' },
+        };
+        const registryStub = {
+          filterAgentNodeIds: () => ['developer-node'],
+          getNode: () => peerNode,
+        } as unknown as GraphRegistry;
+        const template = new AgentCommunicationToolTemplate(
+          app.get(CommunicationToolGroup),
+          registryStub,
+        );
+        const handle = await template.create();
+        const instance = (await handle.provide({} as never)) as {
+          tools: { name: string; invoke: unknown }[];
+        };
+        await handle.configure(
+          {
+            config: {},
+            inputNodeIds: new Set<string>(),
+            outputNodeIds: new Set(['developer-node']),
+            metadata: {
+              graphId,
+              nodeId: 'comm-tool-1',
+              version: '1',
+              graph_created_by: TEST_USER_ID,
+              graph_project_id: projectId,
+            },
+          } as never,
+          instance as never,
+        );
+        const execTool = instance.tools.find(
+          (tool) => tool.name === 'communication_exec',
+        ) as unknown as DynamicStructuredTool;
+        expect(execTool).toBeDefined();
+
+        // The caller carries communication_exec, so ClaudeAgent.run forwards it in
+        // the start frame AND wires it into the host-side dispatcher.
+        caller.addTool(execTool);
+
+        const PEER_ANSWER = 'Implemented the change in auth.config.ts.';
+
+        let callerTools: { name: string }[] | undefined;
+        let toolResponse:
+          | Extract<BridgeCommand, { type: 'tool_call_response' }>
+          | undefined;
+
+        // CALLER scenario (consumed FIRST — FIFO): emit the communication_exec
+        // tool-call frame, then end the turn once the host answers it.
+        mockRuntimeSvc.queueBridge((session) => {
+          callerTools = session.startOptions.tools;
+          session.onCommand((command) => {
+            if (
+              command.type === 'tool_call_response' &&
+              command.id === 'tc-peer-1'
+            ) {
+              toolResponse = command;
+              session.emitResult({ totalCostUsd: 0, sessionId: 'sess-caller' });
+              session.done('sess-caller');
+            }
+          });
+          session.emitAssistant({
+            text: 'Delegating to the developer.',
+            model: 'claude-sonnet-4-6',
+            sessionId: 'sess-caller',
+          });
+          session.emitToolCallRequest('tc-peer-1', 'communication_exec', {
+            agent: 'Developer',
+            message: 'Update auth.config.ts.',
+            purpose: 'delegate config update',
+          });
+        });
+
+        // PEER scenario (consumed SECOND — when communication_exec runs peer.run):
+        // one priced assistant turn carrying the answer, then result + done.
+        mockRuntimeSvc.queueBridge((session) => {
+          session.emitAssistant({
+            text: PEER_ANSWER,
+            model: 'claude-sonnet-4-6',
+            usage: { input_tokens: 100, output_tokens: 50 },
+            sessionId: 'sess-peer',
+          });
+          session.emitResult({
+            totalCostUsd: 0.0002,
+            usage: { input_tokens: 100, output_tokens: 50 },
+            sessionId: 'sess-peer',
+          });
+          session.done('sess-peer');
+        });
+
+        const output = await caller.run(
+          externalThreadId,
+          [new HumanMessage('Ask the developer to update the config.')],
+          undefined,
+          config,
+        );
+
+        // 1) communication_exec was forwarded into the session — it reached the
+        //    bridge `start` frame as a tool definition.
+        expect(callerTools?.some((t) => t.name === 'communication_exec')).toBe(
+          true,
+        );
+
+        // 2) The frame round-tripped: the host answered the caller's bridge with a
+        //    successful tool_call_response carrying the peer's real answer.
+        expect(toolResponse?.type).toBe('tool_call_response');
+        expect(toolResponse?.error).toBeUndefined();
+        expect(toolResponse?.result).toContain('auth.config.ts');
+
+        // 3) The caller's turn completed normally (no escalation).
+        expect(output.needsMoreInfo).toBe(false);
+
+        // 4) The peer's run-scoped spend folded into the caller's cost. The
+        //    caller's own turn was priced at 0, so the total IS the peer's
+        //    $0.0002 (100 in @1e-6 + 50 out @2e-6).
+        expect(output.statistics?.usage?.totalPrice).toBeGreaterThan(0);
+        expect(output.statistics?.usage?.totalPrice).toBeCloseTo(0.0002, 6);
+      } finally {
+        issueSpy.mockRestore();
+        revokeSpy.mockRestore();
+      }
+    },
+  );
 });
