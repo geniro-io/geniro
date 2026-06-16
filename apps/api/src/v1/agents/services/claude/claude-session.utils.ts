@@ -121,8 +121,14 @@ export function buildBridgeToolDefinitions(
 
 /**
  * Environment injected into the bridge exec session (NOT baked into the
- * container) so the per-thread virtual key never outlives the session and the
- * LiteLLM master key never reaches the sandbox.
+ * container) so the session key never outlives the session and the LiteLLM
+ * master key never reaches the sandbox.
+ *
+ * `apiKey` fills `ANTHROPIC_API_KEY` for the session: the scoped per-thread
+ * LiteLLM virtual key in system mode, OR the graph author's own Anthropic key
+ * in BYO mode. In BYO mode the caller also passes `anthropicBaseUrlOverride`
+ * (`https://api.anthropic.com`) so the session talks to Anthropic directly,
+ * bypassing LiteLLM and its sandbox-URL derivation/fail-close.
  *
  * `githubToken` (when the thread owner has a linked GitHub App installation)
  * authenticates Claude's native `gh` CLI and git over HTTPS — the latter via
@@ -131,16 +137,21 @@ export function buildBridgeToolDefinitions(
  * rather than half-wired with an empty credential.
  */
 export function buildClaudeSessionEnv(
-  virtualKey: string,
+  apiKey: string,
   githubToken?: string | null,
-  options?: { isRemoteRuntime?: boolean },
+  options?: { isRemoteRuntime?: boolean; anthropicBaseUrlOverride?: string },
 ): Record<string, string> {
-  // A remote runtime (Daytona, on a separate host) cannot reach the cluster-
-  // internal LiteLLM URL, so its session needs the public one. Fail closed with
-  // a precise error rather than handing the sandbox an unreachable URL.
-  const baseUrl = options?.isRemoteRuntime
-    ? environment.litellmPublicUrl
-    : environment.litellmSandboxUrl;
+  // BYO mode supplies the upstream base URL directly (direct Anthropic), so the
+  // LiteLLM-URL derivation + fail-close below is skipped. Otherwise a remote
+  // runtime (Daytona, on a separate host) cannot reach the cluster-internal
+  // LiteLLM URL and needs the public one; an in-cluster runtime uses the
+  // sandbox URL. Fail closed with a precise error rather than handing the
+  // sandbox an unreachable URL.
+  const baseUrl =
+    options?.anthropicBaseUrlOverride ??
+    (options?.isRemoteRuntime
+      ? environment.litellmPublicUrl
+      : environment.litellmSandboxUrl);
   if (!baseUrl) {
     throw options?.isRemoteRuntime
       ? new InternalException(
@@ -155,7 +166,7 @@ export function buildClaudeSessionEnv(
 
   return {
     ANTHROPIC_BASE_URL: baseUrl,
-    ANTHROPIC_API_KEY: virtualKey,
+    ANTHROPIC_API_KEY: apiKey,
     // Background/utility calls (e.g. title generation) route through a cheap
     // registered alias instead of the default haiku snapshot id.
     ANTHROPIC_SMALL_FAST_MODEL: SMALL_FAST_MODEL_ALIAS,

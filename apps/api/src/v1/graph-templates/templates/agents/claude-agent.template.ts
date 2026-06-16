@@ -5,6 +5,7 @@ import { z } from 'zod';
 
 import type { BuiltAgentTool } from '../../../agent-tools/tools/base-tool';
 import { ClaudeAgent } from '../../../agents/services/agents/claude-agent';
+import { ClaudeAuthMode } from '../../../agents/services/claude/claude-session.types';
 import { isToolForwardableToClaude } from '../../../agents/services/claude/claude-session.utils';
 import type { GraphNode } from '../../../graphs/graphs.types';
 import { NodeKind } from '../../../graphs/graphs.types';
@@ -38,6 +39,19 @@ export const ClaudeAgentTemplateSchema = z.object({
     .meta({ 'x-ui:show-on-node': true })
     .meta({ 'x-ui:label': 'Model' })
     .meta({ 'x-ui:litellm-models-list-select': true }),
+  authMode: z
+    .enum(ClaudeAuthMode)
+    .default(ClaudeAuthMode.System)
+    .describe(
+      'LLM credential mode. "system" (default) bills this agent to the shared platform upstream. "byo-anthropic" routes this agent\'s calls to your own Anthropic API key, resolved from the secrets store and used only by this node.',
+    ),
+  apiKeySecretRef: z
+    .string()
+    .optional()
+    .describe(
+      'Secret holding your Anthropic API key (must start with sk-ant-). Required when authMode is "byo-anthropic". The key is resolved host-side and injected only into this node\'s sandbox — set a spend limit on it in the Anthropic Console as a backstop.',
+    )
+    .meta({ 'x-ui:secret-select-host': true }),
   maxTurns: z
     .number()
     .int()

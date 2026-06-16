@@ -6,6 +6,8 @@ import { GitAuthModule } from '../git-auth/git-auth.module';
 import { LitellmModule } from '../litellm/litellm.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { RuntimeModule } from '../runtime/runtime.module';
+import { SecretsModule } from '../secrets/secrets.module';
+import { SecretsStoreModule } from '../secrets-store/secrets-store.module';
 import { ThreadsModule } from '../threads/threads.module';
 import { GraphCheckpointsDao } from './dao/graph-checkpoints.dao';
 import { GraphCheckpointsWritesDao } from './dao/graph-checkpoints-writes.dao';
@@ -28,6 +30,8 @@ import { PgCheckpointSaver } from './services/pg-checkpoint-saver';
     NotificationsModule,
     LitellmModule,
     GitAuthModule,
+    SecretsModule,
+    SecretsStoreModule,
     forwardRef(() => ThreadsModule),
   ],
   controllers: [],

@@ -123,6 +123,42 @@ describe('ClaudeAgentTemplate', () => {
         }),
       ).toThrow();
     });
+
+    it('defaults authMode to system and accepts byo-anthropic + apiKeySecretRef', () => {
+      const parsed = ClaudeAgentTemplateSchema.parse({
+        name: 'Claude',
+        description: 'A claude agent',
+        instructions: 'Be helpful',
+        model: 'claude-sonnet-4-6',
+      });
+      expect(parsed.authMode).toBe('system');
+
+      const byo = ClaudeAgentTemplateSchema.parse({
+        name: 'Claude',
+        description: 'A claude agent',
+        instructions: 'Be helpful',
+        model: 'claude-sonnet-4-6',
+        authMode: 'byo-anthropic',
+        apiKeySecretRef: 'my-anthropic-key',
+      });
+      expect(byo.authMode).toBe('byo-anthropic');
+      expect(byo.apiKeySecretRef).toBe('my-anthropic-key');
+    });
+
+    it('marks apiKeySecretRef with the HOST-ONLY secret marker the compiler does not collect', () => {
+      // The graph compiler's collectSecretNames matches ONLY x-ui:secret-select /
+      // x-ui:secret-multi-select and injects those into the sandbox secretEnv.
+      // The BYO key MUST carry a distinct host-only marker so it is never
+      // injected generically — it reaches the sandbox only as ANTHROPIC_API_KEY
+      // via buildClaudeSessionEnv. A regression to x-ui:secret-select here would
+      // leak the raw key into the generic sandbox env path.
+      const meta = ClaudeAgentTemplateSchema.shape.apiKeySecretRef.meta() as
+        | Record<string, unknown>
+        | undefined;
+      expect(meta?.['x-ui:secret-select-host']).toBe(true);
+      expect(meta?.['x-ui:secret-select']).toBeUndefined();
+      expect(meta?.['x-ui:secret-multi-select']).toBeUndefined();
+    });
   });
 
   describe('create / configure', () => {

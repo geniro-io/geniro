@@ -16,6 +16,8 @@ import { LiteLlmClient } from '../../../litellm/services/litellm.client';
 import { LitellmVirtualKeyService } from '../../../litellm/services/litellm-virtual-key.service';
 import { DaytonaRuntime } from '../../../runtime/services/daytona-runtime';
 import { RuntimeThreadProvider } from '../../../runtime/services/runtime-thread-provider';
+import { SecretsService } from '../../../secrets/services/secrets.service';
+import { SecretsStoreService } from '../../../secrets-store/services/secrets-store.service';
 import { MessagesDao } from '../../../threads/dao/messages.dao';
 import { ThreadsDao } from '../../../threads/dao/threads.dao';
 import { BaseAgentConfigurable, RunnableAgent } from '../../agents.types';
@@ -28,6 +30,7 @@ import { ClaudeBootstrapService } from '../claude/claude-bootstrap.service';
 import { ClaudeBridgeTransport } from '../claude/claude-bridge-transport';
 import { ClaudeKeepaliveService } from '../claude/claude-keepalive.service';
 import {
+  ClaudeAuthMode,
   ClaudePluginSource,
   ClaudeQuestionRequest,
   ClaudeThreadMetadata,
@@ -48,6 +51,8 @@ export type ClaudeAgentSchemaType = {
   description: string;
   instructions: string;
   model: string;
+  authMode?: ClaudeAuthMode;
+  apiKeySecretRef?: string;
   maxTurns?: number;
   plugins?: ClaudePluginSource[];
 };
@@ -97,6 +102,16 @@ const MIN_VIRTUAL_KEY_BUDGET_USD = 0.01;
 const KEEPALIVE_INTERVAL_MS = 30_000;
 
 /**
+ * BYO mode points the session's ANTHROPIC_BASE_URL straight at Anthropic,
+ * bypassing LiteLLM. Note the host-side cost-limit (message-scan based) is the
+ * only in-platform budget guard for BYO runs — there is no LiteLLM virtual-key
+ * `max_budget`, and an interrupted turn's in-flight spend is not captured in the
+ * rollup (the shared interrupt carve-out, cost-accounting.md). A Console
+ * spend-limit on the BYO key is the recommended backstop.
+ */
+const ANTHROPIC_DIRECT_BASE_URL = 'https://api.anthropic.com';
+
+/**
  * Agent kind backed by Claude Code (Anthropic Agent SDK) running inside the
  * thread's sandbox runtime via a stdio bridge. Unlike SimpleAgent there is no
  * LangGraph state machine and no checkpointer — the SDK session inside the
@@ -105,9 +120,10 @@ const KEEPALIVE_INTERVAL_MS = 30_000;
  *
  * Cost policy (".claude/rules/cost-accounting.md" — checkpoint-less variant):
  * - per-message `__requestUsage.totalPrice` is computed from LiteLLM
- *   registered rates (the same rates LiteLLM bills by), so the message-scan
- *   rollup matches billing; the SDK's own `total_cost_usd` is logged for
- *   drift diagnostics only;
+ *   registered rates; the SDK's `total_cost_usd` from the turn-end `result` is
+ *   the PRIMARY turn price (`ClaudeStreamMapper.reconcileTurnUsage` prefers it),
+ *   with the LiteLLM-rate figure as the fallback and the basis for the
+ *   mid-stream cost-limit check — so the message-scan rollup matches billing;
  * - pre-turn spend is seeded from the message-scan aggregate (there is no
  *   checkpoint to seed from);
  * - mid-turn the per-thread virtual key budget (`effectiveLimit − prior
@@ -138,6 +154,8 @@ export class ClaudeAgent
     private readonly threadsDao: ThreadsDao,
     private readonly messagesDao: MessagesDao,
     private readonly gitTokenResolver: GitTokenResolverService,
+    private readonly secretsService: SecretsService,
+    private readonly secretsStore: SecretsStoreService,
   ) {
     super();
   }
@@ -259,24 +277,48 @@ export class ClaudeAgent
           }),
         });
 
-      const issued = await this.virtualKeys.issueThreadKey({
-        threadId: rootThreadId,
-        ...(hasLimit && {
-          budgetUsd: Math.max(
-            effectiveLimit - priorSpendUsd,
-            MIN_VIRTUAL_KEY_BUDGET_USD,
-          ),
-        }),
-        // Model-scope the key: it enters a sandbox running untrusted code, so
-        // an exfiltrated key must not be able to bill arbitrary models.
-        models: Array.from(new Set([config.model, SMALL_FAST_MODEL_ALIAS])),
-        metadata: {
-          graphId: configurable.graph_id,
-          nodeId: configurable.node_id,
-        },
-      });
-      virtualKey = issued.key;
-      runEntry.virtualKey = issued.key;
+      const isByo = config.authMode === ClaudeAuthMode.ByoAnthropic;
+      // The key that fills ANTHROPIC_API_KEY for the session. System mode issues
+      // a scoped per-thread LiteLLM virtual key (model-scoped + budgeted, revoked
+      // in `finally`); BYO mode resolves the graph author's own Anthropic key
+      // host-side and issues NO virtual key (so the `finally` revoke is skipped
+      // by its `if (virtualKey)` guard).
+      let sessionApiKey: string;
+      if (isByo) {
+        // The SDK reaches api.anthropic.com directly in BYO, so the node's model
+        // must be a real Anthropic id. The standard aliases (claude-*) coincide;
+        // a non-claude alias cannot route to direct Anthropic — fail closed.
+        if (!config.model.startsWith('claude-')) {
+          throw new InternalException(
+            'CLAUDE_BYO_INVALID_MODEL',
+            `Claude Agent BYO mode requires an Anthropic model (claude-*), but the node is configured with "${config.model}"`,
+          );
+        }
+        sessionApiKey = await this.resolveByoApiKey(
+          configurable,
+          config.apiKeySecretRef,
+        );
+      } else {
+        const issued = await this.virtualKeys.issueThreadKey({
+          threadId: rootThreadId,
+          ...(hasLimit && {
+            budgetUsd: Math.max(
+              effectiveLimit - priorSpendUsd,
+              MIN_VIRTUAL_KEY_BUDGET_USD,
+            ),
+          }),
+          // Model-scope the key: it enters a sandbox running untrusted code, so
+          // an exfiltrated key must not be able to bill arbitrary models.
+          models: Array.from(new Set([config.model, SMALL_FAST_MODEL_ALIAS])),
+          metadata: {
+            graphId: configurable.graph_id,
+            nodeId: configurable.node_id,
+          },
+        });
+        virtualKey = issued.key;
+        runEntry.virtualKey = issued.key;
+        sessionApiKey = issued.key;
+      }
       // Resolve the GitHub App installation token that authenticates Claude's
       // native gh/git (same resolver the proxied gh_* tools use). Prefer the
       // thread owner, then fall back to the graph owner so triggered/ownerless
@@ -296,8 +338,11 @@ export class ClaudeAgent
       // A Daytona runtime runs on a separate host that cannot reach the
       // cluster-internal LiteLLM URL — its session points ANTHROPIC_BASE_URL at
       // the public LiteLLM URL instead (fail-closed if unset).
-      const env = buildClaudeSessionEnv(virtualKey, githubToken, {
+      const env = buildClaudeSessionEnv(sessionApiKey, githubToken, {
         isRemoteRuntime: runtime instanceof DaytonaRuntime,
+        // BYO talks to Anthropic directly with the user's own key, so the
+        // LiteLLM sandbox-URL derivation/fail-close is bypassed.
+        ...(isByo && { anthropicBaseUrlOverride: ANTHROPIC_DIRECT_BASE_URL }),
       });
       // Native gh/git become usable from Claude's Bash only once the session
       // carries a GH_TOKEN; install the matching credential helper then. The
@@ -339,7 +384,22 @@ export class ClaudeAgent
       // executes a long silent sandbox command, no SDK messages flow, and an
       // activity-only toucher would let the idle reaper kill the live session.
       keepaliveTimer = setInterval(toucher, KEEPALIVE_INTERVAL_MS);
-      const calculatePriceUsd = await this.buildPriceCalculator(config.model);
+      // Pricing ALWAYS resolves from the registered LiteLLM alias (config.model),
+      // decoupled from the model id the SDK session talks to: they coincide for
+      // the standard aliases, but pinning pricing to the registered alias means
+      // an exotic/unregistered SDK id can never silently zero the per-message
+      // rate fallback the cost-limit reads. In BYO there is no LiteLLM
+      // `max_budget` backstop, so refuse to run when those rates resolve to 0 —
+      // a turn lacking SDK `total_cost_usd` would otherwise price at 0 and slip
+      // past the host-side cost-limit (a fail-open).
+      const { calculatePriceUsd, hasNonZeroRates } =
+        await this.buildPriceCalculator(config.model);
+      if (isByo && !hasNonZeroRates) {
+        throw new InternalException(
+          'CLAUDE_BYO_UNPRICED_MODEL',
+          `Pricing rates for "${config.model}" resolve to 0 — register the model in LiteLLM so BYO turns are cost-tracked. Refusing to run a BYO turn unpriced`,
+        );
+      }
 
       const mapper = new ClaudeStreamMapper({
         threadId,
@@ -933,15 +993,87 @@ export class ClaudeAgent
   }
 
   /**
+   * Resolve the graph author's own Anthropic API key for a BYO-mode run. Fails
+   * CLOSED on every gap — no project scope, no secret selected, secrets store
+   * unavailable, secret missing, or a value that is not an `sk-ant-` API key
+   * (which also rejects subscription/OAuth tokens). There is deliberately NO
+   * fallback to the system upstream key: a misconfigured BYO node refuses to run
+   * rather than silently billing the platform account. The resolved value is a
+   * secret and is NEVER logged — only the secret NAME appears in errors
+   * (sandbox-boundary.md); any sink that could echo it is already routed through
+   * `sanitizeSandboxError` (which masks `sk-***`).
+   */
+  private async resolveByoApiKey(
+    configurable: BaseAgentConfigurable,
+    secretRef?: string,
+  ): Promise<string> {
+    const projectId = configurable.graph_project_id;
+    if (!projectId) {
+      throw new InternalException(
+        'CLAUDE_BYO_NO_PROJECT',
+        'Claude Agent BYO mode requires a project-scoped run, but no project id was resolved for this thread',
+      );
+    }
+    if (!secretRef) {
+      throw new InternalException(
+        'CLAUDE_BYO_NO_SECRET_REF',
+        'Claude Agent BYO mode is enabled but no API-key secret is selected (set apiKeySecretRef)',
+      );
+    }
+    if (!this.secretsStore.isAvailable()) {
+      throw new InternalException(
+        'CLAUDE_BYO_STORE_UNAVAILABLE',
+        'Claude Agent BYO mode needs the secrets store (OpenBao) configured to resolve the API key',
+      );
+    }
+    // Trim first: secrets-store values commonly carry surrounding whitespace or
+    // a trailing newline (copy-paste / echo-piped), and ANTHROPIC_API_KEY
+    // becomes an HTTP header value where a stray newline is rejected by
+    // Anthropic — inject the clean value, never the raw one.
+    const key = (
+      await this.secretsService.resolveSecretValue(projectId, secretRef)
+    ).trim();
+    // Console API keys are `sk-ant-api…`; Claude subscription OAuth tokens are
+    // `sk-ant-oat…` — BOTH carry the `sk-ant-` prefix, so a bare prefix check
+    // would NOT block OAuth tokens (the spec's explicit goal: they are
+    // ToS-prohibited for third-party tools and are rejected as an x-api-key by
+    // Anthropic anyway). Require the `sk-ant-` prefix, a NON-EMPTY body after it
+    // (a degenerate prefix-only value carries no credential and would only 401
+    // opaquely on first call), NO embedded whitespace (real keys have none; an
+    // embedded space/newline is header-unsafe — `.trim()` above only strips the
+    // ends), and reject the OAuth subprefix case-insensitively — all refused up
+    // front, not at first call.
+    if (
+      !key.startsWith('sk-ant-') ||
+      key.length <= 'sk-ant-'.length ||
+      /\s/.test(key) ||
+      key.toLowerCase().startsWith('sk-ant-oat')
+    ) {
+      throw new InternalException(
+        'CLAUDE_BYO_INVALID_KEY',
+        `Secret "${secretRef}" is not a valid Anthropic Console API key (expected a non-empty sk-ant-api… key); subscription/OAuth tokens are not supported`,
+      );
+    }
+    return key;
+  }
+
+  /**
    * Loads LiteLLM rates for the node's PRIMARY model once and prices every
    * message with them, ignoring the per-message `model` argument: through the
    * passthrough, per-message usage is all zeros, so effectively only the
    * result residual is priced — at the primary model's rates. M2 may load
    * per-model rates if mixed-model turns need exact attribution.
    */
-  private async buildPriceCalculator(
-    model: string,
-  ): Promise<(usage: RequestTokenUsage, model: string) => number> {
+  private async buildPriceCalculator(model: string): Promise<{
+    calculatePriceUsd: (usage: RequestTokenUsage, model: string) => number;
+    /**
+     * True when LiteLLM returned at least one non-zero rate for `model`. BYO
+     * runs fail closed when this is false: the LiteLLM `max_budget` backstop is
+     * absent there, so a turn lacking SDK `total_cost_usd` would price at 0 and
+     * slip past the host-side cost-limit.
+     */
+    hasNonZeroRates: boolean;
+  }> {
     let inputRate = 0;
     let outputRate = 0;
     let cacheReadRate = 0;
@@ -961,7 +1093,7 @@ export class ClaudeAgent
       );
     }
 
-    return (usage: RequestTokenUsage) => {
+    const calculatePriceUsd = (usage: RequestTokenUsage): number => {
       const cached = usage.cachedInputTokens ?? 0;
       const uncached = Math.max(usage.inputTokens - cached, 0);
       return (
@@ -969,6 +1101,10 @@ export class ClaudeAgent
         cached * cacheReadRate +
         usage.outputTokens * outputRate
       );
+    };
+    return {
+      calculatePriceUsd,
+      hasNonZeroRates: inputRate > 0 || outputRate > 0,
     };
   }
 

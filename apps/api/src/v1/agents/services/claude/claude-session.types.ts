@@ -4,6 +4,19 @@ export const CLAUDE_INSTALL_DIR = '/opt/geniro-claude';
 export const CLAUDE_PLUGINS_DIR = `${CLAUDE_INSTALL_DIR}/plugins`;
 
 /**
+ * LLM credential mode for a Claude Agent node.
+ * - `System`: the agent's LLM calls route through the shared platform upstream
+ *   (a scoped per-thread LiteLLM virtual key enters the sandbox).
+ * - `ByoAnthropic`: the agent runs against the graph author's own Anthropic API
+ *   key, resolved host-side from the secrets store and injected directly into
+ *   this node's sandbox as `ANTHROPIC_API_KEY`, bypassing LiteLLM.
+ */
+export enum ClaudeAuthMode {
+  System = 'system',
+  ByoAnthropic = 'byo-anthropic',
+}
+
+/**
  * Tools that only make sense inside a Geniro agent loop — never forwarded into
  * a Claude SDK session. `finish`/`wait_for`/`tool_search` are turn control and
  * dynamic tool loading the SDK session owns itself. `subagents_run_task` is

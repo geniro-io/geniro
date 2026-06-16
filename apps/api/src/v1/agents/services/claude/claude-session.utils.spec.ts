@@ -263,6 +263,34 @@ describe('buildClaudeSessionEnv', () => {
       (environment as { litellmPublicUrl: string }).litellmPublicUrl = original;
     }
   });
+
+  it('uses the BYO override base URL with the supplied key (direct Anthropic)', () => {
+    const env = buildClaudeSessionEnv('sk-ant-api03-byo', null, {
+      anthropicBaseUrlOverride: 'https://api.anthropic.com',
+    });
+    expect(env.ANTHROPIC_API_KEY).toBe('sk-ant-api03-byo');
+    expect(env.ANTHROPIC_BASE_URL).toBe('https://api.anthropic.com');
+  });
+
+  it('does NOT fail closed on a missing LiteLLM URL when a BYO base-URL override is supplied', () => {
+    // BYO talks to Anthropic directly and never reads the LiteLLM sandbox URL,
+    // so the override path must bypass the CLAUDE_*_LLM_URL_MISSING fail-close.
+    const originalSandbox = environment.litellmSandboxUrl;
+    const originalPublic = environment.litellmPublicUrl;
+    (environment as { litellmSandboxUrl: string }).litellmSandboxUrl = '';
+    (environment as { litellmPublicUrl: string }).litellmPublicUrl = '';
+    try {
+      const env = buildClaudeSessionEnv('sk-ant-api03-byo', null, {
+        anthropicBaseUrlOverride: 'https://api.anthropic.com',
+      });
+      expect(env.ANTHROPIC_BASE_URL).toBe('https://api.anthropic.com');
+    } finally {
+      (environment as { litellmSandboxUrl: string }).litellmSandboxUrl =
+        originalSandbox;
+      (environment as { litellmPublicUrl: string }).litellmPublicUrl =
+        originalPublic;
+    }
+  });
 });
 
 describe('formatQuestionsAsText', () => {

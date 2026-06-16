@@ -10,6 +10,8 @@ import { RequestTokenUsage } from '../../../litellm/litellm.types';
 import type { LiteLlmClient } from '../../../litellm/services/litellm.client';
 import type { LitellmVirtualKeyService } from '../../../litellm/services/litellm-virtual-key.service';
 import type { RuntimeThreadProvider } from '../../../runtime/services/runtime-thread-provider';
+import type { SecretsService } from '../../../secrets/services/secrets.service';
+import type { SecretsStoreService } from '../../../secrets-store/services/secrets-store.service';
 import type { MessagesDao } from '../../../threads/dao/messages.dao';
 import type { ThreadsDao } from '../../../threads/dao/threads.dao';
 import { BaseAgentConfigurable } from '../../agents.types';
@@ -17,6 +19,7 @@ import type { ClaudeBootstrapService } from '../claude/claude-bootstrap.service'
 import type { ClaudeBridgeHandlers } from '../claude/claude-bridge-transport';
 import { ClaudeBridgeTransport } from '../claude/claude-bridge-transport';
 import type { ClaudeKeepaliveService } from '../claude/claude-keepalive.service';
+import { ClaudeAuthMode } from '../claude/claude-session.types';
 import { AgentEventType } from './base-agent';
 import { ClaudeAgent, ClaudeAgentSchemaType } from './claude-agent';
 
@@ -69,6 +72,8 @@ describe('ClaudeAgent', () => {
   };
   let runtimeProvider: RuntimeThreadProvider;
   let gitTokenResolver: { resolveDefaultToken: ReturnType<typeof vi.fn> };
+  let secretsService: { resolveSecretValue: ReturnType<typeof vi.fn> };
+  let secretsStore: { isAvailable: ReturnType<typeof vi.fn> };
 
   let startSpy: ReturnType<typeof vi.spyOn>;
   let capturedHandlers: ClaudeBridgeHandlers | undefined;
@@ -125,6 +130,12 @@ describe('ClaudeAgent', () => {
     gitTokenResolver = {
       resolveDefaultToken: vi.fn().mockResolvedValue(null),
     };
+    secretsService = {
+      resolveSecretValue: vi.fn().mockResolvedValue('sk-ant-api03-testkey'),
+    };
+    secretsStore = {
+      isAvailable: vi.fn().mockReturnValue(true),
+    };
 
     agent = new ClaudeAgent(
       mockDeep<DefaultLogger>(),
@@ -135,6 +146,8 @@ describe('ClaudeAgent', () => {
       threadsDao as unknown as ThreadsDao,
       messagesDao as unknown as MessagesDao,
       gitTokenResolver as unknown as GitTokenResolverService,
+      secretsService as unknown as SecretsService,
+      secretsStore as unknown as SecretsStoreService,
     );
     agent.setConfig(AGENT_CONFIG);
     agent.setRuntimeProvider(runtimeProvider);
@@ -874,6 +887,302 @@ describe('ClaudeAgent', () => {
         'user-thread',
       );
       expect(startEnv().GH_TOKEN).toBe('ghs_thread');
+    });
+  });
+
+  /**
+   * BYO Anthropic auth mode (config.authMode === 'byo-anthropic'): the graph
+   * author's own key is resolved host-side and injected directly as
+   * ANTHROPIC_API_KEY with the direct-Anthropic base URL; NO LiteLLM virtual key
+   * is issued or revoked. Every misconfiguration fails CLOSED — there is no
+   * silent fallback to the system upstream. These pin the run()-level wiring the
+   * way the gh/git block pins the github-token wiring.
+   */
+  describe('BYO Anthropic auth mode', () => {
+    const BYO_CONFIG: ClaudeAgentSchemaType = {
+      ...AGENT_CONFIG,
+      authMode: ClaudeAuthMode.ByoAnthropic,
+      apiKeySecretRef: 'my-anthropic-key',
+    };
+    const byoConfig = (
+      over?: Partial<BaseAgentConfigurable>,
+    ): RunnableConfig<BaseAgentConfigurable> => ({
+      configurable: {
+        thread_id: THREAD_ID,
+        graph_id: 'g-1',
+        node_id: 'claude-1',
+        graph_project_id: 'proj-1',
+        ...over,
+      } as BaseAgentConfigurable,
+    });
+    const startEnv = () =>
+      (startSpy.mock.calls[0]![0] as { env: Record<string, string> }).env;
+
+    beforeEach(() => {
+      agent.setConfig(BYO_CONFIG);
+    });
+
+    it('resolves the BYO key, injects it with the direct Anthropic base URL, and issues NO virtual key', async () => {
+      const runPromise = agent.run(
+        THREAD_ID,
+        [new HumanMessage('hi')],
+        undefined,
+        byoConfig(),
+      );
+      await vi.waitFor(() => expect(startSpy).toHaveBeenCalled());
+      releaseTransportStart();
+      await vi.waitFor(() => expect(fakeTransport.send).toHaveBeenCalled());
+      capturedHandlers!.onDone('sess-byo');
+      await runPromise;
+
+      expect(secretsService.resolveSecretValue).toHaveBeenCalledWith(
+        'proj-1',
+        'my-anthropic-key',
+      );
+      // No virtual key is issued in BYO, so none is revoked either.
+      expect(virtualKeys.issueThreadKey).not.toHaveBeenCalled();
+      expect(virtualKeys.revokeThreadKey).not.toHaveBeenCalled();
+      expect(startEnv().ANTHROPIC_API_KEY).toBe('sk-ant-api03-testkey');
+      expect(startEnv().ANTHROPIC_BASE_URL).toBe('https://api.anthropic.com');
+    });
+
+    it('fails closed when no project scope is resolved for the thread', async () => {
+      await expect(
+        agent.run(
+          THREAD_ID,
+          [new HumanMessage('hi')],
+          undefined,
+          byoConfig({ graph_project_id: undefined }),
+        ),
+      ).rejects.toMatchObject({ errorCode: 'CLAUDE_BYO_NO_PROJECT' });
+      expect(secretsService.resolveSecretValue).not.toHaveBeenCalled();
+      expect(startSpy).not.toHaveBeenCalled();
+    });
+
+    it('fails closed when no API-key secret is selected', async () => {
+      agent.setConfig({ ...BYO_CONFIG, apiKeySecretRef: undefined });
+      await expect(
+        agent.run(THREAD_ID, [new HumanMessage('hi')], undefined, byoConfig()),
+      ).rejects.toMatchObject({ errorCode: 'CLAUDE_BYO_NO_SECRET_REF' });
+      expect(secretsService.resolveSecretValue).not.toHaveBeenCalled();
+    });
+
+    it('fails closed when the secrets store is unavailable', async () => {
+      secretsStore.isAvailable.mockReturnValue(false);
+      await expect(
+        agent.run(THREAD_ID, [new HumanMessage('hi')], undefined, byoConfig()),
+      ).rejects.toMatchObject({ errorCode: 'CLAUDE_BYO_STORE_UNAVAILABLE' });
+      expect(secretsService.resolveSecretValue).not.toHaveBeenCalled();
+    });
+
+    it('fails closed when the resolved secret is not an sk-ant- key', async () => {
+      secretsService.resolveSecretValue.mockResolvedValue('sk-proj-openai-ish');
+      await expect(
+        agent.run(THREAD_ID, [new HumanMessage('hi')], undefined, byoConfig()),
+      ).rejects.toMatchObject({ errorCode: 'CLAUDE_BYO_INVALID_KEY' });
+      expect(startSpy).not.toHaveBeenCalled();
+    });
+
+    it('fails closed on a subscription OAuth token (sk-ant-oat…), which shares the sk-ant- prefix', async () => {
+      secretsService.resolveSecretValue.mockResolvedValue(
+        'sk-ant-oat01-subscription-token',
+      );
+      await expect(
+        agent.run(THREAD_ID, [new HumanMessage('hi')], undefined, byoConfig()),
+      ).rejects.toMatchObject({ errorCode: 'CLAUDE_BYO_INVALID_KEY' });
+      expect(startSpy).not.toHaveBeenCalled();
+    });
+
+    /**
+     * Run a BYO turn that may take EITHER path and settle it deterministically:
+     * the transport start resolves immediately (no blocked
+     * releaseTransportStart), and once start fires the bridge is driven to a
+     * clean `done` so a run that wrongly ACCEPTS the key finishes instead of
+     * hanging on a pending stream (an opaque timeout). A run that correctly
+     * REJECTS before start never reaches the bridge — the returned promise
+     * rejects, which the caller asserts on. Returns the settled outcome.
+     */
+    const runByoTurnToSettle = async (): Promise<
+      { rejected: true; error: unknown } | { rejected: false }
+    > => {
+      startSpy.mockImplementation(
+        async (params: Parameters<typeof ClaudeBridgeTransport.start>[0]) => {
+          capturedHandlers = params.handlers;
+          return fakeTransport as unknown as ClaudeBridgeTransport;
+        },
+      );
+      const runPromise = agent.run(
+        THREAD_ID,
+        [new HumanMessage('hi')],
+        undefined,
+        byoConfig(),
+      );
+      let settled = false;
+      const tracked = runPromise.then(
+        () => {
+          settled = true;
+        },
+        () => {
+          settled = true;
+        },
+      );
+      // If start fired, drive the bridge to done so the run finishes; otherwise
+      // the run already rejected pre-start. Poll until the run promise settles.
+      await vi.waitFor(() => {
+        if (!settled && startSpy.mock.calls.length > 0 && capturedHandlers) {
+          capturedHandlers.onDone('sess-byo');
+        }
+        expect(settled).toBe(true);
+      });
+      await tracked;
+      try {
+        await runPromise;
+        return { rejected: false };
+      } catch (error) {
+        return { rejected: true, error };
+      }
+    };
+
+    it('fails closed on a bare "sk-ant-" prefix with no key body (a degenerate/empty secret value)', async () => {
+      // The resolved secret is exactly the prefix and nothing else — it passes
+      // startsWith('sk-ant-') and is NOT an oat- token, so the current
+      // predicate (!startsWith('sk-ant-') || startsWith('sk-ant-oat'))
+      // ACCEPTS it and injects an empty-bodied key as ANTHROPIC_API_KEY. A
+      // prefix-only value carries no credential; the validator must refuse it
+      // up front rather than letting Anthropic 401 opaquely on first call.
+      secretsService.resolveSecretValue.mockResolvedValue('sk-ant-');
+
+      const outcome = await runByoTurnToSettle();
+
+      // A prefix-only value must never start a billable session.
+      expect(startSpy).not.toHaveBeenCalled();
+      expect(outcome).toMatchObject({
+        rejected: true,
+        error: { errorCode: 'CLAUDE_BYO_INVALID_KEY' },
+      });
+    });
+
+    it('fails closed on a key whose only body is whitespace ("sk-ant- ")', async () => {
+      // A secret that is the prefix followed by whitespace passes the prefix
+      // check and is injected verbatim as ANTHROPIC_API_KEY. Whitespace is not
+      // a valid credential body; the validator must reject it rather than hand
+      // the sandbox a blank key that fails opaquely upstream.
+      secretsService.resolveSecretValue.mockResolvedValue('sk-ant- ');
+
+      const outcome = await runByoTurnToSettle();
+
+      expect(startSpy).not.toHaveBeenCalled();
+      expect(outcome).toMatchObject({
+        rejected: true,
+        error: { errorCode: 'CLAUDE_BYO_INVALID_KEY' },
+      });
+    });
+
+    it('does not inject a key carrying a trailing newline into the session env (header-unsafe)', async () => {
+      // Secrets-store values very commonly carry a trailing newline (e.g. a
+      // value piped in with `echo`). ANTHROPIC_API_KEY becomes an HTTP header
+      // value; a trailing "\n" is header-unsafe and makes Anthropic reject the
+      // request. The current predicate trims nothing, so the raw "sk-ant-...\n"
+      // is injected verbatim. The session env must never carry a key with a
+      // trailing newline — either reject the malformed secret up front, or
+      // inject a trimmed value, but not the raw newline-bearing string.
+      secretsService.resolveSecretValue.mockResolvedValue(
+        'sk-ant-api03-realkey\n',
+      );
+
+      await runByoTurnToSettle();
+
+      // If the run rejected (validator refused the malformed value) the session
+      // never started — acceptable. If it started, the injected key must be
+      // clean: a newline in an HTTP header value breaks the upstream request.
+      if (startSpy.mock.calls.length > 0) {
+        expect(startEnv().ANTHROPIC_API_KEY).not.toMatch(/\n/);
+      }
+    });
+
+    it('fails closed (no fallback to the system key) when secret resolution throws', async () => {
+      secretsService.resolveSecretValue.mockRejectedValue(
+        new Error('SECRET_NOT_FOUND'),
+      );
+      await expect(
+        agent.run(THREAD_ID, [new HumanMessage('hi')], undefined, byoConfig()),
+      ).rejects.toThrow('SECRET_NOT_FOUND');
+      // The error came FROM resolution (not a coincidental earlier throw) — the
+      // no-system-fallback intent is only proven if resolution was reached.
+      expect(secretsService.resolveSecretValue).toHaveBeenCalledWith(
+        'proj-1',
+        'my-anthropic-key',
+      );
+      expect(virtualKeys.issueThreadKey).not.toHaveBeenCalled();
+    });
+
+    it('fails closed when the node model is not an Anthropic model', async () => {
+      agent.setConfig({ ...BYO_CONFIG, model: 'gpt-4o' });
+      await expect(
+        agent.run(THREAD_ID, [new HumanMessage('hi')], undefined, byoConfig()),
+      ).rejects.toMatchObject({ errorCode: 'CLAUDE_BYO_INVALID_MODEL' });
+      expect(secretsService.resolveSecretValue).not.toHaveBeenCalled();
+    });
+
+    it('fails closed when the pricing alias resolves to zero rates (would otherwise run unpriced)', async () => {
+      liteLlmClient.getModelInfo.mockResolvedValue({
+        model_info: { input_cost_per_token: 0, output_cost_per_token: 0 },
+      });
+      await expect(
+        agent.run(THREAD_ID, [new HumanMessage('hi')], undefined, byoConfig()),
+      ).rejects.toMatchObject({ errorCode: 'CLAUDE_BYO_UNPRICED_MODEL' });
+      expect(startSpy).not.toHaveBeenCalled();
+    });
+
+    it('short-circuits on prior spend BEFORE resolving the BYO key (cost gate precedes BYO resolution)', async () => {
+      messagesDao.aggregateUsageByNodeId.mockResolvedValue(
+        new Map([['claude-1', usage(1.5)]]),
+      );
+      const output = await agent.run(
+        THREAD_ID,
+        [new HumanMessage('hi')],
+        undefined,
+        byoConfig({ effective_cost_limit_usd: 1 }),
+      );
+      expect(output.messages).toEqual([]);
+      expect(secretsService.resolveSecretValue).not.toHaveBeenCalled();
+      expect(startSpy).not.toHaveBeenCalled();
+      expect(stopEvents()[0]!.data).toMatchObject({ stopReason: 'cost_limit' });
+    });
+
+    it('still enforces the host-side cost-limit in BYO (mid-stream interrupt, no virtual key to revoke)', async () => {
+      messagesDao.aggregateUsageByNodeId.mockResolvedValue(
+        new Map([['claude-1', usage(0.95)]]),
+      );
+      const runPromise = agent.run(
+        THREAD_ID,
+        [new HumanMessage('hi')],
+        undefined,
+        byoConfig({ effective_cost_limit_usd: 1 }),
+      );
+      await vi.waitFor(() => expect(startSpy).toHaveBeenCalled());
+      releaseTransportStart();
+      await vi.waitFor(() => expect(fakeTransport.send).toHaveBeenCalled());
+
+      capturedHandlers!.onSdkMessage({
+        type: 'assistant',
+        session_id: 'sess-byo',
+        parent_tool_use_id: null,
+        message: {
+          id: 'm-1',
+          model: 'claude-sonnet-4-6',
+          content: [{ type: 'text', text: 'expensive thought' }],
+          usage: { input_tokens: 100_000, output_tokens: 75_000 },
+        },
+      });
+      await vi.waitFor(() =>
+        expect(fakeTransport.interrupt).toHaveBeenCalled(),
+      );
+      capturedHandlers!.onAborted('sess-byo');
+      await runPromise;
+
+      expect(stopEvents()[0]!.data.stopReason).toBe('cost_limit');
+      expect(virtualKeys.revokeThreadKey).not.toHaveBeenCalled();
     });
   });
 });
