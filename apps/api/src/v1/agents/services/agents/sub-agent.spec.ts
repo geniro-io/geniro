@@ -21,6 +21,7 @@ import { LitellmService } from '../../../litellm/services/litellm.service';
 import { CostLimitExceededError } from '../../agents.errors';
 import { BaseAgentConfigurable } from '../../agents.types';
 import { filterMessagesForLlm } from '../../agents.utils';
+import { PgCheckpointSaver } from '../pg-checkpoint-saver';
 import { AgentEventType } from './base-agent';
 import { SubAgent, SubAgentSchemaType } from './sub-agent';
 
@@ -126,7 +127,14 @@ describe('SubAgent', () => {
       debug: vi.fn(),
     } as unknown as DefaultLogger;
 
-    subAgent = new SubAgent(mockLitellmService, mockLogger);
+    // PgCheckpointSaver is only used in ask-back (durableThreadId) runs; these
+    // tests exercise the default MemorySaver path, so a stub is sufficient.
+    const mockPgCheckpointSaver = {} as unknown as PgCheckpointSaver;
+    subAgent = new SubAgent(
+      mockLitellmService,
+      mockLogger,
+      mockPgCheckpointSaver,
+    );
     subAgent.setConfig(defaultAgentConfig);
   });
 

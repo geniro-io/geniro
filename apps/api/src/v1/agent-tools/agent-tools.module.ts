@@ -34,6 +34,8 @@ import { KnowledgeSearchChunksTool } from './tools/common/knowledge/knowledge-se
 import { KnowledgeSearchDocsTool } from './tools/common/knowledge/knowledge-search-docs.tool';
 import { KnowledgeToolGroup } from './tools/common/knowledge/knowledge-tool-group';
 import { ShellTool } from './tools/common/shell.tool';
+import { AnswerCalleeTool } from './tools/common/subagents/answer-callee.tool';
+import { AskCallerTool } from './tools/common/subagents/ask-caller.tool';
 import { SubagentsListTool } from './tools/common/subagents/subagents-list.tool';
 import { SubagentsRunTaskTool } from './tools/common/subagents/subagents-run-task.tool';
 import { SubagentsToolGroup } from './tools/common/subagents/subagents-tool-group';
@@ -93,6 +95,8 @@ import { WaitForTool } from './tools/core/wait-for.tool';
     FilesToolGroup,
     SubagentsListTool,
     SubagentsRunTaskTool,
+    AskCallerTool,
+    AnswerCalleeTool,
     SubagentsToolGroup,
     ThreadStorePutTool,
     ThreadStoreAppendTool,
@@ -135,6 +139,8 @@ import { WaitForTool } from './tools/core/wait-for.tool';
     FilesToolGroup,
     SubagentsListTool,
     SubagentsRunTaskTool,
+    AskCallerTool,
+    AnswerCalleeTool,
     SubagentsToolGroup,
     ThreadStorePutTool,
     ThreadStoreAppendTool,

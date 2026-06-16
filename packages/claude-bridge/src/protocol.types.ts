@@ -156,12 +156,18 @@ export type BridgeCommand =
   /**
    * Resolves the pending `question_request` with the same id. `answers` align
    * by index with the request's `questions`; `deny: true` (or missing answers)
-   * makes the bridge deny the AskUserQuestion call gracefully. The host always
-   * ends the turn via `interrupt` instead of answering live (NeedMoreInfo
-   * resumes the session with the answer as the next prompt); the live-answer
-   * path is exercised end-to-end by the SDK and reserved for a future in-session
-   * answering mode, which additionally needs a synchronous inter-agent ask-back
-   * channel host-side before any code can send this command.
+   * makes the bridge deny the AskUserQuestion call gracefully.
+   *
+   * The live-answer path (resolving in place via `question_response` instead of
+   * `interrupt`, so the SAME session continues) is validated end-to-end by the
+   * M4 step-1 spike (`bridge.spec.ts`). M4 introduced the inter-agent ask-back
+   * channel that this path's "future in-session answering mode" depended on —
+   * but that channel currently ships only for the SUBAGENT callee channel
+   * (host-side LangGraph suspend/resume, no bridge involvement). For the Claude
+   * PEER channel, the host still ends the turn via `interrupt` and resumes the
+   * session with the answer as the next prompt (NeedMoreInfo + `sessionId`
+   * resume); driving `question_response` from the host for a live Claude peer
+   * answer is the peer-channel follow-up.
    */
   | {
       type: 'question_response';
