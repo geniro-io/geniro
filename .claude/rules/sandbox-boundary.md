@@ -15,3 +15,14 @@ The wire types in `packages/claude-bridge/src/protocol.types.ts` are compile-tim
 ## Logging
 
 Never log raw frames or sandbox-derived URLs/strings verbatim — they can carry user message content or embedded credentials. Redact before logging (exemplar: `redactGitUrl` in `claude-session.utils.ts`); truncate frame echoes (`slice(0, 200)`).
+
+## Injecting credentials into a session
+
+The host↔sandbox boundary has an INPUT side too. A credential resolved from the secrets store (or any external store) and injected into a session env var or HTTP-header surface (e.g. `ANTHROPIC_API_KEY`, `GH_TOKEN`) must be validated BEFORE injection, not left to fail opaquely at first use.
+
+- **Trim first.** Store values commonly carry surrounding whitespace or a trailing newline (copy-paste / `echo`-piped). An env var consumed as an HTTP header value is corrupted by a stray newline — inject the trimmed value.
+- **Require a non-empty body and reject embedded whitespace.** A degenerate prefix-only value carries no credential; a value with an internal space/newline is header-unsafe.
+- **A shared prefix is not a sufficient discriminator.** When two credential classes share a prefix, exclude the disallowed class EXPLICITLY (and case-insensitively). Example: Anthropic Console API keys (`sk-ant-api…`) and subscription OAuth tokens (`sk-ant-oat…`) both start `sk-ant-`, so a bare `sk-ant-` check does not block the OAuth tokens it intends to.
+- **Fail closed, naming only the secret.** On a validation failure throw a clear error that references the secret NAME, never its value (the output-side Logging rule above still applies to every sink the value could reach).
+
+Exemplar: `resolveByoApiKey` in `apps/api/src/v1/agents/services/agents/claude-agent.ts`.
