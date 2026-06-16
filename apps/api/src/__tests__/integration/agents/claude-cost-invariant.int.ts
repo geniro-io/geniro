@@ -411,4 +411,122 @@ describe('Claude Agent cost invariant (checkpoint-less threads)', () => {
       }
     },
   );
+
+  it(
+    'folds a forwarded communication_exec peer call into the caller-node tool usage AND the cross-turn cost seed (M4 Claude peer)',
+    { timeout: 30000 },
+    async () => {
+      // Shared thread: assert on the DELTA this call adds to the seed.
+      const seedBefore =
+        await messagesDao.aggregateToolUsageTotalPrice(internalThreadId);
+
+      const events: AgentEventType[] = [];
+      const mapper = new ClaudeStreamMapper({
+        threadId: externalThreadId,
+        config: {
+          configurable: {
+            thread_id: externalThreadId,
+            graph_id: graphId,
+            node_id: NODE_ID,
+            run_id: 'run-int-3',
+          },
+        },
+        model: 'claude-sonnet-4-6',
+        emit: (event) => events.push(event),
+        calculatePriceUsd: () => PRICE_PER_CALL,
+      });
+
+      // A Claude caller invokes a connected peer via the forwarded
+      // communication_exec tool; the dispatcher reports the peer's run-scoped
+      // spend (calleeUsage) as this tool's own usage.
+      const commToolUse: SdkAssistantMessage = {
+        ...assistantMessage('m20', 'asking the peer'),
+        message: {
+          ...assistantMessage('m20', 'asking the peer').message,
+          content: [
+            { type: 'text', text: 'asking the peer' },
+            {
+              type: 'tool_use',
+              id: 'tu-comm-1',
+              name: 'mcp__geniro__communication_exec',
+              input: {
+                agent: 'Config Specialist',
+                message: 'Use auth.config.ts.',
+                purpose: 'answer the peer',
+              },
+            },
+          ],
+        },
+      };
+      const peerUsage: RequestTokenUsage = {
+        inputTokens: 120,
+        cachedInputTokens: 0,
+        outputTokens: 30,
+        totalTokens: 150,
+        totalPrice: 0.012,
+      };
+      const commToolResult: SdkUserMessage = {
+        type: 'user',
+        session_id: 'sess-int-1',
+        parent_tool_use_id: null,
+        message: {
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: 'tu-comm-1',
+              content: 'Done — modified auth.config.ts.',
+            },
+          ],
+        },
+      };
+
+      mapper.onSdkMessage(commToolUse);
+      mapper.recordToolUsage('communication_exec', peerUsage);
+      mapper.onSdkMessage(commToolResult);
+      mapper.onSdkMessage(assistantMessage('m21', 'peer finished'));
+      mapper.flush();
+
+      for (const event of events) {
+        if (event.type !== 'message') {
+          continue;
+        }
+        await messageHandler.handle({
+          type: NotificationEvent.AgentMessage,
+          graphId,
+          nodeId: NODE_ID,
+          threadId: externalThreadId,
+          parentThreadId: externalThreadId,
+          data: { messages: event.data.messages },
+        });
+      }
+
+      // Writer side: the peer's spend lands as toolTokenUsage on the
+      // communication_exec result row, attributed to the CALLER node (no
+      // ::sub:: surrogate), with no request usage on the tool message.
+      const rows = await messagesDao.getAll(
+        { threadId: internalThreadId },
+        { orderBy: { createdAt: 'ASC' } },
+      );
+      const commRow = rows.find(
+        (row) =>
+          row.role === MessageRole.Tool && row.name === 'communication_exec',
+      );
+      expect(commRow).toBeDefined();
+      expect(commRow!.nodeId).toBe(NODE_ID);
+      expect(commRow!.toolTokenUsage).toMatchObject({
+        inputTokens: 120,
+        outputTokens: 30,
+        totalTokens: 150,
+        totalPrice: 0.012,
+      });
+      expect(commRow!.requestTokenUsage ?? null).toBeNull();
+
+      // Cross-turn seed: aggregateToolUsageTotalPrice now picks up this peer
+      // spend (the term aggregatePriorSpendUsd adds), so a prior turn's peer
+      // call is not forgotten by the next turn's cost-limit gate.
+      const seedAfter =
+        await messagesDao.aggregateToolUsageTotalPrice(internalThreadId);
+      expect(seedAfter - seedBefore).toBeCloseTo(0.012, 10);
+    },
+  );
 });

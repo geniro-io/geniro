@@ -64,6 +64,7 @@ describe('ClaudeAgent', () => {
   };
   let messagesDao: {
     aggregateUsageByNodeId: ReturnType<typeof vi.fn>;
+    aggregateToolUsageTotalPrice: ReturnType<typeof vi.fn>;
     getAll: ReturnType<typeof vi.fn>;
   };
   let runtimeProvider: RuntimeThreadProvider;
@@ -107,6 +108,7 @@ describe('ClaudeAgent', () => {
     };
     messagesDao = {
       aggregateUsageByNodeId: vi.fn().mockResolvedValue(new Map()),
+      aggregateToolUsageTotalPrice: vi.fn().mockResolvedValue(0),
       getAll: vi.fn().mockResolvedValue([]),
     };
     runtimeProvider = {

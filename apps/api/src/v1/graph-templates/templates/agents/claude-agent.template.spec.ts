@@ -221,20 +221,27 @@ describe('ClaudeAgentTemplate', () => {
       );
     });
 
-    it('forwards only forwardable wired tools, resetting tools first, dropping excluded ones', async () => {
+    it('forwards forwardable wired tools (incl. communication_exec for peer calls), resetting tools first, dropping context-bound ones', async () => {
       const forwardableTool = {
         name: 'knowledge_search_docs',
       } as unknown as BuiltAgentTool;
-      // communication_exec is agent-context-bound — never forwarded into the SDK.
-      const excludedTool = {
+      // communication_exec IS forwarded so a Claude agent wired to a
+      // communication-tool node can call its connected peers (no SDK-native
+      // equivalent for peer communication).
+      const commTool = {
         name: 'communication_exec',
+      } as unknown as BuiltAgentTool;
+      // subagents_run_task is agent-context-bound — the SDK has its own native
+      // subagent mechanism, so ours is never forwarded.
+      const excludedTool = {
+        name: 'subagents_run_task',
       } as unknown as BuiltAgentTool;
 
       const toolNode = buildCompiledNode<ToolNodeOutput>({
         id: 'tool-node',
         type: NodeKind.Tool,
         template: 'tools',
-        instance: { tools: [forwardableTool, excludedTool] },
+        instance: { tools: [forwardableTool, commTool, excludedTool] },
       });
 
       vi.mocked(mockGraphRegistry.getNode).mockImplementation((_gid, id) => {
@@ -253,8 +260,9 @@ describe('ClaudeAgentTemplate', () => {
       await handle.configure(init, instance);
 
       expect(mockClaudeAgent.resetTools).toHaveBeenCalled();
-      expect(mockClaudeAgent.addTool).toHaveBeenCalledTimes(1);
+      expect(mockClaudeAgent.addTool).toHaveBeenCalledTimes(2);
       expect(mockClaudeAgent.addTool).toHaveBeenCalledWith(forwardableTool);
+      expect(mockClaudeAgent.addTool).toHaveBeenCalledWith(commTool);
       expect(mockClaudeAgent.addTool).not.toHaveBeenCalledWith(excludedTool);
 
       // resetTools must run before any addTool, or it would wipe forwarded tools.

@@ -316,12 +316,15 @@ describe('ClaudeToolDispatcher', () => {
 
   it('refuses agent-context-bound tools even if they were somehow wired (defense in depth)', async () => {
     const invoke = vi.fn().mockResolvedValue({ output: 'never' });
-    const tools = new Map([['communication_exec', buildTool(invoke)]]);
+    // subagents_run_task is context-bound (the SDK has its own subagents) — it
+    // must never dispatch even if it slipped into the tool map. (communication_exec
+    // is intentionally NOT here: it IS forwardable so Claude peers can be called.)
+    const tools = new Map([['subagents_run_task', buildTool(invoke)]]);
     const { dispatcher, sent } = buildDispatcher({ tools });
 
     dispatcher.dispatch({
       id: 'tool-1',
-      toolName: 'communication_exec',
+      toolName: 'subagents_run_task',
       args: {},
     });
     await flush();
@@ -332,7 +335,7 @@ describe('ClaudeToolDispatcher', () => {
         type: 'tool_call_response',
         id: 'tool-1',
         error:
-          "Tool 'communication_exec' cannot be invoked from a Claude session",
+          "Tool 'subagents_run_task' cannot be invoked from a Claude session",
       },
     ]);
   });
