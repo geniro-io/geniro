@@ -223,7 +223,7 @@ export const GraphNodeCard: React.FC<GraphNodeCardProps> = ({
               <span
                 key={key}
                 className="text-[11px] bg-muted text-muted-foreground px-2 py-0.5 rounded">
-                {title}: {value}
+                {value === '' ? title : `${title}: ${value}`}
               </span>
             ))}
           </div>
@@ -397,16 +397,29 @@ export const CustomNode = React.memo(
       if (!nodeData.templateSchema?.properties) {
         return [] as { key: string; value: unknown; title: string }[];
       }
-      return Object.entries(nodeData.templateSchema.properties)
-        .filter(([, prop]) => prop['x-ui:show-on-node'] === true)
-        .map(([key, prop]) => ({
-          key,
-          value: nodeData.config[key] ?? prop.const ?? prop.default ?? '',
-          title: prop['x-ui:label'] ?? prop.title ?? key,
-        }))
-        .filter(
-          (x) => x.value !== undefined && x.value !== null && x.value !== '',
-        );
+      return (
+        Object.entries(nodeData.templateSchema.properties)
+          .filter(([, prop]) => prop['x-ui:show-on-node'] === true)
+          .map(([key, prop]) => ({
+            key,
+            value: nodeData.config[key] ?? prop.const ?? prop.default ?? '',
+            title: prop['x-ui:label'] ?? prop.title ?? key,
+          }))
+          // Drop unset/empty fields and boolean "off" toggles. A boolean "on"
+          // toggle (e.g. 1M context) survives and renders as a bare flag chip
+          // (title only) via the empty-value branch below.
+          .filter(
+            (x) =>
+              x.value !== undefined &&
+              x.value !== null &&
+              x.value !== '' &&
+              x.value !== false,
+          )
+          .map((x) => ({
+            ...x,
+            value: typeof x.value === 'boolean' ? '' : x.value,
+          }))
+      );
     }, [nodeData.templateSchema?.properties, nodeData.config]);
 
     const validationErrors = useMemo(

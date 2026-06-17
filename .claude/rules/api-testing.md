@@ -73,6 +73,7 @@ const mockCtx = new AppContextStorage(
 ### Rules
 
 - Test behavior and business logic, not that mocks were called.
+- An exclusion / negative test (asserting a value is NOT in a downstream sink — an injected env, a resolved set, an output payload) must make the excluded value **resolvable upstream** so the sink assertion is independently load-bearing. If the upstream mock returns nothing for the excluded key, an `=== undefined` (or `value !== undefined`) filter at the sink drops it anyway, so the assertion passes vacuously even under the exact regression it guards against — only an incidental call-count/args assertion would catch the leak. Resolve the excluded key to a real value, then assert it is absent at the sink.
 - Prefer updating existing spec files over creating new ones.
 - Mock external dependencies; test real logic.
 - Use `vi.fn()` and `vi.mocked()` from vitest for simple cases (mocking a few methods).

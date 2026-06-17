@@ -3466,6 +3466,9 @@ function GraphNodeSection() {
                   value: SB_NODE.reasoning,
                   title: 'Reasoning',
                 },
+                // Empty value -> bare flag chip (renders the title only), used
+                // for boolean "on" toggles such as the Claude node's 1M context.
+                { key: 'context', value: '', title: '1M context' },
               ]}
               description={SB_NODE.description}
               selected={selected}

@@ -147,12 +147,11 @@ export class LiteLlmAdminService {
             `Failed to fetch providers: ${response.status} ${response.statusText}`,
           );
         }
-        const raw = (await response.json()) as RawProviderField[];
-        const providers: LiteLlmProviderEntry[] = raw.map((p) => ({
-          name: p.litellm_provider,
-          label: p.provider_display_name,
-          modelHint: p.default_model_placeholder ?? '',
-        }));
+        const raw = (await response.json()) as unknown;
+        if (!Array.isArray(raw)) {
+          throw new Error('Provider list response was not a JSON array');
+        }
+        const providers = this.mapProviders(raw as RawProviderField[]);
         this.providersCache = {
           expiresAt: Date.now() + PROVIDERS_TTL_MS,
           data: providers,
@@ -162,7 +161,13 @@ export class LiteLlmAdminService {
         this.logger.error(
           `Failed to fetch LiteLLM providers: ${err instanceof Error ? err.message : String(err)}`,
         );
-        return this.providersCache?.data ?? [];
+        // Serve a warm cache through a transient fetch failure. With no cache,
+        // fail loud so the endpoint surfaces an error rather than a silent
+        // empty list. Not cached on this path, so the next call retries live.
+        if (this.providersCache) {
+          return this.providersCache.data;
+        }
+        throw err;
       }
     })().finally(() => {
       this.providersInFlight = null;
@@ -170,6 +175,26 @@ export class LiteLlmAdminService {
 
     this.providersInFlight = promise;
     return promise;
+  }
+
+  // Upstream provider_create_fields.json carries multiple entries that collapse
+  // to the same litellm_provider id (e.g. `openai` chat + its OpenAI-Compatible
+  // variant). Dedupe by id so consumers never receive colliding keys.
+  private mapProviders(raw: RawProviderField[]): LiteLlmProviderEntry[] {
+    const seen = new Set<string>();
+    const providers: LiteLlmProviderEntry[] = [];
+    for (const p of raw) {
+      if (seen.has(p.litellm_provider)) {
+        continue;
+      }
+      seen.add(p.litellm_provider);
+      providers.push({
+        name: p.litellm_provider,
+        label: p.provider_display_name,
+        modelHint: p.default_model_placeholder ?? '',
+      });
+    }
+    return providers;
   }
 
   async listCredentials() {

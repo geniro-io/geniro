@@ -43,6 +43,10 @@ type UiSchemaExtensions = {
   'x-ui:litellm-models-list-select'?: boolean;
   'x-ui:github-repos-select'?: boolean;
   'x-ui:secret-select'?: boolean;
+  // Host-only secret marker (e.g. Claude Agent BYO key): rendered with the same
+  // secret picker, but never collected into the generic sandbox secretEnv path
+  // by the backend graph compiler.
+  'x-ui:secret-select-host'?: boolean;
   'x-ui:secret-multi-select'?: boolean;
   'x-ui:readonly'?: boolean;
 };

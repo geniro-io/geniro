@@ -15,3 +15,28 @@ The wire types in `packages/claude-bridge/src/protocol.types.ts` are compile-tim
 ## Logging
 
 Never log raw frames or sandbox-derived URLs/strings verbatim — they can carry user message content or embedded credentials. Redact before logging (exemplar: `redactGitUrl` in `claude-session.utils.ts`); truncate frame echoes (`slice(0, 200)`).
+
+## Injecting credentials into a session
+
+The host↔sandbox boundary has an INPUT side too. A credential resolved from the secrets store (or any external store) and injected into a session env var or HTTP-header surface (e.g. `ANTHROPIC_API_KEY`, `GH_TOKEN`) must be validated BEFORE injection, not left to fail opaquely at first use.
+
+- **Trim first.** Store values commonly carry surrounding whitespace or a trailing newline (copy-paste / `echo`-piped). An env var consumed as an HTTP header value is corrupted by a stray newline — inject the trimmed value.
+- **Require a non-empty body and reject embedded whitespace.** A degenerate prefix-only value carries no credential; a value with an internal space/newline is header-unsafe.
+- **A shared prefix is not a sufficient discriminator.** When two credential classes share a prefix, exclude the disallowed class EXPLICITLY (and case-insensitively). Example: Anthropic Console API keys (`sk-ant-api…`) and subscription OAuth tokens (`sk-ant-oat…`) both start `sk-ant-`, so a bare `sk-ant-` check does not block the OAuth tokens it intends to.
+- **Fail closed, naming only the secret.** On a validation failure throw a clear error that references the secret NAME, never its value (the output-side Logging rule above still applies to every sink the value could reach).
+
+Exemplar: `resolveByoApiKey` in `apps/api/src/v1/agents/services/agents/claude-agent.ts`.
+
+## Host-only secret markers (template schema)
+
+A graph-template field can carry one of two secret-picker markers, and they sit on OPPOSITE sides of the trust boundary even though they render the same picker widget:
+
+- `x-ui:secret-select` / `x-ui:secret-multi-select` — a SANDBOX secret. `graph-compiler.ts` `collectSecretNames` resolves it and injects the value into the connected runtime's generic `secretEnv` (`addEnvVariables`). It is meant to reach the sandbox.
+- `x-ui:secret-select-host` — a HOST-ONLY credential (e.g. the Claude Agent BYO Anthropic key). It is resolved host-side into the node's own session and must NEVER reach `collectSecretNames` / the generic `secretEnv`. Reusing the sandbox marker for a host-only credential would inject it into the runtime env — a trust-boundary regression the BYO spec rates HIGH.
+
+Two invariants, enforced on opposite layers:
+
+1. **Backend exclusion.** `collectSecretNames` matches ONLY `x-ui:secret-select` / `-multi-select`; a host-only marker is silently skipped. Adding a new host-only marker, or broadening the collection predicate (e.g. to `x-ui:secret-select*`), must keep the host marker out. Pin it with a graph-compiler test in which the excluded key RESOLVES to a non-undefined value, so the env-injection assertion (not just the resolver-call args) goes red on a leak — an unresolved key is filtered at injection and the test passes vacuously (see the exclusion-test rule in `.claude/rules/api-testing.md`).
+2. **Client-side inclusion.** `GraphValidationService.checkSecretReferences` runs the "secret not found" pre-flight on the host-only marker TOO, so a missing/renamed ref is caught in the editor instead of failing opaquely host-side at run time.
+
+Exemplars: `collectSecretNames` in `apps/api/src/v1/graphs/services/graph-compiler.ts` (+ the "excludes the host-only secret marker" test in `graph-compiler.spec.ts`); `checkSecretReferences` in `apps/web/src/services/GraphValidationService.ts` (+ `GraphValidationService.spec.ts`).

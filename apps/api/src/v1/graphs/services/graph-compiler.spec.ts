@@ -455,6 +455,80 @@ describe('GraphCompiler', () => {
       });
     });
 
+    it('excludes the host-only secret marker (x-ui:secret-select-host) from collection while still collecting x-ui:secret-select siblings', async () => {
+      const mockAddEnvVariables = vi.fn();
+      const mockRuntimeInstance = Object.create(
+        RuntimeThreadProvider.prototype,
+      ) as RuntimeThreadProvider;
+      mockRuntimeInstance.addEnvVariables = mockAddEnvVariables;
+
+      const runtimeTemplate = createMockTemplate(NodeKind.Runtime);
+      // A claude-agent-style node carries BOTH a generic sandbox secret
+      // (x-ui:secret-select, injected into the runtime env) and a host-only
+      // BYO key reference (x-ui:secret-select-host). The host-only ref is
+      // resolved host-side only and must NEVER reach the generic secretEnv path.
+      const toolTemplate = Object.assign(createMockTemplate(NodeKind.Tool), {
+        schema: z.object({
+          apiKey: z.string().meta({ 'x-ui:secret-select': true }),
+          apiKeySecretRef: z.string().meta({ 'x-ui:secret-select-host': true }),
+        }),
+      });
+
+      const runtimeHandle = createMockHandle(mockRuntimeInstance);
+      const toolHandle = createMockHandle({ id: 'tool' });
+      vi.mocked(runtimeTemplate.create).mockResolvedValue(runtimeHandle as any);
+      vi.mocked(toolTemplate.create).mockResolvedValue(toolHandle as any);
+
+      vi.mocked(templateRegistry.getTemplate).mockImplementation((id) => {
+        if (id === 'runtime') {
+          return runtimeTemplate;
+        }
+        if (id === 'tool') {
+          return toolTemplate;
+        }
+        return undefined;
+      });
+
+      const schema: GraphSchemaType = {
+        nodes: [
+          { id: 'runtime-1', template: 'runtime', config: {} },
+          {
+            id: 'tool-1',
+            template: 'tool',
+            config: { apiKey: 'MY_API_KEY', apiKeySecretRef: 'HOST_ONLY_KEY' },
+          },
+        ],
+        edges: [{ from: 'tool-1', to: 'runtime-1' }],
+      };
+
+      // Resolve BOTH names so the env-injection assertion is independently
+      // load-bearing: if collectSecretNames ever collected the host-only ref,
+      // it would resolve to a value and surface in the injected env (failing the
+      // exact-match below) instead of being silently dropped as undefined.
+      secretsService.batchResolveSecretValues.mockResolvedValue(
+        new Map([
+          ['MY_API_KEY', 'resolved-secret'],
+          ['HOST_ONLY_KEY', 'host-secret'],
+        ]),
+      );
+
+      const graph = createMockGraphEntity(schema);
+      await compiler.compile(graph);
+
+      // The host-only ref is never handed to the secret resolver...
+      expect(secretsService.batchResolveSecretValues).toHaveBeenCalledTimes(1);
+      const [, requestedNames] = secretsService.batchResolveSecretValues.mock
+        .calls[0] as [string, string[]];
+      expect(requestedNames).toContain('MY_API_KEY');
+      expect(requestedNames).not.toContain('HOST_ONLY_KEY');
+
+      // ...and only the generic secret is injected into the sandbox env
+      // (exact match — the host-only ref is absent).
+      expect(mockAddEnvVariables).toHaveBeenCalledWith({
+        MY_API_KEY: 'resolved-secret',
+      });
+    });
+
     it('should skip secret resolution when template has no schema', async () => {
       const mockAddEnvVariables = vi.fn();
       const mockRuntimeInstance = Object.create(

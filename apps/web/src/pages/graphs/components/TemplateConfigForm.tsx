@@ -205,6 +205,14 @@ const buildUiSchema = (schema: RJSFSchema): UiSchemaShape => {
       fieldUi['ui:field'] = 'secretSelect';
     }
 
+    // Host-only secret marker (e.g. Claude Agent BYO key): same picker widget as
+    // x-ui:secret-select, but the backend graph compiler deliberately does NOT
+    // collect it into the generic sandbox secretEnv path — it is resolved
+    // host-side and delivered through a dedicated channel.
+    if (prop['x-ui:secret-select-host'] === true) {
+      fieldUi['ui:field'] = 'secretSelect';
+    }
+
     if (prop['x-ui:secret-multi-select'] === true) {
       fieldUi['ui:field'] = 'secretMultiSelect';
     }

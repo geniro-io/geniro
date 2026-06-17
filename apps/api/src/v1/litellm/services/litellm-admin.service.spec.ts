@@ -304,14 +304,82 @@ describe('LiteLlmAdminService', () => {
       fetchSpy.mockRestore();
     });
 
-    it('returns empty array and logs error on fetch failure', async () => {
+    it('dedupes providers that share the same litellm_provider id', async () => {
+      const mockProviders = [
+        {
+          litellm_provider: 'openai',
+          provider_display_name: 'OpenAI',
+          default_model_placeholder: 'gpt-4o',
+        },
+        {
+          litellm_provider: 'openai',
+          provider_display_name: 'OpenAI-Compatible Endpoints',
+        },
+        {
+          litellm_provider: 'anthropic',
+          provider_display_name: 'Anthropic',
+          default_model_placeholder: 'claude-3-opus',
+        },
+      ];
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve(mockProviders),
+      } as Response);
+
+      const result = await service.listProviders();
+
+      const names = result.providers.map((p) => p.name);
+      expect(names).toEqual(['openai', 'anthropic']);
+      expect(new Set(names).size).toBe(names.length);
+      expect(result.providers[0]).toEqual({
+        name: 'openai',
+        label: 'OpenAI',
+        modelHint: 'gpt-4o',
+      });
+
+      fetchSpy.mockRestore();
+    });
+
+    it('rethrows and logs on fetch failure when there is no cache', async () => {
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockRejectedValue(new Error('Network error'));
+
+      await expect(service.listProviders()).rejects.toThrow('Network error');
+      expect(logger.error as ReturnType<typeof vi.fn>).toHaveBeenCalled();
+
+      fetchSpy.mockRestore();
+    });
+
+    it('rethrows and logs when the response is not a JSON array (no cache)', async () => {
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ not: 'an-array' }),
+      } as Response);
+
+      await expect(service.listProviders()).rejects.toThrow(
+        'Provider list response was not a JSON array',
+      );
+      expect(logger.error as ReturnType<typeof vi.fn>).toHaveBeenCalled();
+
+      fetchSpy.mockRestore();
+    });
+
+    it('serves a stale cache (does not throw) when a refresh fails', async () => {
+      const cached = [{ name: 'cached', label: 'Cached', modelHint: 'm' }];
+      (
+        service as unknown as {
+          providersCache: { expiresAt: number; data: typeof cached };
+        }
+      ).providersCache = { expiresAt: Date.now() - 1_000, data: cached };
+
       const fetchSpy = vi
         .spyOn(globalThis, 'fetch')
         .mockRejectedValue(new Error('Network error'));
 
       const result = await service.listProviders();
 
-      expect(result.providers).toEqual([]);
+      expect(result.providers).toEqual(cached);
       expect(logger.error as ReturnType<typeof vi.fn>).toHaveBeenCalled();
 
       fetchSpy.mockRestore();

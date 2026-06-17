@@ -10,6 +10,7 @@ import {
   CLAUDE_AGENT_CONTEXT_BOUND_TOOLS,
   CLAUDE_NATIVE_OVERLAP_TOOL_PREFIXES,
   CLAUDE_NATIVE_OVERLAP_TOOLS,
+  type ClaudeModelOverrides,
 } from './claude-session.types';
 
 /**
@@ -121,8 +122,14 @@ export function buildBridgeToolDefinitions(
 
 /**
  * Environment injected into the bridge exec session (NOT baked into the
- * container) so the per-thread virtual key never outlives the session and the
- * LiteLLM master key never reaches the sandbox.
+ * container) so the session key never outlives the session and the LiteLLM
+ * master key never reaches the sandbox.
+ *
+ * `apiKey` fills `ANTHROPIC_API_KEY` for the session: the scoped per-thread
+ * LiteLLM virtual key in system mode, OR the graph author's own Anthropic key
+ * in BYO mode. In BYO mode the caller also passes `anthropicBaseUrlOverride`
+ * (`https://api.anthropic.com`) so the session talks to Anthropic directly,
+ * bypassing LiteLLM and its sandbox-URL derivation/fail-close.
  *
  * `githubToken` (when the thread owner has a linked GitHub App installation)
  * authenticates Claude's native `gh` CLI and git over HTTPS — the latter via
@@ -131,16 +138,26 @@ export function buildBridgeToolDefinitions(
  * rather than half-wired with an empty credential.
  */
 export function buildClaudeSessionEnv(
-  virtualKey: string,
+  apiKey: string,
   githubToken?: string | null,
-  options?: { isRemoteRuntime?: boolean },
+  options?: {
+    isRemoteRuntime?: boolean;
+    anthropicBaseUrlOverride?: string;
+    modelOverrides?: ClaudeModelOverrides;
+    effort?: string;
+  },
 ): Record<string, string> {
-  // A remote runtime (Daytona, on a separate host) cannot reach the cluster-
-  // internal LiteLLM URL, so its session needs the public one. Fail closed with
-  // a precise error rather than handing the sandbox an unreachable URL.
-  const baseUrl = options?.isRemoteRuntime
-    ? environment.litellmPublicUrl
-    : environment.litellmSandboxUrl;
+  // BYO mode supplies the upstream base URL directly (direct Anthropic), so the
+  // LiteLLM-URL derivation + fail-close below is skipped. Otherwise a remote
+  // runtime (Daytona, on a separate host) cannot reach the cluster-internal
+  // LiteLLM URL and needs the public one; an in-cluster runtime uses the
+  // sandbox URL. Fail closed with a precise error rather than handing the
+  // sandbox an unreachable URL.
+  const baseUrl =
+    options?.anthropicBaseUrlOverride ??
+    (options?.isRemoteRuntime
+      ? environment.litellmPublicUrl
+      : environment.litellmSandboxUrl);
   if (!baseUrl) {
     throw options?.isRemoteRuntime
       ? new InternalException(
@@ -155,10 +172,25 @@ export function buildClaudeSessionEnv(
 
   return {
     ANTHROPIC_BASE_URL: baseUrl,
-    ANTHROPIC_API_KEY: virtualKey,
-    // Background/utility calls (e.g. title generation) route through a cheap
-    // registered alias instead of the default haiku snapshot id.
-    ANTHROPIC_SMALL_FAST_MODEL: SMALL_FAST_MODEL_ALIAS,
+    ANTHROPIC_API_KEY: apiKey,
+    // Alias remapping: the SDK resolves the opus/sonnet/haiku/fable tiers itself
+    // and sends the resulting string to the upstream, which only honors model
+    // names it knows — so map each alias onto a configured model. The haiku/
+    // background var is always present (override or the default alias); the rest
+    // only when explicitly overridden. ANTHROPIC_DEFAULT_HAIKU supersedes the
+    // deprecated ANTHROPIC_SMALL_FAST_MODEL.
+    ANTHROPIC_DEFAULT_HAIKU_MODEL: resolveHaikuModel(options?.modelOverrides),
+    ...(options?.modelOverrides?.sonnet
+      ? { ANTHROPIC_DEFAULT_SONNET_MODEL: options.modelOverrides.sonnet }
+      : {}),
+    ...(options?.modelOverrides?.opus
+      ? { ANTHROPIC_DEFAULT_OPUS_MODEL: options.modelOverrides.opus }
+      : {}),
+    ...(options?.modelOverrides?.fable
+      ? { ANTHROPIC_DEFAULT_FABLE_MODEL: options.modelOverrides.fable }
+      : {}),
+    // Reasoning-effort level for the session; the CLI default applies when unset.
+    ...(options?.effort ? { CLAUDE_CODE_EFFORT_LEVEL: options.effort } : {}),
     // The sandbox container IS the permission boundary; Claude Code requires
     // this acknowledgment to run with bypassed permissions as root.
     IS_SANDBOX: '1',
@@ -175,4 +207,36 @@ export function buildClaudeSessionEnv(
     // nothing (no GH_TOKEN key) rather than an empty-string credential.
     ...(githubToken ? { GH_TOKEN: githubToken } : {}),
   };
+}
+
+/**
+ * The haiku/background model always resolves to a registered alias — the
+ * `haiku` override when set, else the small-fast default. Background/utility
+ * calls always fire, so `ANTHROPIC_DEFAULT_HAIKU_MODEL` is always emitted.
+ */
+export function resolveHaikuModel(overrides?: ClaudeModelOverrides): string {
+  return overrides?.haiku ?? SMALL_FAST_MODEL_ALIAS;
+}
+
+/**
+ * Models the per-thread virtual key must be authorized to bill: the node's main
+ * model, the always-present haiku/background model, plus any explicitly set
+ * alias override (each a registered LiteLLM model name). BYO mode issues no
+ * virtual key, so this list is unused there.
+ */
+export function collectClaudeKeyModels(
+  mainModel: string,
+  overrides?: ClaudeModelOverrides,
+): string[] {
+  return Array.from(
+    new Set(
+      [
+        mainModel,
+        resolveHaikuModel(overrides),
+        overrides?.sonnet,
+        overrides?.opus,
+        overrides?.fable,
+      ].filter((m): m is string => typeof m === 'string' && m.length > 0),
+    ),
+  );
 }

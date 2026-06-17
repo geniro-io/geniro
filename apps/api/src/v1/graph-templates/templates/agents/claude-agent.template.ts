@@ -5,6 +5,7 @@ import { z } from 'zod';
 
 import type { BuiltAgentTool } from '../../../agent-tools/tools/base-tool';
 import { ClaudeAgent } from '../../../agents/services/agents/claude-agent';
+import { ClaudeAuthMode } from '../../../agents/services/claude/claude-session.types';
 import { isToolForwardableToClaude } from '../../../agents/services/claude/claude-session.utils';
 import type { GraphNode } from '../../../graphs/graphs.types';
 import { NodeKind } from '../../../graphs/graphs.types';
@@ -38,6 +39,19 @@ export const ClaudeAgentTemplateSchema = z.object({
     .meta({ 'x-ui:show-on-node': true })
     .meta({ 'x-ui:label': 'Model' })
     .meta({ 'x-ui:litellm-models-list-select': true }),
+  authMode: z
+    .enum(ClaudeAuthMode)
+    .default(ClaudeAuthMode.System)
+    .describe(
+      'LLM credential mode. "system" (default) bills this agent to the shared platform upstream. "byo-anthropic" routes this agent\'s calls to your own Anthropic API key, resolved from the secrets store and used only by this node.',
+    ),
+  apiKeySecretRef: z
+    .string()
+    .optional()
+    .describe(
+      'Secret holding your Anthropic API key (must start with sk-ant-). Required when authMode is "byo-anthropic". The key is resolved host-side and injected only into this node\'s sandbox — set a spend limit on it in the Anthropic Console as a backstop. That Console limit is also your only ceiling for an interrupted turn: if a run is stopped mid-turn, the in-flight spend of that turn is not captured in the platform cost rollup.',
+    )
+    .meta({ 'x-ui:secret-select-host': true }),
   maxTurns: z
     .number()
     .int()
@@ -48,6 +62,54 @@ export const ClaudeAgentTemplateSchema = z.object({
     .describe(
       'Maximum number of agentic turns the Claude session can execute during a single run.',
     ),
+  effort: z
+    .enum(['low', 'medium', 'high', 'xhigh', 'max'])
+    .optional()
+    .describe(
+      'Reasoning effort the session spends per step. Higher means deeper reasoning and more tokens; lower is faster and cheaper. Levels the active model does not support are clamped down. Leave empty for the model default (high).',
+    )
+    .meta({ 'x-ui:show-on-node': true })
+    .meta({ 'x-ui:label': 'Effort' }),
+  maxContext: z
+    .boolean()
+    .optional()
+    .describe(
+      'Request the 1M-token context window (appends the [1m] suffix to the model). Only takes effect on models that support 1M context. Leave off for the standard window.',
+    )
+    .meta({ 'x-ui:show-on-node': true })
+    .meta({ 'x-ui:label': '1M context' }),
+  sonnetModel: z
+    .string()
+    .optional()
+    .describe(
+      'Override the model the `sonnet` alias resolves to (subagents, the model picker, opusplan execution). Must be a model registered in LiteLLM. Leave empty to use the SDK default.',
+    )
+    .meta({ 'x-ui:litellm-models-list-select': true })
+    .meta({ 'x-ui:label': 'Sonnet model' }),
+  opusModel: z
+    .string()
+    .optional()
+    .describe(
+      'Override the model the `opus` alias resolves to (subagents, opusplan plan mode). Must be a model registered in LiteLLM. Leave empty to use the SDK default.',
+    )
+    .meta({ 'x-ui:litellm-models-list-select': true })
+    .meta({ 'x-ui:label': 'Opus model' }),
+  haikuModel: z
+    .string()
+    .optional()
+    .describe(
+      'Override the model the `haiku` alias and background/utility calls (e.g. title generation) resolve to. Must be a model registered in LiteLLM. Leave empty to use claude-haiku-4-5.',
+    )
+    .meta({ 'x-ui:litellm-models-list-select': true })
+    .meta({ 'x-ui:label': 'Haiku model' }),
+  fableModel: z
+    .string()
+    .optional()
+    .describe(
+      'Override the model the `fable` alias resolves to. Must be a model registered in LiteLLM. Leave empty to use the SDK default.',
+    )
+    .meta({ 'x-ui:litellm-models-list-select': true })
+    .meta({ 'x-ui:label': 'Fable model' }),
   plugins: z
     .array(
       z.object({

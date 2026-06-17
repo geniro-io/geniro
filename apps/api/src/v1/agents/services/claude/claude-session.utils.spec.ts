@@ -5,10 +5,12 @@ import type { BuiltAgentTool } from '../../../agent-tools/tools/base-tool';
 import {
   buildBridgeToolDefinitions,
   buildClaudeSessionEnv,
+  collectClaudeKeyModels,
   formatQuestionsAsText,
   isToolForwardableToClaude,
   redactGitUrl,
   sanitizeSandboxError,
+  SMALL_FAST_MODEL_ALIAS,
 } from './claude-session.utils';
 
 vi.mock('../../../../environments', () => ({
@@ -262,6 +264,99 @@ describe('buildClaudeSessionEnv', () => {
     } finally {
       (environment as { litellmPublicUrl: string }).litellmPublicUrl = original;
     }
+  });
+
+  it('uses the BYO override base URL with the supplied key (direct Anthropic)', () => {
+    const env = buildClaudeSessionEnv('sk-ant-api03-byo', null, {
+      anthropicBaseUrlOverride: 'https://api.anthropic.com',
+    });
+    expect(env.ANTHROPIC_API_KEY).toBe('sk-ant-api03-byo');
+    expect(env.ANTHROPIC_BASE_URL).toBe('https://api.anthropic.com');
+  });
+
+  it('does NOT fail closed on a missing LiteLLM URL when a BYO base-URL override is supplied', () => {
+    // BYO talks to Anthropic directly and never reads the LiteLLM sandbox URL,
+    // so the override path must bypass the CLAUDE_*_LLM_URL_MISSING fail-close.
+    const originalSandbox = environment.litellmSandboxUrl;
+    const originalPublic = environment.litellmPublicUrl;
+    (environment as { litellmSandboxUrl: string }).litellmSandboxUrl = '';
+    (environment as { litellmPublicUrl: string }).litellmPublicUrl = '';
+    try {
+      const env = buildClaudeSessionEnv('sk-ant-api03-byo', null, {
+        anthropicBaseUrlOverride: 'https://api.anthropic.com',
+      });
+      expect(env.ANTHROPIC_BASE_URL).toBe('https://api.anthropic.com');
+    } finally {
+      (environment as { litellmSandboxUrl: string }).litellmSandboxUrl =
+        originalSandbox;
+      (environment as { litellmPublicUrl: string }).litellmPublicUrl =
+        originalPublic;
+    }
+  });
+
+  it('emits ANTHROPIC_DEFAULT_HAIKU_MODEL by default and drops the deprecated SMALL_FAST var', () => {
+    const env = buildClaudeSessionEnv('vk_test');
+    expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe(SMALL_FAST_MODEL_ALIAS);
+    expect(env).not.toHaveProperty('ANTHROPIC_SMALL_FAST_MODEL');
+  });
+
+  it('omits the optional alias-override vars when no overrides are supplied', () => {
+    const env = buildClaudeSessionEnv('vk_test');
+    expect(env).not.toHaveProperty('ANTHROPIC_DEFAULT_SONNET_MODEL');
+    expect(env).not.toHaveProperty('ANTHROPIC_DEFAULT_OPUS_MODEL');
+    expect(env).not.toHaveProperty('ANTHROPIC_DEFAULT_FABLE_MODEL');
+  });
+
+  it('maps each supplied alias override onto its ANTHROPIC_DEFAULT_*_MODEL var', () => {
+    const env = buildClaudeSessionEnv('vk_test', null, {
+      modelOverrides: {
+        sonnet: 'claude-sonnet-4-6',
+        opus: 'claude-opus-4-8',
+        haiku: 'claude-haiku-custom',
+        fable: 'claude-fable-5',
+      },
+    });
+    expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('claude-sonnet-4-6');
+    expect(env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('claude-opus-4-8');
+    expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('claude-haiku-custom');
+    expect(env.ANTHROPIC_DEFAULT_FABLE_MODEL).toBe('claude-fable-5');
+  });
+
+  it('emits CLAUDE_CODE_EFFORT_LEVEL only when an effort level is supplied', () => {
+    expect(buildClaudeSessionEnv('vk_test')).not.toHaveProperty(
+      'CLAUDE_CODE_EFFORT_LEVEL',
+    );
+    const env = buildClaudeSessionEnv('vk_test', null, { effort: 'xhigh' });
+    expect(env.CLAUDE_CODE_EFFORT_LEVEL).toBe('xhigh');
+  });
+});
+
+describe('collectClaudeKeyModels', () => {
+  it('always includes the main model and the default haiku/background model', () => {
+    expect(collectClaudeKeyModels('claude-opus-4-8')).toEqual([
+      'claude-opus-4-8',
+      SMALL_FAST_MODEL_ALIAS,
+    ]);
+  });
+
+  it('adds every set alias override and dedupes shared names', () => {
+    const models = collectClaudeKeyModels('claude-opus-4-8', {
+      sonnet: 'claude-sonnet-4-6',
+      haiku: 'claude-haiku-4-5',
+      opus: 'claude-opus-4-8',
+    });
+    expect(models).toContain('claude-opus-4-8');
+    expect(models).toContain('claude-sonnet-4-6');
+    expect(models).toContain('claude-haiku-4-5');
+    expect(new Set(models).size).toBe(models.length);
+  });
+
+  it('scopes the haiku override (not the default) into the key models', () => {
+    const models = collectClaudeKeyModels('claude-opus-4-8', {
+      haiku: 'claude-haiku-custom',
+    });
+    expect(models).toEqual(['claude-opus-4-8', 'claude-haiku-custom']);
+    expect(models).not.toContain(SMALL_FAST_MODEL_ALIAS);
   });
 });
 

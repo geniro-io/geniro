@@ -4,6 +4,19 @@ export const CLAUDE_INSTALL_DIR = '/opt/geniro-claude';
 export const CLAUDE_PLUGINS_DIR = `${CLAUDE_INSTALL_DIR}/plugins`;
 
 /**
+ * LLM credential mode for a Claude Agent node.
+ * - `System`: the agent's LLM calls route through the shared platform upstream
+ *   (a scoped per-thread LiteLLM virtual key enters the sandbox).
+ * - `ByoAnthropic`: the agent runs against the graph author's own Anthropic API
+ *   key, resolved host-side from the secrets store and injected directly into
+ *   this node's sandbox as `ANTHROPIC_API_KEY`, bypassing LiteLLM.
+ */
+export enum ClaudeAuthMode {
+  System = 'system',
+  ByoAnthropic = 'byo-anthropic',
+}
+
+/**
  * Tools that only make sense inside a Geniro agent loop — never forwarded into
  * a Claude SDK session. `finish`/`wait_for`/`tool_search` are turn control and
  * dynamic tool loading the SDK session owns itself. `subagents_run_task` is
@@ -65,6 +78,24 @@ export type ClaudePluginSource = {
   ref?: string;
   path?: string;
 };
+
+/**
+ * Per-node overrides for the model strings the Claude SDK emits, mapped onto
+ * registered LiteLLM model names. The SDK resolves the alias tiers (sonnet/opus/
+ * haiku/fable) on its own and sends the resulting string to LiteLLM, which routes
+ * only by exact model-name match — so an alias that resolves to a snapshot id
+ * LiteLLM does not know fails the call. Each override is optional: when set it
+ * injects the matching `ANTHROPIC_DEFAULT_*_MODEL` into the session env so the
+ * alias resolves to a registered name instead. `haiku` also covers background/
+ * utility calls and defaults to the small-fast alias when unset; the rest fall
+ * through to the SDK's built-in resolution when unset.
+ */
+export interface ClaudeModelOverrides {
+  sonnet?: string;
+  opus?: string;
+  haiku?: string;
+  fable?: string;
+}
 
 /**
  * Per-thread Claude session metadata persisted in `Thread.metadata` for
