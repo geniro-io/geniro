@@ -32,6 +32,16 @@ const SAFE_GIT_REF = /^\w[\w./-]*$/;
 const SAFE_PLUGIN_PATH = /^\w[\w./-]*$/;
 const SAFE_SESSION_ID = /^[\w-]+$/;
 
+// The bridge bundle is ~570 KB; base64 inflates it to ~760 KB. Embedding the
+// whole payload in a single `sh -lc '<cmd>'` argument exceeds the kernel's
+// per-argument limit (Linux MAX_ARG_STRLEN = 128 KiB) and the exec fails with
+// E2BIG ("argument list too long"). Stream the base64 to a temp file in chunks
+// that stay well under that limit, then decode it in the install step. The
+// chunk size leaves generous headroom below 128 KiB for the surrounding command
+// (and works identically across the Docker/K8s/Daytona exec transports, which
+// all funnel the command through one `sh -lc` argument).
+const BRIDGE_B64_CHUNK_SIZE = 64 * 1024;
+
 /**
  * Idempotent, per-container session bootstrap for Claude Agent threads:
  * ships the bridge script into the runtime, installs the Agent SDK (which
@@ -247,15 +257,47 @@ export class ClaudeBootstrapService {
 
     const bridgeSource = await readFile(getBridgeScriptPath());
     const bridgeBase64 = bridgeSource.toString('base64');
+    const bridgeB64Path = `${bridgePath}.b64`;
 
     this.logger.log(
       `Installing Claude bridge + Agent SDK ${CLAUDE_AGENT_SDK_VERSION} into runtime`,
     );
+
+    // Stage the base64 payload in bounded chunks so no single exec argument
+    // exceeds the kernel limit (see BRIDGE_B64_CHUNK_SIZE). The base64 alphabet
+    // never contains a single quote, so single-quoting each chunk is safe. The
+    // first write creates the install dir and truncates (`>`) any stale temp
+    // file from a prior partial run; later writes append (`>>`).
+    for (
+      let offset = 0, first = true;
+      offset < bridgeBase64.length;
+      offset += BRIDGE_B64_CHUNK_SIZE, first = false
+    ) {
+      const chunk = bridgeBase64.slice(offset, offset + BRIDGE_B64_CHUNK_SIZE);
+      const prefix = first ? `mkdir -p ${CLAUDE_INSTALL_DIR} && ` : '';
+      const redirect = first ? '>' : '>>';
+      const write = await runtime.exec({
+        cmd: `${prefix}printf '%s' '${chunk}' ${redirect} ${bridgeB64Path}`,
+      });
+      if (write.fail) {
+        throw new BadRequestException(
+          'CLAUDE_BRIDGE_INSTALL_FAILED',
+          `Failed to stage the Claude bridge into the runtime: ${sanitizeSandboxError(
+            write.stderr.slice(-500),
+          )}`,
+        );
+      }
+    }
+
+    // Decode the staged payload and install the SDK in one `&&` chain so the
+    // version marker only lands after every step succeeds. The temp file is
+    // removed on the success path; a failure leaves it for the first write of
+    // the next attempt to truncate.
     const install = await runtime.exec({
       cmd: [
-        `mkdir -p ${CLAUDE_INSTALL_DIR}`,
         `cd ${CLAUDE_INSTALL_DIR}`,
-        `printf '%s' '${bridgeBase64}' | base64 -d > ${bridgePath}`,
+        `base64 -d ${bridgeB64Path} > ${bridgePath}`,
+        `rm -f ${bridgeB64Path}`,
         'npm init -y >/dev/null 2>&1 || true',
         `npm install --no-fund --no-audit --omit=dev @anthropic-ai/claude-agent-sdk@${CLAUDE_AGENT_SDK_VERSION}`,
         `touch ${marker}`,

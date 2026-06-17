@@ -1,3 +1,5 @@
+import { readFile } from 'node:fs/promises';
+
 import type { DefaultLogger } from '@packages/common';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { mockDeep } from 'vitest-mock-extended';
@@ -82,6 +84,55 @@ describe('ClaudeBootstrapService', () => {
         String(c[0]?.cmd).includes('npm install'),
       );
       expect(installCall).toBeUndefined();
+    });
+
+    it('streams the bridge in bounded chunks so no exec argument exceeds the kernel limit', async () => {
+      // A realistic bridge bundle (~570 KB) base64-encodes to ~760 KB. Embedding
+      // that in a single `sh -lc '<cmd>'` argument blows past the kernel's
+      // per-argument limit (Linux MAX_ARG_STRLEN = 128 KiB) and the exec fails
+      // with E2BIG ("argument list too long"). Force the large-payload path.
+      vi.mocked(readFile).mockResolvedValueOnce(Buffer.alloc(580_000, 0x61));
+      exec.mockImplementation(async (params: { cmd: string | string[] }) => {
+        const cmd = Array.isArray(params.cmd)
+          ? params.cmd.join(' && ')
+          : params.cmd;
+        // Marker absent → take the install branch; everything else succeeds.
+        if (cmd.startsWith('test -f') && cmd.includes('.installed-p')) {
+          return { exitCode: 1, fail: false, stderr: '' };
+        }
+        return { exitCode: 0, fail: false, stderr: '' };
+      });
+
+      await service.ensureSessionReady(runtime, {});
+
+      // The runtime funnels every command through one `sh -lc <arg>`; that single
+      // argument is the array joined with ` && `. No command may exceed 128 KiB.
+      const PER_ARG_LIMIT = 128 * 1024;
+      const joined = (cmd: string | string[]): string =>
+        Array.isArray(cmd) ? cmd.join(' && ') : String(cmd);
+      for (const call of exec.mock.calls) {
+        expect(joined(call[0].cmd).length).toBeLessThanOrEqual(PER_ARG_LIMIT);
+      }
+
+      // The base64 is staged via multiple chunk writes — exactly one truncating
+      // (`>`) write, the rest appends (`>>`) — never embedded whole.
+      const chunkWrites = exec.mock.calls
+        .map((c) => joined(c[0].cmd))
+        .filter(
+          (cmd) => cmd.includes("printf '%s'") && cmd.includes('.mjs.b64'),
+        );
+      expect(chunkWrites.length).toBeGreaterThan(1);
+      expect(chunkWrites.filter((c) => !c.includes('>>'))).toHaveLength(1);
+
+      // The install chain decodes the staged file and cleans it up rather than
+      // piping an embedded payload through base64.
+      const installCall = exec.mock.calls.find((c) =>
+        joined(c[0].cmd).includes('npm install'),
+      );
+      expect(installCall).toBeDefined();
+      const installCmd = joined(installCall![0].cmd);
+      expect(installCmd).toContain('base64 -d');
+      expect(installCmd).toContain('rm -f');
     });
 
     it('rejects CLAUDE_BRIDGE_INSTALL_FAILED with the stderr tail when install fails', async () => {
