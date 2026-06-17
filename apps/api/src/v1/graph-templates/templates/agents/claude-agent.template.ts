@@ -94,14 +94,6 @@ export const ClaudeAgentTemplateSchema = z.object({
     )
     .meta({ 'x-ui:litellm-models-list-select': true })
     .meta({ 'x-ui:label': 'Fable model' }),
-  subagentModel: z
-    .string()
-    .optional()
-    .describe(
-      'Force every subagent (and agent team) to this model, overriding the model each subagent declares. Must be a model registered in LiteLLM. Leave empty to let each subagent resolve its model normally.',
-    )
-    .meta({ 'x-ui:litellm-models-list-select': true })
-    .meta({ 'x-ui:label': 'Subagent model' }),
   plugins: z
     .array(
       z.object({

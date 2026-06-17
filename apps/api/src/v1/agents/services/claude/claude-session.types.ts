@@ -81,22 +81,20 @@ export type ClaudePluginSource = {
 
 /**
  * Per-node overrides for the model strings the Claude SDK emits, mapped onto
- * registered LiteLLM model names. The SDK resolves aliases (sonnet/opus/haiku/
- * fable) and subagent models entirely on its own and sends the resulting string
- * to LiteLLM, which routes only by exact model-name match — so an alias that
- * resolves to a snapshot id LiteLLM does not know fails the call. Each override
- * is optional: when set it injects the matching `ANTHROPIC_DEFAULT_*_MODEL` (or
- * `CLAUDE_CODE_SUBAGENT_MODEL`) into the session env so the alias resolves to a
- * registered name instead. `haiku` also covers background/utility calls and
- * defaults to the small-fast alias when unset; the rest fall through to the
- * SDK's built-in resolution when unset.
+ * registered LiteLLM model names. The SDK resolves the alias tiers (sonnet/opus/
+ * haiku/fable) on its own and sends the resulting string to LiteLLM, which routes
+ * only by exact model-name match — so an alias that resolves to a snapshot id
+ * LiteLLM does not know fails the call. Each override is optional: when set it
+ * injects the matching `ANTHROPIC_DEFAULT_*_MODEL` into the session env so the
+ * alias resolves to a registered name instead. `haiku` also covers background/
+ * utility calls and defaults to the small-fast alias when unset; the rest fall
+ * through to the SDK's built-in resolution when unset.
  */
 export interface ClaudeModelOverrides {
   sonnet?: string;
   opus?: string;
   haiku?: string;
   fable?: string;
-  subagent?: string;
 }
 
 /**

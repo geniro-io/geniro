@@ -305,24 +305,21 @@ describe('buildClaudeSessionEnv', () => {
     expect(env).not.toHaveProperty('ANTHROPIC_DEFAULT_SONNET_MODEL');
     expect(env).not.toHaveProperty('ANTHROPIC_DEFAULT_OPUS_MODEL');
     expect(env).not.toHaveProperty('ANTHROPIC_DEFAULT_FABLE_MODEL');
-    expect(env).not.toHaveProperty('CLAUDE_CODE_SUBAGENT_MODEL');
   });
 
-  it('maps each supplied alias override onto its ANTHROPIC_DEFAULT_*_MODEL / subagent env var', () => {
+  it('maps each supplied alias override onto its ANTHROPIC_DEFAULT_*_MODEL var', () => {
     const env = buildClaudeSessionEnv('vk_test', null, {
       modelOverrides: {
         sonnet: 'claude-sonnet-4-6',
         opus: 'claude-opus-4-8',
         haiku: 'claude-haiku-custom',
         fable: 'claude-fable-5',
-        subagent: 'claude-sonnet-4-6',
       },
     });
     expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('claude-sonnet-4-6');
     expect(env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('claude-opus-4-8');
     expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('claude-haiku-custom');
     expect(env.ANTHROPIC_DEFAULT_FABLE_MODEL).toBe('claude-fable-5');
-    expect(env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('claude-sonnet-4-6');
   });
 });
 
@@ -338,7 +335,7 @@ describe('collectClaudeKeyModels', () => {
     const models = collectClaudeKeyModels('claude-opus-4-8', {
       sonnet: 'claude-sonnet-4-6',
       haiku: 'claude-haiku-4-5',
-      subagent: 'claude-opus-4-8',
+      opus: 'claude-opus-4-8',
     });
     expect(models).toContain('claude-opus-4-8');
     expect(models).toContain('claude-sonnet-4-6');

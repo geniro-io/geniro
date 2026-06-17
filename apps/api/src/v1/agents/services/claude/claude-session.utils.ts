@@ -172,12 +172,12 @@ export function buildClaudeSessionEnv(
   return {
     ANTHROPIC_BASE_URL: baseUrl,
     ANTHROPIC_API_KEY: apiKey,
-    // Alias remapping: the SDK resolves opus/sonnet/haiku/fable and subagent
-    // models itself and sends the resulting string to the upstream, which only
-    // honors model names it knows — so map each alias onto a configured model.
-    // The haiku/background var is always present (override or the default
-    // alias); the rest only when explicitly overridden. ANTHROPIC_DEFAULT_HAIKU
-    // supersedes the deprecated ANTHROPIC_SMALL_FAST_MODEL.
+    // Alias remapping: the SDK resolves the opus/sonnet/haiku/fable tiers itself
+    // and sends the resulting string to the upstream, which only honors model
+    // names it knows — so map each alias onto a configured model. The haiku/
+    // background var is always present (override or the default alias); the rest
+    // only when explicitly overridden. ANTHROPIC_DEFAULT_HAIKU supersedes the
+    // deprecated ANTHROPIC_SMALL_FAST_MODEL.
     ANTHROPIC_DEFAULT_HAIKU_MODEL: resolveHaikuModel(options?.modelOverrides),
     ...(options?.modelOverrides?.sonnet
       ? { ANTHROPIC_DEFAULT_SONNET_MODEL: options.modelOverrides.sonnet }
@@ -187,9 +187,6 @@ export function buildClaudeSessionEnv(
       : {}),
     ...(options?.modelOverrides?.fable
       ? { ANTHROPIC_DEFAULT_FABLE_MODEL: options.modelOverrides.fable }
-      : {}),
-    ...(options?.modelOverrides?.subagent
-      ? { CLAUDE_CODE_SUBAGENT_MODEL: options.modelOverrides.subagent }
       : {}),
     // The sandbox container IS the permission boundary; Claude Code requires
     // this acknowledgment to run with bypassed permissions as root.
@@ -236,7 +233,6 @@ export function collectClaudeKeyModels(
         overrides?.sonnet,
         overrides?.opus,
         overrides?.fable,
-        overrides?.subagent,
       ].filter((m): m is string => typeof m === 'string' && m.length > 0),
     ),
   );

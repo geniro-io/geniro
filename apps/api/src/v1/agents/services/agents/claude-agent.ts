@@ -59,7 +59,6 @@ export type ClaudeAgentSchemaType = {
   opusModel?: string;
   haikuModel?: string;
   fableModel?: string;
-  subagentModel?: string;
   plugins?: ClaudePluginSource[];
 };
 
@@ -291,7 +290,6 @@ export class ClaudeAgent
         ...(config.opusModel && { opus: config.opusModel }),
         ...(config.haikuModel && { haiku: config.haikuModel }),
         ...(config.fableModel && { fable: config.fableModel }),
-        ...(config.subagentModel && { subagent: config.subagentModel }),
       };
 
       const isByo = config.authMode === ClaudeAuthMode.ByoAnthropic;
