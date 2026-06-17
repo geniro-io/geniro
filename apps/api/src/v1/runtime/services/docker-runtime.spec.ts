@@ -1,8 +1,8 @@
 import { PassThrough } from 'node:stream';
 
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { DockerRuntime } from './docker-runtime';
+import { DockerRuntime, type DockerRuntimeLogger } from './docker-runtime';
 
 const mockResult = {
   exitCode: 0,
@@ -207,5 +207,104 @@ describe('DockerRuntime (ensureNetwork)', () => {
     await expect(runtime.ensureNetwork('geniro-runtime')).rejects.toThrow(
       /Failed to create network geniro-runtime/,
     );
+  });
+});
+
+describe('DockerRuntime (exec-readiness probe)', () => {
+  type ProbeApi = {
+    container: unknown;
+    waitForExecReady: () => Promise<void>;
+    probeExecReady: (container: unknown) => Promise<boolean>;
+  };
+
+  const buildRuntime = (logger?: {
+    warn: ReturnType<typeof vi.fn>;
+    error: ReturnType<typeof vi.fn>;
+  }) => {
+    const runtime = new DockerRuntime(
+      {} as never,
+      logger ? { logger: logger as unknown as DockerRuntimeLogger } : undefined,
+    );
+    return runtime as unknown as ProbeApi;
+  };
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('returns once a probe reports the container is exec-ready (no warning)', async () => {
+    const warn = vi.fn();
+    const runtime = buildRuntime({ warn, error: vi.fn() });
+    runtime.container = {};
+    const probe = vi.spyOn(runtime, 'probeExecReady').mockResolvedValue(true);
+    // Date.now: deadline calc -> 0, then under-deadline so the loop runs once.
+    vi.spyOn(Date, 'now').mockReturnValueOnce(0).mockReturnValue(100);
+
+    await expect(runtime.waitForExecReady()).resolves.toBeUndefined();
+    expect(probe).toHaveBeenCalledTimes(1);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('retries until a probe succeeds', async () => {
+    const warn = vi.fn();
+    const runtime = buildRuntime({ warn, error: vi.fn() });
+    runtime.container = {};
+    const probe = vi
+      .spyOn(runtime, 'probeExecReady')
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true);
+    vi.spyOn(Date, 'now').mockReturnValueOnce(0).mockReturnValue(100);
+
+    await expect(runtime.waitForExecReady()).resolves.toBeUndefined();
+    expect(probe).toHaveBeenCalledTimes(2);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('proceeds without throwing and warns when the container never warms (best-effort floor)', async () => {
+    const warn = vi.fn();
+    const runtime = buildRuntime({ warn, error: vi.fn() });
+    runtime.container = {};
+    vi.spyOn(runtime, 'probeExecReady').mockRejectedValue(
+      new Error('exec rejected'),
+    );
+    // deadline -> 0; first check enters (one attempt); second check is past it.
+    vi.spyOn(Date, 'now')
+      .mockReturnValueOnce(0)
+      .mockReturnValueOnce(100)
+      .mockReturnValue(20_000);
+
+    await expect(runtime.waitForExecReady()).resolves.toBeUndefined();
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('exec-readiness probe did not succeed'),
+      'exec rejected',
+    );
+  });
+
+  it('is a no-op when no container is set', async () => {
+    const warn = vi.fn();
+    const runtime = buildRuntime({ warn, error: vi.fn() });
+    runtime.container = null;
+    const probe = vi.spyOn(runtime, 'probeExecReady');
+
+    await expect(runtime.waitForExecReady()).resolves.toBeUndefined();
+    expect(probe).not.toHaveBeenCalled();
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('probeExecReady maps exit code 0 to ready and non-zero to not-ready', async () => {
+    const runtime = buildRuntime();
+    const makeContainer = (exitCode: number) => ({
+      exec: vi.fn().mockResolvedValue({
+        start: vi.fn().mockImplementation(async () => {
+          const stream = new PassThrough();
+          stream.end();
+          return stream;
+        }),
+        inspect: vi.fn().mockResolvedValue({ ExitCode: exitCode }),
+      }),
+    });
+
+    await expect(runtime.probeExecReady(makeContainer(0))).resolves.toBe(true);
+    await expect(runtime.probeExecReady(makeContainer(1))).resolves.toBe(false);
   });
 });

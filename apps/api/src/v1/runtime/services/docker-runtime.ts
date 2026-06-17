@@ -17,6 +17,19 @@ import { BaseRuntime } from './base-runtime';
 
 const MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
 
+// A container reporting `State.Running` is not yet guaranteed to be exec-ready:
+// the Docker exec subsystem can briefly reject or return empty / early-terminated
+// execs while the container's process namespace finishes warming. Under a
+// CPU-oversubscribed host this race surfaces on the FIRST exec as empty stdout or
+// an anomalous exit code (observed: exit 1, and a spurious tail-timeout 124),
+// which is the root of the real-runtime integration flakes. Probe a trivial
+// no-op exec until it completes with exit 0 (or the budget elapses) so callers
+// see a warmed container. Best-effort: on budget exhaustion we proceed (the prior
+// "Running == ready" behaviour is the floor), so this never adds a start-failure.
+const EXEC_READY_PROBE_TOTAL_MS = 10_000;
+const EXEC_READY_PROBE_ATTEMPT_MS = 2_000;
+const EXEC_READY_PROBE_INTERVAL_MS = 150;
+
 /** Minimal logger interface accepted by DockerRuntime. */
 export interface DockerRuntimeLogger {
   warn(msg: string, ...args: unknown[]): void;
@@ -621,6 +634,83 @@ export class DockerRuntime extends BaseRuntime {
     }
   }
 
+  /**
+   * Run a single trivial no-op exec to completion against the container and
+   * report whether it exited 0. A rejected exec, a stream error, an attempt
+   * that outlives {@link EXEC_READY_PROBE_ATTEMPT_MS}, or a non-zero/absent
+   * exit code all count as "not ready yet" so {@link waitForExecReady} retries.
+   */
+  private async probeExecReady(container: Docker.Container): Promise<boolean> {
+    const ex = await container.exec({
+      Cmd: ['true'],
+      AttachStdout: true,
+      AttachStderr: true,
+      Tty: false,
+    });
+    const stream = await ex.start({ hijack: true, stdin: false });
+
+    let attemptTimer: NodeJS.Timeout | null = null;
+    try {
+      await new Promise<void>((resolve, reject) => {
+        stream.on('end', resolve);
+        stream.on('close', resolve);
+        stream.on('error', reject);
+        // Drain without demuxing — the probe only cares that the exec finishes.
+        stream.resume();
+        attemptTimer = setTimeout(() => {
+          try {
+            stream.destroy();
+          } catch {
+            //
+          }
+          reject(new Error('exec readiness probe attempt timed out'));
+        }, EXEC_READY_PROBE_ATTEMPT_MS);
+      });
+    } finally {
+      if (attemptTimer) {
+        clearTimeout(attemptTimer);
+      }
+    }
+
+    const info = await ex.inspect();
+    return info.ExitCode === 0;
+  }
+
+  /**
+   * Bounded, best-effort wait until the container can run a trivial exec to
+   * completion with exit 0 — see {@link EXEC_READY_PROBE_TOTAL_MS}. Removes the
+   * cold-first-exec race where a just-`Running` container returns empty output
+   * or an anomalous exit code under load. On budget exhaustion it logs and
+   * returns WITHOUT throwing, so the prior "Running == ready" contract remains
+   * the floor and no new start-failure path is introduced.
+   */
+  private async waitForExecReady(): Promise<void> {
+    const container = this.container;
+    if (!container) {
+      return;
+    }
+
+    const deadline = Date.now() + EXEC_READY_PROBE_TOTAL_MS;
+    let lastError: unknown;
+    while (Date.now() < deadline) {
+      try {
+        if (await this.probeExecReady(container)) {
+          return;
+        }
+      } catch (error) {
+        lastError = error;
+      }
+      await new Promise((resolve) =>
+        setTimeout(resolve, EXEC_READY_PROBE_INTERVAL_MS),
+      );
+    }
+
+    this.logger?.warn(
+      'Container exec-readiness probe did not succeed within budget; proceeding anyway',
+      lastError instanceof Error ? lastError.message : undefined,
+    );
+  }
+
   async start(params?: RuntimeStartParams): Promise<void> {
     if (this.container) {
       return;
@@ -647,6 +737,8 @@ export class DockerRuntime extends BaseRuntime {
 
       this.container = existingContainer;
       this.containerWorkdir = this.getWorkdir(params?.workdir);
+
+      await this.waitForExecReady();
 
       this.emit({
         type: 'start',
@@ -732,6 +824,10 @@ export class DockerRuntime extends BaseRuntime {
       await container.start();
       this.container = container;
       this.containerWorkdir = this.getWorkdir(params?.workdir);
+
+      // Wait for the container to be exec-ready before the init script (itself an
+      // exec) or any caller exec runs — closes the cold-first-exec race.
+      await this.waitForExecReady();
 
       this.emit({
         type: 'phase',
