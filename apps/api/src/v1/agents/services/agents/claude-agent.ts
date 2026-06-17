@@ -31,6 +31,7 @@ import { ClaudeBridgeTransport } from '../claude/claude-bridge-transport';
 import { ClaudeKeepaliveService } from '../claude/claude-keepalive.service';
 import {
   ClaudeAuthMode,
+  ClaudeModelOverrides,
   ClaudePluginSource,
   ClaudeQuestionRequest,
   ClaudeThreadMetadata,
@@ -38,9 +39,9 @@ import {
 import {
   buildBridgeToolDefinitions,
   buildClaudeSessionEnv,
+  collectClaudeKeyModels,
   formatQuestionsAsText,
   sanitizeSandboxError,
-  SMALL_FAST_MODEL_ALIAS,
 } from '../claude/claude-session.utils';
 import { ClaudeStreamMapper } from '../claude/claude-stream-mapper';
 import { ClaudeToolDispatcher } from '../claude/claude-tool-dispatcher';
@@ -54,6 +55,11 @@ export type ClaudeAgentSchemaType = {
   authMode?: ClaudeAuthMode;
   apiKeySecretRef?: string;
   maxTurns?: number;
+  sonnetModel?: string;
+  opusModel?: string;
+  haikuModel?: string;
+  fableModel?: string;
+  subagentModel?: string;
   plugins?: ClaudePluginSource[];
 };
 
@@ -277,6 +283,17 @@ export class ClaudeAgent
           }),
         });
 
+      // Per-node alias remapping injected into the session env so the SDK only
+      // emits model names the upstream knows (system mode) or real Anthropic
+      // ids (BYO). Unset aliases fall through to the SDK's own resolution.
+      const modelOverrides: ClaudeModelOverrides = {
+        ...(config.sonnetModel && { sonnet: config.sonnetModel }),
+        ...(config.opusModel && { opus: config.opusModel }),
+        ...(config.haikuModel && { haiku: config.haikuModel }),
+        ...(config.fableModel && { fable: config.fableModel }),
+        ...(config.subagentModel && { subagent: config.subagentModel }),
+      };
+
       const isByo = config.authMode === ClaudeAuthMode.ByoAnthropic;
       // The key that fills ANTHROPIC_API_KEY for the session. System mode issues
       // a scoped per-thread LiteLLM virtual key (model-scoped + budgeted, revoked
@@ -308,8 +325,9 @@ export class ClaudeAgent
             ),
           }),
           // Model-scope the key: it enters a sandbox running untrusted code, so
-          // an exfiltrated key must not be able to bill arbitrary models.
-          models: Array.from(new Set([config.model, SMALL_FAST_MODEL_ALIAS])),
+          // an exfiltrated key must not be able to bill arbitrary models. Covers
+          // the main model, the haiku/background model, and any alias override.
+          models: collectClaudeKeyModels(config.model, modelOverrides),
           metadata: {
             graphId: configurable.graph_id,
             nodeId: configurable.node_id,
@@ -340,6 +358,7 @@ export class ClaudeAgent
       // the public LiteLLM URL instead (fail-closed if unset).
       const env = buildClaudeSessionEnv(sessionApiKey, githubToken, {
         isRemoteRuntime: runtime instanceof DaytonaRuntime,
+        modelOverrides,
         // BYO talks to Anthropic directly with the user's own key, so the
         // LiteLLM sandbox-URL derivation/fail-close is bypassed.
         ...(isByo && { anthropicBaseUrlOverride: ANTHROPIC_DIRECT_BASE_URL }),

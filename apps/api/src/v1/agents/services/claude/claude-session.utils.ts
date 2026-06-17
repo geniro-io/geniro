@@ -10,6 +10,7 @@ import {
   CLAUDE_AGENT_CONTEXT_BOUND_TOOLS,
   CLAUDE_NATIVE_OVERLAP_TOOL_PREFIXES,
   CLAUDE_NATIVE_OVERLAP_TOOLS,
+  type ClaudeModelOverrides,
 } from './claude-session.types';
 
 /**
@@ -139,7 +140,11 @@ export function buildBridgeToolDefinitions(
 export function buildClaudeSessionEnv(
   apiKey: string,
   githubToken?: string | null,
-  options?: { isRemoteRuntime?: boolean; anthropicBaseUrlOverride?: string },
+  options?: {
+    isRemoteRuntime?: boolean;
+    anthropicBaseUrlOverride?: string;
+    modelOverrides?: ClaudeModelOverrides;
+  },
 ): Record<string, string> {
   // BYO mode supplies the upstream base URL directly (direct Anthropic), so the
   // LiteLLM-URL derivation + fail-close below is skipped. Otherwise a remote
@@ -167,9 +172,25 @@ export function buildClaudeSessionEnv(
   return {
     ANTHROPIC_BASE_URL: baseUrl,
     ANTHROPIC_API_KEY: apiKey,
-    // Background/utility calls (e.g. title generation) route through a cheap
-    // registered alias instead of the default haiku snapshot id.
-    ANTHROPIC_SMALL_FAST_MODEL: SMALL_FAST_MODEL_ALIAS,
+    // Alias remapping: the SDK resolves opus/sonnet/haiku/fable and subagent
+    // models itself and sends the resulting string to the upstream, which only
+    // honors model names it knows — so map each alias onto a configured model.
+    // The haiku/background var is always present (override or the default
+    // alias); the rest only when explicitly overridden. ANTHROPIC_DEFAULT_HAIKU
+    // supersedes the deprecated ANTHROPIC_SMALL_FAST_MODEL.
+    ANTHROPIC_DEFAULT_HAIKU_MODEL: resolveHaikuModel(options?.modelOverrides),
+    ...(options?.modelOverrides?.sonnet
+      ? { ANTHROPIC_DEFAULT_SONNET_MODEL: options.modelOverrides.sonnet }
+      : {}),
+    ...(options?.modelOverrides?.opus
+      ? { ANTHROPIC_DEFAULT_OPUS_MODEL: options.modelOverrides.opus }
+      : {}),
+    ...(options?.modelOverrides?.fable
+      ? { ANTHROPIC_DEFAULT_FABLE_MODEL: options.modelOverrides.fable }
+      : {}),
+    ...(options?.modelOverrides?.subagent
+      ? { CLAUDE_CODE_SUBAGENT_MODEL: options.modelOverrides.subagent }
+      : {}),
     // The sandbox container IS the permission boundary; Claude Code requires
     // this acknowledgment to run with bypassed permissions as root.
     IS_SANDBOX: '1',
@@ -186,4 +207,37 @@ export function buildClaudeSessionEnv(
     // nothing (no GH_TOKEN key) rather than an empty-string credential.
     ...(githubToken ? { GH_TOKEN: githubToken } : {}),
   };
+}
+
+/**
+ * The haiku/background model always resolves to a registered alias — the
+ * `haiku` override when set, else the small-fast default. Background/utility
+ * calls always fire, so `ANTHROPIC_DEFAULT_HAIKU_MODEL` is always emitted.
+ */
+export function resolveHaikuModel(overrides?: ClaudeModelOverrides): string {
+  return overrides?.haiku ?? SMALL_FAST_MODEL_ALIAS;
+}
+
+/**
+ * Models the per-thread virtual key must be authorized to bill: the node's main
+ * model, the always-present haiku/background model, plus any explicitly set
+ * alias override (each a registered LiteLLM model name). BYO mode issues no
+ * virtual key, so this list is unused there.
+ */
+export function collectClaudeKeyModels(
+  mainModel: string,
+  overrides?: ClaudeModelOverrides,
+): string[] {
+  return Array.from(
+    new Set(
+      [
+        mainModel,
+        resolveHaikuModel(overrides),
+        overrides?.sonnet,
+        overrides?.opus,
+        overrides?.fable,
+        overrides?.subagent,
+      ].filter((m): m is string => typeof m === 'string' && m.length > 0),
+    ),
+  );
 }

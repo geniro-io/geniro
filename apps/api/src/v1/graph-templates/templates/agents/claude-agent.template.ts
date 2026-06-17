@@ -62,6 +62,46 @@ export const ClaudeAgentTemplateSchema = z.object({
     .describe(
       'Maximum number of agentic turns the Claude session can execute during a single run.',
     ),
+  sonnetModel: z
+    .string()
+    .optional()
+    .describe(
+      'Override the model the `sonnet` alias resolves to (subagents, the model picker, opusplan execution). Must be a model registered in LiteLLM. Leave empty to use the SDK default.',
+    )
+    .meta({ 'x-ui:litellm-models-list-select': true })
+    .meta({ 'x-ui:label': 'Sonnet model' }),
+  opusModel: z
+    .string()
+    .optional()
+    .describe(
+      'Override the model the `opus` alias resolves to (subagents, opusplan plan mode). Must be a model registered in LiteLLM. Leave empty to use the SDK default.',
+    )
+    .meta({ 'x-ui:litellm-models-list-select': true })
+    .meta({ 'x-ui:label': 'Opus model' }),
+  haikuModel: z
+    .string()
+    .optional()
+    .describe(
+      'Override the model the `haiku` alias and background/utility calls (e.g. title generation) resolve to. Must be a model registered in LiteLLM. Leave empty to use claude-haiku-4-5.',
+    )
+    .meta({ 'x-ui:litellm-models-list-select': true })
+    .meta({ 'x-ui:label': 'Haiku model' }),
+  fableModel: z
+    .string()
+    .optional()
+    .describe(
+      'Override the model the `fable` alias resolves to. Must be a model registered in LiteLLM. Leave empty to use the SDK default.',
+    )
+    .meta({ 'x-ui:litellm-models-list-select': true })
+    .meta({ 'x-ui:label': 'Fable model' }),
+  subagentModel: z
+    .string()
+    .optional()
+    .describe(
+      'Force every subagent (and agent team) to this model, overriding the model each subagent declares. Must be a model registered in LiteLLM. Leave empty to let each subagent resolve its model normally.',
+    )
+    .meta({ 'x-ui:litellm-models-list-select': true })
+    .meta({ 'x-ui:label': 'Subagent model' }),
   plugins: z
     .array(
       z.object({
