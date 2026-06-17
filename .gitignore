@@ -80,3 +80,5 @@ apps/web/public/config.js
 !.geniro/instructions/**
 
 .claude/scheduled_tasks.lock
+
+.claude/worktrees/
