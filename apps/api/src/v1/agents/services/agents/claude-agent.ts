@@ -55,6 +55,8 @@ export type ClaudeAgentSchemaType = {
   authMode?: ClaudeAuthMode;
   apiKeySecretRef?: string;
   maxTurns?: number;
+  effort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+  maxContext?: boolean;
   sonnetModel?: string;
   opusModel?: string;
   haikuModel?: string;
@@ -291,6 +293,11 @@ export class ClaudeAgent
         ...(config.haikuModel && { haiku: config.haikuModel }),
         ...(config.fableModel && { fable: config.fableModel }),
       };
+      // 1M context is opt-in via the [1m] model suffix; the SDK strips it before
+      // calling the upstream, so host-side key scope + pricing keep the base id.
+      const sessionModel = config.maxContext
+        ? `${config.model}[1m]`
+        : config.model;
 
       const isByo = config.authMode === ClaudeAuthMode.ByoAnthropic;
       // The key that fills ANTHROPIC_API_KEY for the session. System mode issues
@@ -357,6 +364,7 @@ export class ClaudeAgent
       const env = buildClaudeSessionEnv(sessionApiKey, githubToken, {
         isRemoteRuntime: runtime instanceof DaytonaRuntime,
         modelOverrides,
+        ...(config.effort && { effort: config.effort }),
         // BYO talks to Anthropic directly with the user's own key, so the
         // LiteLLM sandbox-URL derivation/fail-close is bypassed.
         ...(isByo && { anthropicBaseUrlOverride: ANTHROPIC_DIRECT_BASE_URL }),
@@ -526,7 +534,7 @@ export class ClaudeAgent
               options: {
                 prompt: replayPrefix + this.extractPromptText(messages),
                 systemPrompt: config.instructions,
-                model: config.model,
+                model: sessionModel,
                 ...(config.maxTurns !== undefined && {
                   maxTurns: config.maxTurns,
                 }),

@@ -144,6 +144,7 @@ export function buildClaudeSessionEnv(
     isRemoteRuntime?: boolean;
     anthropicBaseUrlOverride?: string;
     modelOverrides?: ClaudeModelOverrides;
+    effort?: string;
   },
 ): Record<string, string> {
   // BYO mode supplies the upstream base URL directly (direct Anthropic), so the
@@ -188,6 +189,8 @@ export function buildClaudeSessionEnv(
     ...(options?.modelOverrides?.fable
       ? { ANTHROPIC_DEFAULT_FABLE_MODEL: options.modelOverrides.fable }
       : {}),
+    // Reasoning-effort level for the session; the CLI default applies when unset.
+    ...(options?.effort ? { CLAUDE_CODE_EFFORT_LEVEL: options.effort } : {}),
     // The sandbox container IS the permission boundary; Claude Code requires
     // this acknowledgment to run with bypassed permissions as root.
     IS_SANDBOX: '1',

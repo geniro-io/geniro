@@ -321,6 +321,14 @@ describe('buildClaudeSessionEnv', () => {
     expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('claude-haiku-custom');
     expect(env.ANTHROPIC_DEFAULT_FABLE_MODEL).toBe('claude-fable-5');
   });
+
+  it('emits CLAUDE_CODE_EFFORT_LEVEL only when an effort level is supplied', () => {
+    expect(buildClaudeSessionEnv('vk_test')).not.toHaveProperty(
+      'CLAUDE_CODE_EFFORT_LEVEL',
+    );
+    const env = buildClaudeSessionEnv('vk_test', null, { effort: 'xhigh' });
+    expect(env.CLAUDE_CODE_EFFORT_LEVEL).toBe('xhigh');
+  });
 });
 
 describe('collectClaudeKeyModels', () => {
