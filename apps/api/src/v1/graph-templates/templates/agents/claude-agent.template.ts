@@ -68,6 +68,7 @@ export const ClaudeAgentTemplateSchema = z.object({
     .describe(
       'Reasoning effort the session spends per step. Higher means deeper reasoning and more tokens; lower is faster and cheaper. Levels the active model does not support are clamped down. Leave empty for the model default (high).',
     )
+    .meta({ 'x-ui:show-on-node': true })
     .meta({ 'x-ui:label': 'Effort' }),
   maxContext: z
     .boolean()
@@ -75,6 +76,7 @@ export const ClaudeAgentTemplateSchema = z.object({
     .describe(
       'Request the 1M-token context window (appends the [1m] suffix to the model). Only takes effect on models that support 1M context. Leave off for the standard window.',
     )
+    .meta({ 'x-ui:show-on-node': true })
     .meta({ 'x-ui:label': '1M context' }),
   sonnetModel: z
     .string()
