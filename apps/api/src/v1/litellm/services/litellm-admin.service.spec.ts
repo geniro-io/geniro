@@ -2,7 +2,6 @@ import type { DefaultLogger } from '@packages/common';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { LiteLLMModelInfo } from '../litellm.types';
-import { FALLBACK_PROVIDERS } from '../litellm-providers.fallback';
 import type { LiteLlmClient } from './litellm.client';
 import { LiteLlmAdminService } from './litellm-admin.service';
 
@@ -341,29 +340,46 @@ describe('LiteLlmAdminService', () => {
       fetchSpy.mockRestore();
     });
 
-    it('falls back to the bundled snapshot (never empty) and logs on fetch failure', async () => {
+    it('rethrows and logs on fetch failure when there is no cache', async () => {
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockRejectedValue(new Error('Network error'));
+
+      await expect(service.listProviders()).rejects.toThrow('Network error');
+      expect(logger.error as ReturnType<typeof vi.fn>).toHaveBeenCalled();
+
+      fetchSpy.mockRestore();
+    });
+
+    it('rethrows and logs when the response is not a JSON array (no cache)', async () => {
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ not: 'an-array' }),
+      } as Response);
+
+      await expect(service.listProviders()).rejects.toThrow(
+        'Provider list response was not a JSON array',
+      );
+      expect(logger.error as ReturnType<typeof vi.fn>).toHaveBeenCalled();
+
+      fetchSpy.mockRestore();
+    });
+
+    it('serves a stale cache (does not throw) when a refresh fails', async () => {
+      const cached = [{ name: 'cached', label: 'Cached', modelHint: 'm' }];
+      (
+        service as unknown as {
+          providersCache: { expiresAt: number; data: typeof cached };
+        }
+      ).providersCache = { expiresAt: Date.now() - 1_000, data: cached };
+
       const fetchSpy = vi
         .spyOn(globalThis, 'fetch')
         .mockRejectedValue(new Error('Network error'));
 
       const result = await service.listProviders();
 
-      expect(result.providers.length).toBeGreaterThan(0);
-      expect(result.providers).toEqual(FALLBACK_PROVIDERS);
-      expect(logger.error as ReturnType<typeof vi.fn>).toHaveBeenCalled();
-
-      fetchSpy.mockRestore();
-    });
-
-    it('falls back to the bundled snapshot when the response is not a JSON array', async () => {
-      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
-        ok: true,
-        json: () => Promise.resolve({ not: 'an-array' }),
-      } as Response);
-
-      const result = await service.listProviders();
-
-      expect(result.providers).toEqual(FALLBACK_PROVIDERS);
+      expect(result.providers).toEqual(cached);
       expect(logger.error as ReturnType<typeof vi.fn>).toHaveBeenCalled();
 
       fetchSpy.mockRestore();

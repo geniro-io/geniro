@@ -10,7 +10,6 @@ import {
   UpdateLiteLlmModelDto,
 } from '../dto/models.dto';
 import { LiteLlmProviderEntry } from '../litellm.types';
-import { FALLBACK_PROVIDERS } from '../litellm-providers.fallback';
 import { LiteLlmClient } from './litellm.client';
 
 const PROVIDERS_URL =
@@ -162,10 +161,13 @@ export class LiteLlmAdminService {
         this.logger.error(
           `Failed to fetch LiteLLM providers: ${err instanceof Error ? err.message : String(err)}`,
         );
-        // Fall back to the bundled snapshot (never to an empty list) so the
-        // provider picker stays populated through a transient fetch failure.
-        // Not cached, so the next call retries the live source.
-        return this.providersCache?.data ?? FALLBACK_PROVIDERS;
+        // Serve a warm cache through a transient fetch failure. With no cache,
+        // fail loud so the endpoint surfaces an error rather than a silent
+        // empty list. Not cached on this path, so the next call retries live.
+        if (this.providersCache) {
+          return this.providersCache.data;
+        }
+        throw err;
       }
     })().finally(() => {
       this.providersInFlight = null;
