@@ -12,6 +12,7 @@ import { GraphStatus } from '../../../v1/graphs/graphs.types';
 import { GraphRegistry } from '../../../v1/graphs/services/graph-registry';
 import { GraphsService } from '../../../v1/graphs/services/graphs.service';
 import { ProjectsDao } from '../../../v1/projects/dao/projects.dao';
+import { ThreadsDao } from '../../../v1/threads/dao/threads.dao';
 import { ThreadsService } from '../../../v1/threads/services/threads.service';
 import { ThreadStatus } from '../../../v1/threads/threads.types';
 import {
@@ -421,6 +422,86 @@ describe('Thread Management Integration Tests', () => {
               (t as { externalThreadId: string }).externalThreadId === threadId,
           ),
         ).toHaveLength(1);
+      },
+    );
+  });
+
+  describe('Thread Project Isolation', () => {
+    it(
+      'getThreads isolates threads by active project in both directions',
+      { timeout: 60000 },
+      async () => {
+        const userId = contextDataStorage.checkSub();
+        const threadsDao = app.get(ThreadsDao);
+        const projectsDao = app.get(ProjectsDao);
+
+        // Captured for cleanup; guarded in finally so a mid-setup throw never
+        // leaks the project / thread rows it already created.
+        let projectBId: string | undefined;
+        let threadAId: string | undefined;
+        let threadBId: string | undefined;
+
+        try {
+          // Second project owned by the same user, with its own ctx (carries
+          // a different x-project-id header).
+          const projectB = await createTestProject(app);
+          projectBId = projectB.projectId;
+
+          const externalA = uniqueThreadSubId('project-a-thread');
+          const externalB = uniqueThreadSubId('project-b-thread');
+
+          // Seed one thread per project. Both reference the existing
+          // basicGraphId to satisfy the threads.graph_id FK; the differing
+          // projectId is exactly what getThreads must isolate on. They share
+          // the same createdBy, so without the project filter each would leak
+          // into the other project's list.
+          const threadA = await threadsService.ensureThreadRow({
+            graphId: basicGraphId,
+            createdBy: userId,
+            projectId: testProjectId,
+            externalThreadId: externalA,
+            status: ThreadStatus.Running,
+          });
+          threadAId = threadA.id;
+          const threadB = await threadsService.ensureThreadRow({
+            graphId: basicGraphId,
+            createdBy: userId,
+            projectId: projectB.projectId,
+            externalThreadId: externalB,
+            status: ThreadStatus.Running,
+          });
+          threadBId = threadB.id;
+
+          const projectAExternalIds = (
+            await threadsService.getThreads(contextDataStorage, {
+              limit: 500,
+              offset: 0,
+            })
+          ).map((t) => (t as { externalThreadId: string }).externalThreadId);
+
+          expect(projectAExternalIds).toContain(externalA);
+          expect(projectAExternalIds).not.toContain(externalB);
+
+          const projectBExternalIds = (
+            await threadsService.getThreads(projectB.ctx, {
+              limit: 500,
+              offset: 0,
+            })
+          ).map((t) => (t as { externalThreadId: string }).externalThreadId);
+
+          expect(projectBExternalIds).toContain(externalB);
+          expect(projectBExternalIds).not.toContain(externalA);
+        } finally {
+          if (threadAId) {
+            await threadsDao.hardDeleteById(threadAId);
+          }
+          if (threadBId) {
+            await threadsDao.hardDeleteById(threadBId);
+          }
+          if (projectBId) {
+            await projectsDao.deleteById(projectBId);
+          }
+        }
       },
     );
   });

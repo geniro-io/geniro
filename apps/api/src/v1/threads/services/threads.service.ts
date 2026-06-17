@@ -207,6 +207,7 @@ export class ThreadsService {
     const threads = await this.threadDao.getAll(
       {
         createdBy: userId,
+        projectId: ctx.checkProjectId(),
         ...filter,
         ...(statuses ? { status: { $in: statuses } } : {}),
       },
