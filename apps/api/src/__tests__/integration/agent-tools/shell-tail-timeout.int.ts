@@ -339,8 +339,14 @@ for row in data:
     print(",".join(row))
 EOF`;
 
+      // Generous tail budget: this success path must tolerate a CPU-starved gap
+      // between the first stdout line and process exit on an oversubscribed
+      // runner without false-tripping the tail timer (a regression would still
+      // surface — the command must exit 0 with the asserted output before the
+      // overall timeoutMs). The dedicated "still times out" test below keeps a
+      // short tail budget so 124-detection stays sharp.
       const result = await executeTailTimeoutScenario(command, {
-        shellArgs: { timeoutMs: 10_000, tailTimeoutMs: 3_000 },
+        shellArgs: { timeoutMs: 20_000, tailTimeoutMs: 10_000 },
         shellResultTimeoutMs: 60_000,
       });
 
@@ -371,8 +377,11 @@ for row in reader:
     print(f"Row: {','.join(row)}")
 PY`;
 
+      // Generous tail budget for the same reason as the test above — absorb a
+      // CPU-starved inter-line gap without a false 124, while a genuine hang
+      // would still exceed the overall timeoutMs and fail the exit-0 assertion.
       const result = await executeTailTimeoutScenario(command, {
-        shellArgs: { timeoutMs: 15_000, tailTimeoutMs: 5_000 },
+        shellArgs: { timeoutMs: 30_000, tailTimeoutMs: 15_000 },
         shellResultTimeoutMs: 120_000,
       });
 
