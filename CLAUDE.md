@@ -322,6 +322,7 @@ When all four are set, the `GET /api/system/settings` endpoint returns `githubAp
 - **E2E tests** (`*.cy.ts`): in `apps/api/cypress/e2e/`. Smoke-test endpoints over HTTP. Require a running server + deps.
 - **E2E type safety**: When creating or modifying E2E tests, always regenerate API type definitions first (`cd apps/api && pnpm test:e2e:generate-api`). E2E helpers and tests **must** import request/response types from `../../api-definitions` (e.g. `import type { GraphDto, GetAllGraphsData } from '../../api-definitions'`) instead of defining inline types. Use the generated `*Data['query']` types for query parameters and the generated `*Dto` types for response bodies.
 - **Must-fail policy**: Tests must never conditionally skip based on missing env vars or services. If a prerequisite is absent, the test must fail with a clear error — no `it.skip` or early returns.
+- **No flaky tests**: A flaky/nondeterministic test is a bug, never an accepted steady state. When a test flakes (locally or on CI), surface it explicitly and propose a real fix for the underlying nondeterminism — "re-run and move on" or a band-aid env var is not a fix. More generally: when ANY pre-existing problem (failing test, broken local-env step, infra error, latent bug) surfaces mid-task, surface it and propose a fix even if it is unrelated to the current task; never silently skip it as "not my code."
 - **Coverage thresholds** (when enabled): 90% lines/functions/statements, 80% branches.
 - **E2E logging**: use `cy.task('log', message)` to print to terminal output.
 
