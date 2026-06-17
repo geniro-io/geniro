@@ -36,8 +36,11 @@ describe('ThreadsService', () => {
   const mockGraphId = 'graph-456';
   const mockThreadId = 'thread-789';
 
+  const mockProjectId = 'project-abc';
+
   const mockCtx = {
     checkSub: vi.fn().mockReturnValue(mockUserId),
+    checkProjectId: vi.fn().mockReturnValue(mockProjectId),
   } as unknown as AppContextStorage;
 
   const createMockThreadEntity = (
@@ -202,6 +205,7 @@ describe('ThreadsService', () => {
       expect(threadsDao.getAll).toHaveBeenCalledWith(
         {
           createdBy: mockUserId,
+          projectId: mockProjectId,
           graphId: mockGraphId,
         },
         { orderBy: { updatedAt: 'DESC' }, limit: 50, offset: 0 },
@@ -236,6 +240,7 @@ describe('ThreadsService', () => {
       expect(threadsDao.getAll).toHaveBeenCalledWith(
         {
           createdBy: mockUserId,
+          projectId: mockProjectId,
           graphId: mockGraphId,
           status: { $in: [ThreadStatus.Done] },
         },
@@ -262,6 +267,7 @@ describe('ThreadsService', () => {
       expect(threadsDao.getAll).toHaveBeenCalledWith(
         {
           createdBy: mockUserId,
+          projectId: mockProjectId,
         },
         { orderBy: { updatedAt: 'DESC' }, limit: 25, offset: 5 },
       );
