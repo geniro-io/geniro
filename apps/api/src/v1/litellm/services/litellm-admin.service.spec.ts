@@ -2,6 +2,7 @@ import type { DefaultLogger } from '@packages/common';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { LiteLLMModelInfo } from '../litellm.types';
+import { FALLBACK_PROVIDERS } from '../litellm-providers.fallback';
 import type { LiteLlmClient } from './litellm.client';
 import { LiteLlmAdminService } from './litellm-admin.service';
 
@@ -304,14 +305,65 @@ describe('LiteLlmAdminService', () => {
       fetchSpy.mockRestore();
     });
 
-    it('returns empty array and logs error on fetch failure', async () => {
+    it('dedupes providers that share the same litellm_provider id', async () => {
+      const mockProviders = [
+        {
+          litellm_provider: 'openai',
+          provider_display_name: 'OpenAI',
+          default_model_placeholder: 'gpt-4o',
+        },
+        {
+          litellm_provider: 'openai',
+          provider_display_name: 'OpenAI-Compatible Endpoints',
+        },
+        {
+          litellm_provider: 'anthropic',
+          provider_display_name: 'Anthropic',
+          default_model_placeholder: 'claude-3-opus',
+        },
+      ];
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve(mockProviders),
+      } as Response);
+
+      const result = await service.listProviders();
+
+      const names = result.providers.map((p) => p.name);
+      expect(names).toEqual(['openai', 'anthropic']);
+      expect(new Set(names).size).toBe(names.length);
+      expect(result.providers[0]).toEqual({
+        name: 'openai',
+        label: 'OpenAI',
+        modelHint: 'gpt-4o',
+      });
+
+      fetchSpy.mockRestore();
+    });
+
+    it('falls back to the bundled snapshot (never empty) and logs on fetch failure', async () => {
       const fetchSpy = vi
         .spyOn(globalThis, 'fetch')
         .mockRejectedValue(new Error('Network error'));
 
       const result = await service.listProviders();
 
-      expect(result.providers).toEqual([]);
+      expect(result.providers.length).toBeGreaterThan(0);
+      expect(result.providers).toEqual(FALLBACK_PROVIDERS);
+      expect(logger.error as ReturnType<typeof vi.fn>).toHaveBeenCalled();
+
+      fetchSpy.mockRestore();
+    });
+
+    it('falls back to the bundled snapshot when the response is not a JSON array', async () => {
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ not: 'an-array' }),
+      } as Response);
+
+      const result = await service.listProviders();
+
+      expect(result.providers).toEqual(FALLBACK_PROVIDERS);
       expect(logger.error as ReturnType<typeof vi.fn>).toHaveBeenCalled();
 
       fetchSpy.mockRestore();

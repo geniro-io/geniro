@@ -10,6 +10,7 @@ import {
   UpdateLiteLlmModelDto,
 } from '../dto/models.dto';
 import { LiteLlmProviderEntry } from '../litellm.types';
+import { FALLBACK_PROVIDERS } from '../litellm-providers.fallback';
 import { LiteLlmClient } from './litellm.client';
 
 const PROVIDERS_URL =
@@ -147,12 +148,11 @@ export class LiteLlmAdminService {
             `Failed to fetch providers: ${response.status} ${response.statusText}`,
           );
         }
-        const raw = (await response.json()) as RawProviderField[];
-        const providers: LiteLlmProviderEntry[] = raw.map((p) => ({
-          name: p.litellm_provider,
-          label: p.provider_display_name,
-          modelHint: p.default_model_placeholder ?? '',
-        }));
+        const raw = (await response.json()) as unknown;
+        if (!Array.isArray(raw)) {
+          throw new Error('Provider list response was not a JSON array');
+        }
+        const providers = this.mapProviders(raw as RawProviderField[]);
         this.providersCache = {
           expiresAt: Date.now() + PROVIDERS_TTL_MS,
           data: providers,
@@ -162,7 +162,10 @@ export class LiteLlmAdminService {
         this.logger.error(
           `Failed to fetch LiteLLM providers: ${err instanceof Error ? err.message : String(err)}`,
         );
-        return this.providersCache?.data ?? [];
+        // Fall back to the bundled snapshot (never to an empty list) so the
+        // provider picker stays populated through a transient fetch failure.
+        // Not cached, so the next call retries the live source.
+        return this.providersCache?.data ?? FALLBACK_PROVIDERS;
       }
     })().finally(() => {
       this.providersInFlight = null;
@@ -170,6 +173,26 @@ export class LiteLlmAdminService {
 
     this.providersInFlight = promise;
     return promise;
+  }
+
+  // Upstream provider_create_fields.json carries multiple entries that collapse
+  // to the same litellm_provider id (e.g. `openai` chat + its OpenAI-Compatible
+  // variant). Dedupe by id so consumers never receive colliding keys.
+  private mapProviders(raw: RawProviderField[]): LiteLlmProviderEntry[] {
+    const seen = new Set<string>();
+    const providers: LiteLlmProviderEntry[] = [];
+    for (const p of raw) {
+      if (seen.has(p.litellm_provider)) {
+        continue;
+      }
+      seen.add(p.litellm_provider);
+      providers.push({
+        name: p.litellm_provider,
+        label: p.provider_display_name,
+        modelHint: p.default_model_placeholder ?? '',
+      });
+    }
+    return providers;
   }
 
   async listCredentials() {

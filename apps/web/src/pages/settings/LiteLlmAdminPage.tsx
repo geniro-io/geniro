@@ -618,7 +618,10 @@ function ModelFormDialog({
                     <CommandGroup>
                       {providers.map((p) => (
                         <CommandItem
-                          key={p.name}
+                          // Key on the (unique) label, not the provider id —
+                          // upstream can emit two providers sharing one id, and
+                          // cmdk already requires `value` (the label) to be unique.
+                          key={p.label}
                           value={p.label}
                           onSelect={() => {
                             handleProviderChange(p.name);
