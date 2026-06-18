@@ -26,6 +26,7 @@ import {
   type BridgeCommand,
   type BridgeEvent,
   type BridgeStartOptions,
+  GENIRO_MCP_SERVER_KEY,
   type SdkMessage,
 } from './protocol.types';
 
@@ -268,7 +269,11 @@ async function runSession(
             Object.keys(options.externalMcpServers).length > 0)) && {
           mcpServers: {
             ...(options.tools?.length && {
-              geniro: buildGeniroMcpServer(options.tools, emit, toolRequests),
+              [GENIRO_MCP_SERVER_KEY]: buildGeniroMcpServer(
+                options.tools,
+                emit,
+                toolRequests,
+              ),
             }),
             ...options.externalMcpServers,
           },

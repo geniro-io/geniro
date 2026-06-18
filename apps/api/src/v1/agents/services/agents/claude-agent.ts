@@ -5,7 +5,10 @@ import {
 } from '@langchain/core/messages';
 import { RunnableConfig } from '@langchain/core/runnables';
 import { Injectable, Scope } from '@nestjs/common';
-import type { SerializableMcpConfig } from '@packages/claude-bridge';
+import {
+  GENIRO_MCP_SERVER_KEY,
+  type SerializableMcpConfig,
+} from '@packages/claude-bridge';
 import { DefaultLogger, InternalException } from '@packages/common';
 import { v4 } from 'uuid';
 
@@ -1158,7 +1161,11 @@ export class ClaudeAgent
     name: string,
     existing: Record<string, SerializableMcpConfig>,
   ): string {
-    if (!(name in existing)) {
+    // `GENIRO_MCP_SERVER_KEY` is reserved: the bridge registers its in-process
+    // Geniro tool server under it and spreads external servers AFTER, so an
+    // external block resolving to that name must be suffixed rather than left
+    // to clobber the Geniro tools.
+    if (name !== GENIRO_MCP_SERVER_KEY && !(name in existing)) {
       return name;
     }
     let suffix = 2;

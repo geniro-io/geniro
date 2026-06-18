@@ -12,6 +12,7 @@ import {
   vi,
 } from 'vitest';
 
+import type { BaseMcp } from '../../../v1/agent-mcp/services/base-mcp';
 import { CustomMcp } from '../../../v1/agent-mcp/services/mcp/custom-mcp';
 import { FilesystemMcp } from '../../../v1/agent-mcp/services/mcp/filesystem-mcp';
 import { PlaywrightMcp } from '../../../v1/agent-mcp/services/mcp/playwright-mcp';
@@ -356,6 +357,94 @@ describe('Claude Agent — external MCP reuse (integration)', () => {
       (s) => (s as { args: string[] }).args[0],
     );
     expect(commands.sort()).toEqual(['server-a', 'server-b']);
+  });
+
+  it('de-duplicates a 3+ chain of same-named blocks (custom-mcp, -2, -3)', async () => {
+    const { agent, config } = await prepareAgent();
+    agent.setExternalMcpServers([
+      {
+        instance: new CustomMcp(createLogger()),
+        config: { command: 'npx server-a' },
+        nodeId: 'mcp-a',
+      },
+      {
+        instance: new CustomMcp(createLogger()),
+        config: { command: 'npx server-b' },
+        nodeId: 'mcp-b',
+      },
+      {
+        instance: new CustomMcp(createLogger()),
+        config: { command: 'npx server-c' },
+        nodeId: 'mcp-c',
+      },
+    ]);
+
+    const { externalMcpServers } = await captureExternalMcpServers(
+      agent,
+      config,
+    );
+
+    // The increment loop (not a fixed `-2`) must walk to `-3` on the third
+    // collision; a hard-coded suffix would collapse two blocks' tool namespaces.
+    expect(Object.keys(externalMcpServers!).sort()).toEqual([
+      'custom-mcp',
+      'custom-mcp-2',
+      'custom-mcp-3',
+    ]);
+    const commands = Object.values(externalMcpServers!).map(
+      (s) => (s as { args: string[] }).args[0],
+    );
+    expect(commands.sort()).toEqual(['server-a', 'server-b', 'server-c']);
+  });
+
+  it('skips a block that resolves to a blank command (empty-command guard)', async () => {
+    const { agent, config } = await prepareAgent();
+    // A whitespace-only command is truthy, so getMcpConfig returns it without
+    // throwing; the resolver's own `!command` guard (distinct from the
+    // getMcpConfig-throws skip path) must drop it.
+    const blank = new CustomMcp(createLogger());
+    const good = new CustomMcp(createLogger());
+    agent.setExternalMcpServers([
+      { instance: blank, config: { command: '   ' }, nodeId: 'mcp-blank' },
+      { instance: good, config: { command: 'npx good-server' }, nodeId: 'ok' },
+    ]);
+
+    const { seen, externalMcpServers } = await captureExternalMcpServers(
+      agent,
+      config,
+    );
+
+    expect(seen).toBe(true); // run completed — the blank block did not abort it
+    expect(Object.keys(externalMcpServers!)).toEqual(['custom-mcp']);
+    expect(externalMcpServers!['custom-mcp']).toMatchObject({
+      command: 'npx',
+      args: ['good-server'],
+    });
+  });
+
+  it('suffixes an external block colliding with the reserved `geniro` bridge key', async () => {
+    const { agent, config } = await prepareAgent();
+    // A block resolving to the name `geniro` must NOT take that key: the bridge
+    // registers its in-process Geniro tool server there and spreads external
+    // servers AFTER it, so an un-suffixed `geniro` external key would clobber it.
+    const geniroNamed = {
+      resolveServerConfigForRuntime: async () => ({
+        name: 'geniro',
+        command: 'npx',
+        args: ['geniro-clone'],
+      }),
+    } as unknown as BaseMcp;
+    agent.setExternalMcpServers([
+      { instance: geniroNamed, config: {}, nodeId: 'mcp-geniro' },
+    ]);
+
+    const { externalMcpServers } = await captureExternalMcpServers(
+      agent,
+      config,
+    );
+
+    expect(Object.keys(externalMcpServers!)).toEqual(['geniro-2']);
+    expect(externalMcpServers).not.toHaveProperty('geniro');
   });
 
   it('sends no externalMcpServers when no MCP block is connected', async () => {

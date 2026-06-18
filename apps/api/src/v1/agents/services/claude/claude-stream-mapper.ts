@@ -2,6 +2,7 @@ import { AIMessage, BaseMessage, ToolMessage } from '@langchain/core/messages';
 import type { ToolCall } from '@langchain/core/messages/tool';
 import { RunnableConfig } from '@langchain/core/runnables';
 import {
+  GENIRO_MCP_SERVER_KEY,
   SdkAssistantMessage,
   SdkContentBlock,
   SdkMessage,
@@ -18,7 +19,7 @@ import {
 } from '../../agents.utils';
 import { AgentEventType } from '../agents/base-agent';
 
-const GENIRO_MCP_PREFIX = 'mcp__geniro__';
+const GENIRO_MCP_PREFIX = `mcp__${GENIRO_MCP_SERVER_KEY}__`;
 
 export type ClaudeMapperParams = {
   threadId: string;

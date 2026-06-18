@@ -114,6 +114,15 @@ export type SdkMessage =
 // ---------------------------------------------------------------------------
 
 /**
+ * The map key under which the bridge registers its in-process Geniro tool
+ * server in the SDK `mcpServers` map; the SDK then exposes those tools as
+ * `mcp__geniro__<name>`. Single source of truth shared by the bridge producer
+ * (`geniro-mcp.ts`), the host-side dedup reserve (`claude-agent.ts`), and the
+ * host-side prefix strip (`claude-stream-mapper.ts`) so the three cannot drift.
+ */
+export const GENIRO_MCP_SERVER_KEY = 'geniro';
+
+/**
  * A Geniro tool forwarded into the SDK session. The bridge registers each one
  * on its in-process MCP server (exposed as `mcp__geniro__<name>`); invocations
  * are proxied back to the host as `tool_call_request` events and resolved by

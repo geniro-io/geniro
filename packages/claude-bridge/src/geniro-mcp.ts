@@ -17,7 +17,11 @@ import {
 } from '@anthropic-ai/claude-agent-sdk';
 
 import { jsonSchemaToZodShape } from './json-schema-to-zod';
-import type { BridgeEvent, BridgeToolDefinition } from './protocol.types';
+import {
+  type BridgeEvent,
+  type BridgeToolDefinition,
+  GENIRO_MCP_SERVER_KEY,
+} from './protocol.types';
 import { sanitizeBridgeQuestions } from './question-sanitizer';
 
 /** Resolution of a `tool_call_request`: exactly one of `result`/`error`. */
@@ -151,7 +155,7 @@ export function buildGeniroMcpServer(
   toolRequests: PendingHostRequests<ToolCallResolution>,
 ): McpSdkServerConfigWithInstance {
   return createSdkMcpServer({
-    name: 'geniro',
+    name: GENIRO_MCP_SERVER_KEY,
     tools: buildGeniroSdkTools(definitions, emit, toolRequests),
   });
 }
