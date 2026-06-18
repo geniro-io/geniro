@@ -13,6 +13,13 @@ import type {
 } from '../types';
 import { mergeTokenUsageByNode, sumUsage } from '../utils/chatsPageUtils';
 
+// Claude models default to a 200K-token context window; the Claude Agent node's
+// "1M context" (maxContext) flag opts into the 1M window (the `[1m]` model
+// variant). Used as the context-usage denominator for claude-agent nodes, which
+// — unlike simple-agent — have no `summarizeMaxTokens` config field.
+const CLAUDE_BASE_CONTEXT_WINDOW = 200_000;
+const CLAUDE_MAX_CONTEXT_WINDOW = 1_000_000;
+
 interface UseChatsUsageStatsDeps {
   toastMessage: ToastMessageApi;
   selectedThread: ThreadDto | DraftThread | undefined;
@@ -150,6 +157,31 @@ export const useChatsUsageStats = (deps: UseChatsUsageStatsDeps) => {
       return isAgent ? 'simple-agent' : undefined;
     },
     [selectedThreadFullGraph, selectedThreadGraph],
+  );
+
+  // The context-usage denominator for an agent node. simple-agent nodes carry an
+  // explicit `summarizeMaxTokens`; claude-agent nodes derive it from the model's
+  // window (200K, or 1M when the node's `maxContext` flag is set). Other node
+  // types have no context gauge → undefined.
+  const getNodeContextWindow = useCallback(
+    (nodeId: string): number | undefined => {
+      const templateId = getNodeTemplateId(nodeId);
+      if (templateId === 'simple-agent') {
+        const maxTokens = getNodeConfigNumber(nodeId, 'summarizeMaxTokens');
+        return maxTokens && maxTokens > 0 ? maxTokens : undefined;
+      }
+      if (templateId === 'claude-agent') {
+        const node = selectedThreadFullGraph?.schema?.nodes.find(
+          (n) => n.id === nodeId,
+        );
+        const maxContext = node?.config?.maxContext === true;
+        return maxContext
+          ? CLAUDE_MAX_CONTEXT_WINDOW
+          : CLAUDE_BASE_CONTEXT_WINDOW;
+      }
+      return undefined;
+    },
+    [getNodeConfigNumber, getNodeTemplateId, selectedThreadFullGraph],
   );
 
   const getNodeConfigString = useCallback(
@@ -317,10 +349,7 @@ export const useChatsUsageStats = (deps: UseChatsUsageStatsDeps) => {
       if (!usage) {
         return;
       }
-      if (getNodeTemplateId(nodeId) !== 'simple-agent') {
-        return;
-      }
-      const maxTokens = getNodeConfigNumber(nodeId, 'summarizeMaxTokens');
+      const maxTokens = getNodeContextWindow(nodeId);
       if (!maxTokens || maxTokens <= 0) {
         return;
       }
@@ -338,7 +367,7 @@ export const useChatsUsageStats = (deps: UseChatsUsageStatsDeps) => {
     }
     const percent = (sumContext / sumMaxTokens) * 100;
     return Number.isFinite(percent) ? percent : undefined;
-  }, [getNodeConfigNumber, getNodeTemplateId, selectedThreadUsageByNode]);
+  }, [getNodeContextWindow, selectedThreadUsageByNode]);
 
   const selectedThreadContextMaxTokens = useMemo(() => {
     const entries = Object.entries(selectedThreadUsageByNode);
@@ -348,10 +377,7 @@ export const useChatsUsageStats = (deps: UseChatsUsageStatsDeps) => {
     let sumMaxTokens = 0;
     let hasAny = false;
     entries.forEach(([nodeId]) => {
-      if (getNodeTemplateId(nodeId) !== 'simple-agent') {
-        return;
-      }
-      const maxTokens = getNodeConfigNumber(nodeId, 'summarizeMaxTokens');
+      const maxTokens = getNodeContextWindow(nodeId);
       if (!maxTokens || maxTokens <= 0) {
         return;
       }
@@ -359,7 +385,7 @@ export const useChatsUsageStats = (deps: UseChatsUsageStatsDeps) => {
       hasAny = true;
     });
     return hasAny && sumMaxTokens > 0 ? sumMaxTokens : undefined;
-  }, [getNodeConfigNumber, getNodeTemplateId, selectedThreadUsageByNode]);
+  }, [getNodeContextWindow, selectedThreadUsageByNode]);
 
   const selectedThreadHeaderUsage = useMemo(() => {
     if (selectedAgentNodeId) {
@@ -420,14 +446,7 @@ export const useChatsUsageStats = (deps: UseChatsUsageStatsDeps) => {
       if (!usage) {
         return undefined;
       }
-      const templateId = getNodeTemplateId(selectedAgentNodeId);
-      if (templateId !== 'simple-agent') {
-        return undefined;
-      }
-      const maxTokens = getNodeConfigNumber(
-        selectedAgentNodeId,
-        'summarizeMaxTokens',
-      );
+      const maxTokens = getNodeContextWindow(selectedAgentNodeId);
       if (!maxTokens || maxTokens <= 0) {
         return undefined;
       }
@@ -443,28 +462,19 @@ export const useChatsUsageStats = (deps: UseChatsUsageStatsDeps) => {
     selectedAgentNodeId,
     selectedThreadUsageByNode,
     selectedThreadContextPercent,
-    getNodeConfigNumber,
-    getNodeTemplateId,
+    getNodeContextWindow,
   ]);
 
   const selectedThreadHeaderContextMaxTokens = useMemo(() => {
     if (selectedAgentNodeId) {
-      const templateId = getNodeTemplateId(selectedAgentNodeId);
-      if (templateId !== 'simple-agent') {
-        return undefined;
-      }
-      const maxTokens = getNodeConfigNumber(
-        selectedAgentNodeId,
-        'summarizeMaxTokens',
-      );
+      const maxTokens = getNodeContextWindow(selectedAgentNodeId);
       return maxTokens && maxTokens > 0 ? maxTokens : undefined;
     }
     return selectedThreadContextMaxTokens;
   }, [
     selectedAgentNodeId,
     selectedThreadContextMaxTokens,
-    getNodeConfigNumber,
-    getNodeTemplateId,
+    getNodeContextWindow,
   ]);
 
   const selectedThreadNodeDisplayNames = useMemo(() => {

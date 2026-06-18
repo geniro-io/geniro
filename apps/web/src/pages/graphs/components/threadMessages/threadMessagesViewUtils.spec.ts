@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { formatDurationMs } from './threadMessagesViewUtils';
+import {
+  deriveSdkToolTitle,
+  formatDurationMs,
+} from './threadMessagesViewUtils';
 
 describe('formatDurationMs', () => {
   it('returns em-dash for non-finite or non-positive', () => {
@@ -37,5 +40,52 @@ describe('formatDurationMs', () => {
     expect(formatDurationMs(359_500)).toBe('6m');
     // 59.5s should bubble up to "1m", not "0m 60s".
     expect(formatDurationMs(59_500)).toBe('1m');
+  });
+});
+
+describe('deriveSdkToolTitle', () => {
+  it('builds "verb + primary arg" labels for the common SDK tools', () => {
+    expect(
+      deriveSdkToolTitle('Write', { file_path: '/runtime-workspace/hello.js' }),
+    ).toBe('Write /runtime-workspace/hello.js');
+    expect(deriveSdkToolTitle('Read', { file_path: '/etc/hosts' })).toBe(
+      'Read /etc/hosts',
+    );
+    expect(deriveSdkToolTitle('Edit', { file_path: 'src/app.ts' })).toBe(
+      'Edit src/app.ts',
+    );
+    expect(deriveSdkToolTitle('Bash', { command: 'node hello.js' })).toBe(
+      'Run node hello.js',
+    );
+    expect(deriveSdkToolTitle('Grep', { pattern: 'TODO' })).toBe('Search TODO');
+  });
+
+  it('accepts a JSON-string args payload', () => {
+    expect(deriveSdkToolTitle('Write', '{"file_path":"/tmp/a.txt"}')).toBe(
+      'Write /tmp/a.txt',
+    );
+  });
+
+  it('returns a fixed label for TodoWrite (no primary arg)', () => {
+    expect(deriveSdkToolTitle('TodoWrite', { todos: [] })).toBe(
+      'Update to-dos',
+    );
+  });
+
+  it('returns undefined for unknown tools or a missing primary arg (falls back to name)', () => {
+    expect(deriveSdkToolTitle('subagents_run_task', { purpose: 'x' })).toBe(
+      undefined,
+    );
+    expect(deriveSdkToolTitle('Write', {})).toBe(undefined);
+    expect(deriveSdkToolTitle('Write', undefined)).toBe(undefined);
+    expect(deriveSdkToolTitle(undefined, { file_path: 'x' })).toBe(undefined);
+  });
+
+  it('truncates an over-long label', () => {
+    const longPath = '/'.padEnd(300, 'a');
+    const title = deriveSdkToolTitle('Write', { file_path: longPath });
+    expect(title).toBeDefined();
+    expect(title!.length).toBeLessThanOrEqual(120);
+    expect(title!.endsWith('…')).toBe(true);
   });
 });

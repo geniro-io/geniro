@@ -12,7 +12,11 @@ import { PassThrough } from 'node:stream';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { serializeFrame } from './json-line-parser';
-import type { BridgeCommand } from './protocol.types';
+import type {
+  BridgeCommand,
+  BridgeStartOptions,
+  BridgeToolDefinition,
+} from './protocol.types';
 
 const mocks = vi.hoisted(() => ({
   query: vi.fn(),
@@ -34,6 +38,7 @@ type StreamedUserMessage = {
 
 type QueryArgs = {
   prompt: string | AsyncIterable<StreamedUserMessage>;
+  options?: { mcpServers?: Record<string, unknown> };
 };
 
 type Deferred<T> = { promise: Promise<T>; resolve: (value: T) => void };
@@ -402,5 +407,98 @@ describe('bridge stdin command delivery', () => {
     expect(
       frames.some((frame) => frame.type === 'done' || frame.type === 'aborted'),
     ).toBe(false);
+  });
+});
+
+describe('bridge mcpServers merge', () => {
+  const toolDef: BridgeToolDefinition = {
+    name: 'echo',
+    description: 'echo a string',
+    inputSchema: { type: 'object', properties: {} },
+  };
+
+  /** Boots the bridge with `start` and returns the `mcpServers` the SDK saw. */
+  async function captureMcpServers(
+    options: BridgeStartOptions,
+  ): Promise<{ seen: boolean; mcpServers?: Record<string, unknown> }> {
+    let captured: Record<string, unknown> | undefined;
+    let seen = false;
+    mocks.query.mockImplementation((args: QueryArgs) => {
+      captured = args.options?.mcpServers;
+      seen = true;
+      drainPrompt(args.prompt, []);
+      return (async function* () {
+        await waitMs(20);
+        yield { type: 'result', subtype: 'success', session_id: 'session-1' };
+      })();
+    });
+
+    const harness = await bootBridge();
+    harness.sendChunk([{ type: 'start', options }]);
+    await harness.exited;
+    return { seen, mcpServers: captured };
+  }
+
+  it('registers only the geniro server when tools are present and no external MCP servers', async () => {
+    const { seen, mcpServers } = await captureMcpServers({
+      prompt: 'p',
+      model: 'claude-test',
+      tools: [toolDef],
+    });
+    expect(seen).toBe(true);
+    expect(mcpServers).toBeDefined();
+    expect(Object.keys(mcpServers!)).toEqual(['geniro']);
+  });
+
+  it('registers external MCP servers WITHOUT an empty geniro entry when no tools are wired', async () => {
+    const { mcpServers } = await captureMcpServers({
+      prompt: 'p',
+      model: 'claude-test',
+      externalMcpServers: {
+        'custom-mcp': { type: 'stdio', command: 'npx', args: ['-y', 'srv'] },
+      },
+    });
+    expect(mcpServers).toBeDefined();
+    expect('geniro' in mcpServers!).toBe(false);
+    expect(mcpServers!['custom-mcp']).toEqual({
+      type: 'stdio',
+      command: 'npx',
+      args: ['-y', 'srv'],
+    });
+  });
+
+  it('merges the geniro server alongside external MCP servers when both are present', async () => {
+    const { mcpServers } = await captureMcpServers({
+      prompt: 'p',
+      model: 'claude-test',
+      tools: [toolDef],
+      externalMcpServers: {
+        filesystem: { type: 'stdio', command: 'npx', args: ['fs', '/work'] },
+      },
+    });
+    expect(mcpServers).toBeDefined();
+    expect('geniro' in mcpServers!).toBe(true);
+    expect('filesystem' in mcpServers!).toBe(true);
+  });
+
+  it('omits mcpServers entirely when neither tools nor external MCP servers are present', async () => {
+    const { seen, mcpServers } = await captureMcpServers({
+      prompt: 'p',
+      model: 'claude-test',
+    });
+    expect(seen).toBe(true);
+    expect(mcpServers).toBeUndefined();
+  });
+
+  it('omits mcpServers when externalMcpServers is an empty object and no tools are wired', async () => {
+    // An empty object is truthy — the guard must check key count so the bridge
+    // never registers an empty mcpServers map regardless of what the caller sends.
+    const { seen, mcpServers } = await captureMcpServers({
+      prompt: 'p',
+      model: 'claude-test',
+      externalMcpServers: {},
+    });
+    expect(seen).toBe(true);
+    expect(mcpServers).toBeUndefined();
   });
 });

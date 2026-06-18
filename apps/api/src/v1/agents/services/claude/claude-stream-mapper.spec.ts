@@ -306,6 +306,9 @@ describe('ClaudeStreamMapper', () => {
       outputTokens: 100,
       totalTokens: 1100,
       totalPrice: 0.5,
+      // The turn's input size is the context proxy — point-in-time, stamped
+      // so the thread rollup can surface a context-usage % for Claude threads.
+      currentContext: 1000,
     });
     expect(mapper.getTotalPriceUsd()).toBeCloseTo(0.5);
 
@@ -313,6 +316,42 @@ describe('ClaudeStreamMapper', () => {
     expect(finalSnapshot.data.stateChange).toMatchObject({
       totalTokens: 1100,
       totalPrice: 0.5,
+      currentContext: 1000,
+    });
+  });
+
+  it('stamps currentContext as the full input (regular + cache create + read) onto the parent message', () => {
+    // Cache-heavy turn: the live context is regular input + cache-creation +
+    // cache-read, even though only `input_tokens` is "new". currentContext must
+    // reflect the whole prompt size so the context gauge denominator is right.
+    mapper.onSdkMessage(
+      assistant({ usage: { input_tokens: 0, output_tokens: 0 } }),
+    );
+
+    const result: SdkResultMessage = {
+      type: 'result',
+      subtype: 'success',
+      session_id: 'sess-1',
+      total_cost_usd: 0.2,
+      usage: {
+        input_tokens: 2_000,
+        cache_creation_input_tokens: 3_000,
+        cache_read_input_tokens: 30_000,
+        output_tokens: 500,
+      },
+    };
+    mapper.onSdkMessage(result);
+
+    const ai = messageEvents()[0]!.data.messages[0] as AIMessage;
+    const usage = ai.additional_kwargs.__requestUsage as {
+      inputTokens: number;
+      currentContext?: number;
+    };
+    // 2000 + 3000 + 30000 = 35000 — the whole prompt, not just the 2000 "new".
+    expect(usage.inputTokens).toBe(35_000);
+    expect(usage.currentContext).toBe(35_000);
+    expect(stateEvents().at(-1)!.data.stateChange).toMatchObject({
+      currentContext: 35_000,
     });
   });
 

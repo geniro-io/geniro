@@ -11,6 +11,7 @@ import type {
 } from './threadMessagesTypes';
 import {
   argsToObject,
+  deriveSdkToolTitle,
   extractDurationMs,
   extractShellCommandFromArgs,
   extractShellDurationMs,
@@ -30,6 +31,27 @@ const getLoadedTools = (
   const raw = getAdditionalKwargs(msg?.message)?.['__loadedTools'];
   return Array.isArray(raw) ? (raw as string[]) : undefined;
 };
+
+// Tool-call names that spawn a sub-agent and must render as a SubagentBlock:
+// the in-process `subagents_run_task` tool, plus the Claude Agent SDK's native
+// spawn tool (`Agent`; older SDK builds named it `Task`). Detection is by the
+// PARENT tool-call name — recursion-safe, because only the top-level parent
+// owns that call (the sub-agent's own inner calls are e.g. `Write`/`Bash`).
+const SUBAGENT_TOOL_NAMES = new Set(['subagents_run_task', 'Agent', 'Task']);
+
+const isSubagentToolName = (name: string | undefined): boolean =>
+  name != null && SUBAGENT_TOOL_NAMES.has(name);
+
+// The Claude Agent SDK appends a machine-facing footer to a sub-agent's final
+// message — an `agentId: … (use SendMessage …)` continuation handle and a
+// `<usage>…</usage>` token block. Strip them so the SubagentBlock Result shows
+// only the human-readable answer. No-op for `subagents_run_task` results, which
+// never carry the footer.
+const stripSdkSubagentFooter = (text: string): string =>
+  text
+    .replace(/\n*<usage>[\s\S]*?<\/usage>\s*$/i, '')
+    .replace(/\n*agentId:\s*\S+\s*\(\s*use SendMessage[^)]*\)\s*$/i, '')
+    .trimEnd();
 
 interface PrepareReadyMessagesOptions {
   isNodeRunning: boolean;
@@ -238,7 +260,7 @@ export const prepareReadyMessages = (
     }
     for (const tc of tcs) {
       const tcName = tc.name || tc.function?.name;
-      if (tcName === 'subagents_run_task' && tc.id) {
+      if (isSubagentToolName(tcName) && tc.id) {
         subagentToolCallIds.add(tc.id);
       }
       if (tcName === 'communication_exec' && tc.id) {
@@ -734,8 +756,11 @@ export const prepareReadyMessages = (
         const toolCallRunId =
           getMessageRunId(m.message) ?? getMessageRunId(matched?.message);
 
-        // Subagent tool call → emit a 'subagent' prepared message
-        const isSubagentTool = name === 'subagents_run_task' && tc.id != null;
+        // Subagent tool call → emit a 'subagent' prepared message. The id set
+        // holds both the in-process `subagents_run_task` calls (collected by
+        // name) and the Claude Agent SDK native spawn calls (collected from the
+        // __subagentCommunication inner signal above), so both render as blocks.
+        const isSubagentTool = tc.id != null && subagentToolCallIds.has(tc.id);
         if (isSubagentTool) {
           const innerRawMessages = subagentInnerByToolCallId.get(tc.id!) ?? [];
           const innerPrepared = prepareReadyMessages(innerRawMessages, {
@@ -753,10 +778,15 @@ export const prepareReadyMessages = (
             | undefined;
           const statistics =
             backendStats ?? accumulatePreparedStatistics(innerPrepared);
+          // `result` is the in-process run-task key; `message` is the Claude
+          // Agent SDK native-subagent key (its tool result is `{ message }`),
+          // which carries an SDK footer that must be stripped for display.
           const resultText =
             typeof resultObj?.result === 'string'
               ? resultObj.result
-              : undefined;
+              : typeof resultObj?.message === 'string'
+                ? stripSdkSubagentFooter(resultObj.message)
+                : undefined;
           const errorText =
             typeof resultObj?.error === 'string' ? resultObj.error : undefined;
 
@@ -767,10 +797,14 @@ export const prepareReadyMessages = (
               : typeof parsedArgs?.prompt === 'string'
                 ? (parsedArgs.prompt as string)
                 : undefined;
+          // `purpose` is the run-task arg; `description` is the SDK Agent arg
+          // (the short label, e.g. "Create JS Hello World file").
           const purpose =
             typeof parsedArgs?.purpose === 'string'
               ? parsedArgs.purpose
-              : undefined;
+              : typeof parsedArgs?.description === 'string'
+                ? parsedArgs.description
+                : undefined;
           const agentId =
             typeof parsedArgs?.agentId === 'string'
               ? parsedArgs.agentId
@@ -936,7 +970,10 @@ export const prepareReadyMessages = (
         const isShell = (name || '').toLowerCase() === 'shell';
         const toolOptions = argsToObject(toolArgs) || undefined;
         const matchedTitle = getMessageTitle(matched?.message);
-        const effectiveTitle = matchedTitle || callTitle;
+        // Backend-set title wins; otherwise synthesize a human-readable label
+        // for Claude SDK built-in tools (`Write /path` instead of bare `Write`).
+        const effectiveTitle =
+          matchedTitle || callTitle || deriveSdkToolTitle(name, toolArgs);
 
         const toolBlockId = `tool-${tc.id || `${m.id || m.createdAt}-${idx}`}`;
         prepared.push({

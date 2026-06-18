@@ -17,8 +17,14 @@ export type {
   SdkSystemMessage,
   SdkUsage,
   SdkUserMessage,
+  SerializableMcpConfig,
+  SerializableMcpHttpConfig,
+  SerializableMcpStdioConfig,
 } from './protocol.types';
-export { BRIDGE_PROTOCOL_VERSION } from './protocol.types';
+export {
+  BRIDGE_PROTOCOL_VERSION,
+  GENIRO_MCP_SERVER_KEY,
+} from './protocol.types';
 export { sanitizeBridgeQuestions } from './question-sanitizer';
 
 /**

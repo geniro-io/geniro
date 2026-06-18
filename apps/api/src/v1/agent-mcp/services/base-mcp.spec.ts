@@ -561,6 +561,111 @@ describe('BaseMcp', () => {
     });
   });
 
+  describe('resolveServerConfigForRuntime', () => {
+    // Records the runtime provider visible to getMcpConfig (re-point proof) and
+    // exposes the protected binding so the save/restore invariant is testable.
+    class ProbeMcp extends BaseMcp<{ tag?: string }> {
+      public seenProviderTag?: string;
+      public throwOnConfig = false;
+      public requiresDocker = false;
+
+      public getMcpConfig(config: { tag?: string }): IMcpServerConfig {
+        const provider = this.getRuntimeInstance() as unknown as
+          | { tag?: string }
+          | undefined;
+        this.seenProviderTag = provider?.tag;
+        if (this.throwOnConfig) {
+          throw new Error('bad config');
+        }
+        return {
+          name: 'probe',
+          command: `cmd-${config.tag ?? 'none'}`,
+          args: [],
+          env: {},
+          ...(this.requiresDocker ? { requiresDockerDaemon: true } : {}),
+        };
+      }
+
+      public bind(provider: RuntimeThreadProvider, config: { tag?: string }) {
+        this.runtimeThreadProvider = provider;
+        this.config = config;
+      }
+
+      public get boundProvider(): RuntimeThreadProvider | undefined {
+        return this.runtimeThreadProvider;
+      }
+    }
+
+    const taggedProvider = (tag: string): RuntimeThreadProvider =>
+      ({ tag }) as unknown as RuntimeThreadProvider;
+
+    it('re-points at the target runtime for getMcpConfig and restores the prior binding', async () => {
+      const mcp = new ProbeMcp(mockLogger);
+      const priorProvider = taggedProvider('simple-agent');
+      const priorConfig = { tag: 'prior' };
+      mcp.bind(priorProvider, priorConfig);
+
+      const result = await mcp.resolveServerConfigForRuntime(
+        { tag: 'claude' },
+        taggedProvider('claude'),
+        mockRuntime,
+      );
+
+      // getMcpConfig ran against the Claude provider (re-point worked)...
+      expect(mcp.seenProviderTag).toBe('claude');
+      expect(result.command).toBe('cmd-claude');
+      // ...and the shared instance keeps its original (SimpleAgent) binding so a
+      // block wired to BOTH a SimpleAgent and a Claude node is not corrupted.
+      expect(mcp.boundProvider).toBe(priorProvider);
+      expect(mcp.config).toBe(priorConfig);
+    });
+
+    it('restores the prior binding even when getMcpConfig throws', async () => {
+      const mcp = new ProbeMcp(mockLogger);
+      mcp.throwOnConfig = true;
+      const priorProvider = taggedProvider('simple-agent');
+      const priorConfig = { tag: 'prior' };
+      mcp.bind(priorProvider, priorConfig);
+
+      await expect(
+        mcp.resolveServerConfigForRuntime(
+          { tag: 'claude' },
+          taggedProvider('claude'),
+          mockRuntime,
+        ),
+      ).rejects.toThrow('bad config');
+
+      expect(mcp.boundProvider).toBe(priorProvider);
+      expect(mcp.config).toBe(priorConfig);
+    });
+
+    it('readies the Docker daemon for a docker-based server before returning', async () => {
+      const mcp = new ProbeMcp(mockLogger);
+      mcp.requiresDocker = true;
+      const execMock = vi.mocked(mockRuntime.exec);
+      execMock.mockResolvedValue({
+        fail: false,
+        exitCode: 0,
+        stdout: '',
+        stderr: '',
+        execPath: '',
+      });
+
+      const result = await mcp.resolveServerConfigForRuntime(
+        { tag: 'playwright' },
+        taggedProvider('claude'),
+        mockRuntime,
+      );
+
+      expect(result.requiresDockerDaemon).toBe(true);
+      expect(execMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          cmd: expect.stringContaining('docker info'),
+        }),
+      );
+    });
+  });
+
   describe('events', () => {
     it('should emit initialize and ready events on successful initialize', async () => {
       vi.spyOn(Client.prototype, 'connect').mockResolvedValue();

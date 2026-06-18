@@ -118,9 +118,10 @@ describe('CustomMcpTemplate', () => {
       expect(template.description).toContain('URL mode');
     });
 
-    it('should accept SimpleAgent as input', () => {
+    it('should accept SimpleAgent and ClaudeAgent as inputs', () => {
       expect(template.inputs).toEqual([
         { type: 'kind', value: NodeKind.SimpleAgent, multiple: true },
+        { type: 'kind', value: NodeKind.ClaudeAgent, multiple: true },
       ]);
     });
 

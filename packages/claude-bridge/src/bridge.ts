@@ -26,6 +26,7 @@ import {
   type BridgeCommand,
   type BridgeEvent,
   type BridgeStartOptions,
+  GENIRO_MCP_SERVER_KEY,
   type SdkMessage,
 } from './protocol.types';
 
@@ -255,9 +256,26 @@ async function runSession(
             append: options.systemPrompt,
           },
         }),
-        ...(options.tools?.length && {
+        // Merge the in-bridge `geniro` server (Geniro tools forwarded over the
+        // exec channel) with any external MCP servers the host resolved from
+        // connected MCP blocks. The `mcpServers` key is emitted only when at
+        // least one source is present (an empty `externalMcpServers` object is
+        // treated as absent so the bridge self-defends regardless of caller);
+        // `geniro` is included only when there are tools (empty-geniro guard) so
+        // a Claude node with MCP blocks but no wired tools does not register an
+        // empty server.
+        ...((options.tools?.length ||
+          (options.externalMcpServers &&
+            Object.keys(options.externalMcpServers).length > 0)) && {
           mcpServers: {
-            geniro: buildGeniroMcpServer(options.tools, emit, toolRequests),
+            ...(options.tools?.length && {
+              [GENIRO_MCP_SERVER_KEY]: buildGeniroMcpServer(
+                options.tools,
+                emit,
+                toolRequests,
+              ),
+            }),
+            ...options.externalMcpServers,
           },
         }),
         canUseTool: buildCanUseTool(emit, questionRequests),
