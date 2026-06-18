@@ -400,6 +400,20 @@ export class ClaudeStreamMapper {
         : (turnUsage.totalPrice ?? 0);
     residual.totalPrice = Math.max(turnPrice - this.usageTotals.totalPrice, 0);
 
+    // The turn's total input (regular + cache-create + cache-read) is the size
+    // of the prompt sent this turn — the best available proxy for "current
+    // context" on the bridge pipeline, where per-message passthrough usage is
+    // all zeros and only the SDK result carries real numbers. It is point-in-
+    // time (NOT additive): SET on the stamped message, and the thread rollup
+    // takes the max across turns (ThreadsService.getThreadUsageStatistics), the
+    // same shape SimpleAgent uses. Exact for a single LLM call; a cumulative
+    // upper bound for multi-call agentic turns. Mirrors accumulateUsage's
+    // `> 0` guard so a usage-less result never wipes a good value.
+    const turnContext = turnUsage.inputTokens;
+    if (turnContext > 0) {
+      this.currentContext = turnContext;
+    }
+
     if (residual.totalTokens === 0 && (residual.totalPrice ?? 0) === 0) {
       return null;
     }
@@ -412,7 +426,10 @@ export class ClaudeStreamMapper {
       const synthetic = new AIMessage({ content: '' });
       synthetic.additional_kwargs = {
         __model: this.params.model,
-        __requestUsage: residual,
+        __requestUsage: {
+          ...residual,
+          ...(turnContext > 0 && { currentContext: turnContext }),
+        },
       };
       return synthetic;
     }
@@ -427,6 +444,8 @@ export class ClaudeStreamMapper {
       outputTokens: (existing?.outputTokens ?? 0) + residual.outputTokens,
       totalTokens: (existing?.totalTokens ?? 0) + residual.totalTokens,
       totalPrice: (existing?.totalPrice ?? 0) + (residual.totalPrice ?? 0),
+      // Point-in-time: take the latest turn's value, not a sum.
+      ...(turnContext > 0 && { currentContext: turnContext }),
     };
     buffered.additional_kwargs = {
       ...buffered.additional_kwargs,

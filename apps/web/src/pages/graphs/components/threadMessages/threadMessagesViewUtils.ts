@@ -393,3 +393,58 @@ export const extractShellCommandFromArgs = (
   }
   return undefined;
 };
+
+// Claude Agent SDK built-in tools arrive with only their bare name (`Write`,
+// `Bash`, …) and no human-readable title — unlike Geniro tools, whose backend
+// sets a title on the message. Synthesize a concise "verb + primary arg" label
+// from the call args so a sub-agent's tool calls read like an action ("Write
+// /path/file.js") instead of a bare verb. Returns undefined for unknown tools
+// or when the primary arg is absent, so callers fall back to the raw name.
+const SDK_TOOL_TITLE_SPECS: Record<
+  string,
+  { verb: string; argKeys: string[] }
+> = {
+  Write: { verb: 'Write', argKeys: ['file_path', 'path'] },
+  Read: { verb: 'Read', argKeys: ['file_path', 'path'] },
+  Edit: { verb: 'Edit', argKeys: ['file_path', 'path'] },
+  MultiEdit: { verb: 'Edit', argKeys: ['file_path', 'path'] },
+  NotebookEdit: { verb: 'Edit', argKeys: ['notebook_path', 'file_path'] },
+  Bash: { verb: 'Run', argKeys: ['command', 'cmd'] },
+  Glob: { verb: 'Find', argKeys: ['pattern'] },
+  Grep: { verb: 'Search', argKeys: ['pattern'] },
+  WebFetch: { verb: 'Fetch', argKeys: ['url'] },
+  WebSearch: { verb: 'Search', argKeys: ['query'] },
+};
+
+const SDK_TOOL_TITLE_MAX_LEN = 120;
+
+export const deriveSdkToolTitle = (
+  name?: string,
+  args?: string | Record<string, unknown>,
+): string | undefined => {
+  if (!name) {
+    return undefined;
+  }
+  if (name === 'TodoWrite') {
+    return 'Update to-dos';
+  }
+  const spec = SDK_TOOL_TITLE_SPECS[name];
+  if (!spec) {
+    return undefined;
+  }
+  const obj = argsToObject(args);
+  const detail = spec.argKeys
+    .map((key) => obj?.[key])
+    .find(
+      (value): value is string =>
+        typeof value === 'string' && value.trim().length > 0,
+    )
+    ?.trim();
+  if (!detail) {
+    return undefined;
+  }
+  const label = `${spec.verb} ${detail}`;
+  return label.length > SDK_TOOL_TITLE_MAX_LEN
+    ? `${label.slice(0, SDK_TOOL_TITLE_MAX_LEN - 1)}…`
+    : label;
+};

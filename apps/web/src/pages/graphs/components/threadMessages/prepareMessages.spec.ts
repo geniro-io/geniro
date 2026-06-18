@@ -391,6 +391,161 @@ describe('subagent-inner reasoning pre-scan grouping', () => {
   });
 });
 
+describe('Claude Agent SDK native subagent (tool name "Agent")', () => {
+  // The SDK surfaces its native sub-agent spawn as a top-level tool call named
+  // `Agent` (NOT subagents_run_task) and tags each inner message with
+  // __subagentCommunication + __toolCallId = the spawn call's id. Before the
+  // fix these rendered as flat `Agent`/`Write` chips in a generic "Working..."
+  // card; they must instead group into a SubagentBlock like run-task does.
+  const PARENT = 'toolu_sdk_agent_1';
+
+  const sdkAgentScenario = (): ThreadMessageDto[] => [
+    // Parent AI message owning the SDK `Agent` tool call (description + prompt args).
+    {
+      id: 'ai-agent-call',
+      threadId: 'thread-1',
+      nodeId: 'node-1',
+      externalThreadId: '',
+      createdAt: '2024-01-01T00:00:00.000Z',
+      updatedAt: '2024-01-01T00:00:00.000Z',
+      message: {
+        id: 'ai-agent-call',
+        role: 'ai',
+        content: '',
+        toolCalls: [
+          {
+            id: PARENT,
+            name: 'Agent',
+            type: 'tool_call',
+            args: {
+              prompt: 'Create a file hello.js that prints Hello World',
+              description: 'Create JS Hello World file',
+              subagent_type: 'general-purpose',
+            },
+          },
+        ],
+      } as unknown as ThreadMessageDto['message'],
+    },
+    // Inner AI message that calls Write — surrogate node + subagent-comm flags.
+    {
+      id: 'sub-ai-write',
+      threadId: 'thread-1',
+      nodeId: `node-1::sub::${PARENT}`,
+      externalThreadId: '',
+      createdAt: '2024-01-01T00:00:30.000Z',
+      updatedAt: '2024-01-01T00:00:30.000Z',
+      message: {
+        id: 'sub-ai-write',
+        role: 'ai',
+        content: '',
+        toolCalls: [
+          {
+            id: 'toolu_write_1',
+            name: 'Write',
+            type: 'tool_call',
+            args: {
+              file_path: '/runtime-workspace/hello.js',
+              content: 'console.log("Hello World");\n',
+            },
+          },
+        ],
+        additionalKwargs: {
+          __toolCallId: PARENT,
+          __subagentCommunication: true,
+          __model: 'claude-opus-4-8',
+        },
+      } as unknown as ThreadMessageDto['message'],
+    },
+    // Inner Write tool result.
+    {
+      id: 'sub-tool-write',
+      threadId: 'thread-1',
+      nodeId: `node-1::sub::${PARENT}`,
+      externalThreadId: '',
+      createdAt: '2024-01-01T00:00:40.000Z',
+      updatedAt: '2024-01-01T00:00:40.000Z',
+      message: {
+        id: 'sub-tool-write',
+        role: 'tool',
+        name: 'Write',
+        toolCallId: 'toolu_write_1',
+        content: 'File created',
+        additionalKwargs: {
+          __toolCallId: PARENT,
+          __subagentCommunication: true,
+        },
+      } as unknown as ThreadMessageDto['message'],
+    },
+    // The `Agent` tool result on the parent node — content is `{ message }`.
+    {
+      id: 'tool-agent-result',
+      threadId: 'thread-1',
+      nodeId: 'node-1',
+      externalThreadId: '',
+      createdAt: '2024-01-01T00:01:00.000Z',
+      updatedAt: '2024-01-01T00:01:00.000Z',
+      message: {
+        id: 'tool-agent-result',
+        role: 'tool',
+        name: 'Agent',
+        toolCallId: PARENT,
+        // Mirrors the real SDK shape: human answer followed by the machine
+        // footer (continuation handle + <usage> block) that must be stripped.
+        content: {
+          message:
+            'Done. Created /runtime-workspace/hello.js\n' +
+            "agentId: ab4bd012 (use SendMessage with to: 'ab4bd012' to continue this agent)\n" +
+            '<usage>subagent_tokens: 16236\ntool_uses: 1\nduration_ms: 6548</usage>',
+        },
+      } as unknown as ThreadMessageDto['message'],
+    },
+  ];
+
+  it('groups the SDK `Agent` spawn into a SubagentBlock with SDK arg/result keys', () => {
+    const prepared = prepareReadyMessages(sdkAgentScenario(), defaultOptions);
+
+    // Exactly one top-level item — the subagent block. No leaked `Agent`/`Write`
+    // chips at the parent timeline (the pre-fix symptom).
+    expect(prepared).toHaveLength(1);
+    expect(prepared[0].type).toBe('subagent');
+
+    const block = findSubagentBlock(prepared, PARENT);
+    expect(block).toBeDefined();
+    // Header purpose ← SDK `description` arg; task ← `prompt` arg.
+    expect(block!.purpose).toBe('Create JS Hello World file');
+    expect(block!.taskDescription).toBe(
+      'Create a file hello.js that prints Hello World',
+    );
+    // Result text ← the `{ message }` tool-result key (not `result`), with the
+    // SDK footer (agentId / <usage>) stripped.
+    expect(block!.resultText).toBe('Done. Created /runtime-workspace/hello.js');
+    // Model is read off the inner messages.
+    expect(block!.model).toBe('claude-opus-4-8');
+  });
+
+  it('nests the inner Write tool inside the block, not at the top level', () => {
+    const prepared = prepareReadyMessages(sdkAgentScenario(), defaultOptions);
+
+    // No tool items leak to the parent timeline.
+    expect(prepared.filter((m) => m.type === 'tool')).toHaveLength(0);
+
+    const block = findSubagentBlock(prepared, PARENT);
+    expect(block).toBeDefined();
+    const innerTools = block!.innerMessages.filter((m) => m.type === 'tool');
+    expect(innerTools.length).toBeGreaterThanOrEqual(1);
+
+    // The inner SDK `Write` tool gets a human-readable title from its args
+    // instead of the bare tool name.
+    const writeTool = innerTools.find(
+      (m) => m.type === 'tool' && m.name === 'Write',
+    );
+    expect(writeTool).toBeDefined();
+    expect((writeTool as { title?: string }).title).toBe(
+      'Write /runtime-workspace/hello.js',
+    );
+  });
+});
+
 // ── accumulatePreparedStatistics — Change 1 regression guard ─────────────────
 //
 // These scenarios verify that tool items do NOT double-count price/tokens that
