@@ -197,4 +197,11 @@ export const environment = () =>
     // --- Secrets store (OpenBao) ---
     openbaoAddr: getEnv('OPENBAO_ADDR'),
     openbaoToken: getEnv('OPENBAO_TOKEN'),
+
+    // --- OAuth credentials (per-project; e.g. Linear) ---
+    // Web base URL used to build the OAuth redirect_uri (the callback page).
+    websiteUrl: getEnv('WEBSITE_URL'),
+    // Linear OAuth app — feature available only when both are set.
+    linearOAuthClientId: getEnv('LINEAR_OAUTH_CLIENT_ID'),
+    linearOAuthClientSecret: getEnv('LINEAR_OAUTH_CLIENT_SECRET'),
   }) as const satisfies Record<string, string | number | boolean>;

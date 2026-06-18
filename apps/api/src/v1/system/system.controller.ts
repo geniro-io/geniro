@@ -32,6 +32,9 @@ export class SystemController {
       isAdmin:
         Array.isArray(ctx.roles) && ctx.roles.includes(environment.adminRole),
       githubWebhookEnabled: Boolean(environment.githubWebhookSecret),
+      linearOAuthEnabled:
+        Boolean(environment.linearOAuthClientId) &&
+        Boolean(environment.linearOAuthClientSecret),
       apiVersion: environment.apiVersion,
       webVersion: environment.webVersion,
     };

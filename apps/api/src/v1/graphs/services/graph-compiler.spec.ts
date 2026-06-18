@@ -529,6 +529,85 @@ describe('GraphCompiler', () => {
       });
     });
 
+    it('excludes the oauth-authenticate marker (x-ui:oauth-authenticate) from collection while still collecting x-ui:secret-select siblings', async () => {
+      const mockAddEnvVariables = vi.fn();
+      const mockRuntimeInstance = Object.create(
+        RuntimeThreadProvider.prototype,
+      ) as RuntimeThreadProvider;
+      mockRuntimeInstance.addEnvVariables = mockAddEnvVariables;
+
+      const runtimeTemplate = createMockTemplate(NodeKind.Runtime);
+      // A Linear-MCP-style node: the token field carries BOTH secret-select
+      // (collected -> injected into the runtime env) and the new UI-only
+      // oauth-authenticate marker; a second field carries ONLY
+      // oauth-authenticate. The new marker must never broaden secret collection.
+      const toolTemplate = Object.assign(createMockTemplate(NodeKind.Tool), {
+        schema: z.object({
+          token: z.string().meta({
+            'x-ui:secret-select': true,
+            'x-ui:oauth-authenticate': { provider: 'linear' },
+          }),
+          authOnly: z
+            .string()
+            .meta({ 'x-ui:oauth-authenticate': { provider: 'linear' } }),
+        }),
+      });
+
+      const runtimeHandle = createMockHandle(mockRuntimeInstance);
+      const toolHandle = createMockHandle({ id: 'tool' });
+      vi.mocked(runtimeTemplate.create).mockResolvedValue(runtimeHandle as any);
+      vi.mocked(toolTemplate.create).mockResolvedValue(toolHandle as any);
+
+      vi.mocked(templateRegistry.getTemplate).mockImplementation((id) => {
+        if (id === 'runtime') {
+          return runtimeTemplate;
+        }
+        if (id === 'tool') {
+          return toolTemplate;
+        }
+        return undefined;
+      });
+
+      const schema: GraphSchemaType = {
+        nodes: [
+          { id: 'runtime-1', template: 'runtime', config: {} },
+          {
+            id: 'tool-1',
+            template: 'tool',
+            config: { token: 'LINEAR_OAUTH_TOKEN', authOnly: 'AUTH_ONLY_KEY' },
+          },
+        ],
+        edges: [{ from: 'tool-1', to: 'runtime-1' }],
+      };
+
+      // Resolve BOTH names so the assertion is non-vacuous: if collectSecretNames
+      // ever matched the oauth-authenticate-only field, AUTH_ONLY_KEY would
+      // resolve and surface in the injected env (failing the exact-match below)
+      // instead of being silently dropped as undefined.
+      secretsService.batchResolveSecretValues.mockResolvedValue(
+        new Map([
+          ['LINEAR_OAUTH_TOKEN', 'resolved-token'],
+          ['AUTH_ONLY_KEY', 'auth-only-secret'],
+        ]),
+      );
+
+      const graph = createMockGraphEntity(schema);
+      await compiler.compile(graph);
+
+      // The secret-select token IS collected; the oauth-authenticate-only field
+      // is NOT handed to the resolver.
+      expect(secretsService.batchResolveSecretValues).toHaveBeenCalledTimes(1);
+      const [, requestedNames] = secretsService.batchResolveSecretValues.mock
+        .calls[0] as [string, string[]];
+      expect(requestedNames).toContain('LINEAR_OAUTH_TOKEN');
+      expect(requestedNames).not.toContain('AUTH_ONLY_KEY');
+
+      // ...and only the secret-select token reaches the sandbox env.
+      expect(mockAddEnvVariables).toHaveBeenCalledWith({
+        LINEAR_OAUTH_TOKEN: 'resolved-token',
+      });
+    });
+
     it('should skip secret resolution when template has no schema', async () => {
       const mockAddEnvVariables = vi.fn();
       const mockRuntimeInstance = Object.create(

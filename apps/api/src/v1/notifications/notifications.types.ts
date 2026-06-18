@@ -9,6 +9,7 @@ import {
   GraphSchemaType,
   GraphStatus,
 } from '../graphs/graphs.types';
+import { OAuthProvider } from '../oauth-credentials/oauth-credentials.types';
 import {
   RuntimeErrorCode,
   RuntimeInstanceStatus,
@@ -39,6 +40,7 @@ export enum NotificationEvent {
   RuntimeStatus = 'runtime.status',
   GraphPreview = 'graph.preview',
   ThreadStoreUpdate = 'thread.store.update',
+  CredentialAcquired = 'credential.acquired',
 }
 
 // ---------------------------------------------------------------------------
@@ -338,6 +340,35 @@ export type IThreadStoreUpdateNotification = z.infer<
 >;
 
 // ---------------------------------------------------------------------------
+// credential.acquired — emitted server-side on a successful OAuth exchange.
+// This is the AUTHORITATIVE completion signal (the editor's postMessage /
+// BroadcastChannel refresh is a browser-convenience layer on top). It is
+// project-scoped, so `graphId` is OPTIONAL here (unlike the graph-routed
+// envelope) — the editor flow carries it for routing; a future background /
+// trigger run (M3) carries `threadId` as the durable-resume target instead.
+// M2 only emits the event; a server-side resume subscriber is M3's to add.
+// ---------------------------------------------------------------------------
+
+export const CredentialAcquiredDataSchema = z.object({
+  provider: z.nativeEnum(OAuthProvider),
+  accountLabel: z.string().nullable().optional(),
+});
+export const CredentialAcquiredNotificationSchema = z.object({
+  type: z.literal(NotificationEvent.CredentialAcquired),
+  data: CredentialAcquiredDataSchema,
+  projectId: z.string(),
+  graphId: z.string().optional(),
+  nodeId: z.string().optional(),
+  threadId: z.string().optional(),
+});
+export type ICredentialAcquiredData = z.infer<
+  typeof CredentialAcquiredDataSchema
+>;
+export type ICredentialAcquiredNotification = z.infer<
+  typeof CredentialAcquiredNotificationSchema
+>;
+
+// ---------------------------------------------------------------------------
 // Top-level union — discriminated by `type` for fast dispatch.
 // ---------------------------------------------------------------------------
 
@@ -358,6 +389,7 @@ export const NotificationSchema = z.discriminatedUnion('type', [
   RuntimeStatusNotificationSchema,
   GraphPreviewNotificationSchema,
   ThreadStoreUpdateNotificationSchema,
+  CredentialAcquiredNotificationSchema,
 ]);
 
 export type Notification = z.infer<typeof NotificationSchema>;

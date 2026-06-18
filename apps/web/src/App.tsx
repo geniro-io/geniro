@@ -16,6 +16,7 @@ import { GraphPage } from './pages/graphs/details';
 import { GraphsListPage } from './pages/graphs/list';
 import { KnowledgeListPage } from './pages/knowledge/list';
 import { MainPage } from './pages/main/page';
+import { OAuthCallbackPage } from './pages/oauth/components/OAuthCallbackPage';
 import { CreateProjectPage } from './pages/projects/create';
 import { ProjectsListPage } from './pages/projects/list';
 import { RepositoriesListPage } from './pages/repositories/list';
@@ -212,6 +213,12 @@ function App({ authModule }: { authModule: AuthModule }) {
 
           {/* Group 2: Full-screen (no layout) */}
           <Route path="/onboarding" element={<CreateProjectPage />} />
+          {/* OAuth callback opens in a new tab — chrome-free, JWT-guarded, and
+              NOT project-gated (the exchange derives projectId from server state). */}
+          <Route
+            path="/oauth/callback/:provider"
+            element={<OAuthCallbackPage />}
+          />
         </Route>
 
         {/* Public routes */}

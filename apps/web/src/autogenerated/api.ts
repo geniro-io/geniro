@@ -1918,6 +1918,84 @@ export type NamespaceSummaryDtoModeEnum =
 /**
  *
  * @export
+ * @interface OAuthExchangeRequestDto
+ */
+export interface OAuthExchangeRequestDto {
+  /**
+   *
+   * @type {string}
+   * @memberof OAuthExchangeRequestDto
+   */
+  'provider': OAuthExchangeRequestDtoProviderEnum;
+  /**
+   *
+   * @type {string}
+   * @memberof OAuthExchangeRequestDto
+   */
+  'code': string;
+  /**
+   *
+   * @type {string}
+   * @memberof OAuthExchangeRequestDto
+   */
+  'state': string;
+}
+
+export const OAuthExchangeRequestDtoProviderEnum = {
+  Linear: 'linear',
+} as const;
+
+export type OAuthExchangeRequestDtoProviderEnum =
+  (typeof OAuthExchangeRequestDtoProviderEnum)[keyof typeof OAuthExchangeRequestDtoProviderEnum];
+
+/**
+ *
+ * @export
+ * @interface OAuthExchangeResponseDto
+ */
+export interface OAuthExchangeResponseDto {
+  /**
+   *
+   * @type {string}
+   * @memberof OAuthExchangeResponseDto
+   */
+  'provider': OAuthExchangeResponseDtoProviderEnum;
+  /**
+   *
+   * @type {boolean}
+   * @memberof OAuthExchangeResponseDto
+   */
+  'authenticated': OAuthExchangeResponseDtoAuthenticatedEnum;
+  /**
+   *
+   * @type {string}
+   * @memberof OAuthExchangeResponseDto
+   */
+  'accountLabel': string;
+  /**
+   *
+   * @type {string}
+   * @memberof OAuthExchangeResponseDto
+   */
+  'secretName': string;
+}
+
+export const OAuthExchangeResponseDtoProviderEnum = {
+  Linear: 'linear',
+} as const;
+
+export type OAuthExchangeResponseDtoProviderEnum =
+  (typeof OAuthExchangeResponseDtoProviderEnum)[keyof typeof OAuthExchangeResponseDtoProviderEnum];
+export const OAuthExchangeResponseDtoAuthenticatedEnum = {
+  True: true,
+} as const;
+
+export type OAuthExchangeResponseDtoAuthenticatedEnum =
+  (typeof OAuthExchangeResponseDtoAuthenticatedEnum)[keyof typeof OAuthExchangeResponseDtoAuthenticatedEnum];
+
+/**
+ *
+ * @export
  * @interface OAuthLinkRequestDto
  */
 export interface OAuthLinkRequestDto {
@@ -1934,6 +2012,58 @@ export interface OAuthLinkRequestDto {
    */
   'installationId'?: number;
 }
+/**
+ *
+ * @export
+ * @interface OAuthStartResponseDto
+ */
+export interface OAuthStartResponseDto {
+  /**
+   * Provider authorize URL to navigate the new tab to
+   * @type {string}
+   * @memberof OAuthStartResponseDto
+   */
+  'authorizeUrl': string;
+}
+/**
+ *
+ * @export
+ * @interface OAuthStatusResponseDto
+ */
+export interface OAuthStatusResponseDto {
+  /**
+   *
+   * @type {string}
+   * @memberof OAuthStatusResponseDto
+   */
+  'provider': OAuthStatusResponseDtoProviderEnum;
+  /**
+   * Whether a valid credential exists for this project + provider
+   * @type {boolean}
+   * @memberof OAuthStatusResponseDto
+   */
+  'authenticated': boolean;
+  /**
+   *
+   * @type {string}
+   * @memberof OAuthStatusResponseDto
+   */
+  'accountLabel': string | null;
+  /**
+   *
+   * @type {string}
+   * @memberof OAuthStatusResponseDto
+   */
+  'secretName': string | null;
+}
+
+export const OAuthStatusResponseDtoProviderEnum = {
+  Linear: 'linear',
+} as const;
+
+export type OAuthStatusResponseDtoProviderEnum =
+  (typeof OAuthStatusResponseDtoProviderEnum)[keyof typeof OAuthStatusResponseDtoProviderEnum];
+
 /**
  *
  * @export
@@ -2652,6 +2782,12 @@ export interface SystemSettingsResponseDto {
    * @memberof SystemSettingsResponseDto
    */
   'githubWebhookEnabled': boolean;
+  /**
+   * Whether the Linear OAuth integration is configured (client id + secret)
+   * @type {boolean}
+   * @memberof SystemSettingsResponseDto
+   */
+  'linearOAuthEnabled': boolean;
   /**
    * Current API server version
    * @type {string}
@@ -12058,6 +12194,427 @@ export class LitellmApi extends BaseAPI {
       .then((request) => request(this.axios, this.basePath));
   }
 }
+
+/**
+ * OauthApi - axios parameter creator
+ * @export
+ */
+export const OauthApiAxiosParamCreator = function (
+  configuration?: Configuration,
+) {
+  return {
+    /**
+     *
+     * @param {OAuthExchangeRequestDto} oAuthExchangeRequestDto
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
+    exchange: async (
+      oAuthExchangeRequestDto: OAuthExchangeRequestDto,
+      options: RawAxiosRequestConfig = {},
+    ): Promise<RequestArgs> => {
+      // verify required parameter 'oAuthExchangeRequestDto' is not null or undefined
+      assertParamExists(
+        'exchange',
+        'oAuthExchangeRequestDto',
+        oAuthExchangeRequestDto,
+      );
+      const localVarPath = `/api/v1/oauth/credentials/exchange`;
+      // use dummy base URL string because the URL constructor only accepts absolute URLs.
+      const localVarUrlObj = new URL(localVarPath, DUMMY_BASE_URL);
+      let baseOptions;
+      if (configuration) {
+        baseOptions = configuration.baseOptions;
+      }
+
+      const localVarRequestOptions = {
+        method: 'POST',
+        ...baseOptions,
+        ...options,
+      };
+      const localVarHeaderParameter = {} as any;
+      const localVarQueryParameter = {} as any;
+
+      // authentication bearer required
+      // http bearer authentication required
+      await setBearerAuthToObject(localVarHeaderParameter, configuration);
+
+      localVarHeaderParameter['Content-Type'] = 'application/json';
+
+      setSearchParams(localVarUrlObj, localVarQueryParameter);
+      let headersFromBaseOptions =
+        baseOptions && baseOptions.headers ? baseOptions.headers : {};
+      localVarRequestOptions.headers = {
+        ...localVarHeaderParameter,
+        ...headersFromBaseOptions,
+        ...options.headers,
+      };
+      localVarRequestOptions.data = serializeDataIfNeeded(
+        oAuthExchangeRequestDto,
+        localVarRequestOptions,
+        configuration,
+      );
+
+      return {
+        url: toPathString(localVarUrlObj),
+        options: localVarRequestOptions,
+      };
+    },
+    /**
+     *
+     * @param {StartProviderEnum} provider
+     * @param {string} [graphId]
+     * @param {string} [nodeId]
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
+    start: async (
+      provider: StartProviderEnum,
+      graphId?: string,
+      nodeId?: string,
+      options: RawAxiosRequestConfig = {},
+    ): Promise<RequestArgs> => {
+      // verify required parameter 'provider' is not null or undefined
+      assertParamExists('start', 'provider', provider);
+      const localVarPath = `/api/v1/oauth/{provider}/start`.replace(
+        `{${'provider'}}`,
+        encodeURIComponent(String(provider)),
+      );
+      // use dummy base URL string because the URL constructor only accepts absolute URLs.
+      const localVarUrlObj = new URL(localVarPath, DUMMY_BASE_URL);
+      let baseOptions;
+      if (configuration) {
+        baseOptions = configuration.baseOptions;
+      }
+
+      const localVarRequestOptions = {
+        method: 'GET',
+        ...baseOptions,
+        ...options,
+      };
+      const localVarHeaderParameter = {} as any;
+      const localVarQueryParameter = {} as any;
+
+      // authentication bearer required
+      // http bearer authentication required
+      await setBearerAuthToObject(localVarHeaderParameter, configuration);
+
+      if (graphId !== undefined) {
+        localVarQueryParameter['graphId'] = graphId;
+      }
+
+      if (nodeId !== undefined) {
+        localVarQueryParameter['nodeId'] = nodeId;
+      }
+
+      setSearchParams(localVarUrlObj, localVarQueryParameter);
+      let headersFromBaseOptions =
+        baseOptions && baseOptions.headers ? baseOptions.headers : {};
+      localVarRequestOptions.headers = {
+        ...localVarHeaderParameter,
+        ...headersFromBaseOptions,
+        ...options.headers,
+      };
+
+      return {
+        url: toPathString(localVarUrlObj),
+        options: localVarRequestOptions,
+      };
+    },
+    /**
+     *
+     * @param {StatusProviderEnum} provider
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
+    status: async (
+      provider: StatusProviderEnum,
+      options: RawAxiosRequestConfig = {},
+    ): Promise<RequestArgs> => {
+      // verify required parameter 'provider' is not null or undefined
+      assertParamExists('status', 'provider', provider);
+      const localVarPath = `/api/v1/oauth/{provider}/status`.replace(
+        `{${'provider'}}`,
+        encodeURIComponent(String(provider)),
+      );
+      // use dummy base URL string because the URL constructor only accepts absolute URLs.
+      const localVarUrlObj = new URL(localVarPath, DUMMY_BASE_URL);
+      let baseOptions;
+      if (configuration) {
+        baseOptions = configuration.baseOptions;
+      }
+
+      const localVarRequestOptions = {
+        method: 'GET',
+        ...baseOptions,
+        ...options,
+      };
+      const localVarHeaderParameter = {} as any;
+      const localVarQueryParameter = {} as any;
+
+      // authentication bearer required
+      // http bearer authentication required
+      await setBearerAuthToObject(localVarHeaderParameter, configuration);
+
+      setSearchParams(localVarUrlObj, localVarQueryParameter);
+      let headersFromBaseOptions =
+        baseOptions && baseOptions.headers ? baseOptions.headers : {};
+      localVarRequestOptions.headers = {
+        ...localVarHeaderParameter,
+        ...headersFromBaseOptions,
+        ...options.headers,
+      };
+
+      return {
+        url: toPathString(localVarUrlObj),
+        options: localVarRequestOptions,
+      };
+    },
+  };
+};
+
+/**
+ * OauthApi - functional programming interface
+ * @export
+ */
+export const OauthApiFp = function (configuration?: Configuration) {
+  const localVarAxiosParamCreator = OauthApiAxiosParamCreator(configuration);
+  return {
+    /**
+     *
+     * @param {OAuthExchangeRequestDto} oAuthExchangeRequestDto
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
+    async exchange(
+      oAuthExchangeRequestDto: OAuthExchangeRequestDto,
+      options?: RawAxiosRequestConfig,
+    ): Promise<
+      (
+        axios?: AxiosInstance,
+        basePath?: string,
+      ) => AxiosPromise<OAuthExchangeResponseDto>
+    > {
+      const localVarAxiosArgs = await localVarAxiosParamCreator.exchange(
+        oAuthExchangeRequestDto,
+        options,
+      );
+      const localVarOperationServerIndex = configuration?.serverIndex ?? 0;
+      const localVarOperationServerBasePath =
+        operationServerMap['OauthApi.exchange']?.[localVarOperationServerIndex]
+          ?.url;
+      return (axios, basePath) =>
+        createRequestFunction(
+          localVarAxiosArgs,
+          globalAxios,
+          BASE_PATH,
+          configuration,
+        )(axios, localVarOperationServerBasePath || basePath);
+    },
+    /**
+     *
+     * @param {StartProviderEnum} provider
+     * @param {string} [graphId]
+     * @param {string} [nodeId]
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
+    async start(
+      provider: StartProviderEnum,
+      graphId?: string,
+      nodeId?: string,
+      options?: RawAxiosRequestConfig,
+    ): Promise<
+      (
+        axios?: AxiosInstance,
+        basePath?: string,
+      ) => AxiosPromise<OAuthStartResponseDto>
+    > {
+      const localVarAxiosArgs = await localVarAxiosParamCreator.start(
+        provider,
+        graphId,
+        nodeId,
+        options,
+      );
+      const localVarOperationServerIndex = configuration?.serverIndex ?? 0;
+      const localVarOperationServerBasePath =
+        operationServerMap['OauthApi.start']?.[localVarOperationServerIndex]
+          ?.url;
+      return (axios, basePath) =>
+        createRequestFunction(
+          localVarAxiosArgs,
+          globalAxios,
+          BASE_PATH,
+          configuration,
+        )(axios, localVarOperationServerBasePath || basePath);
+    },
+    /**
+     *
+     * @param {StatusProviderEnum} provider
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
+    async status(
+      provider: StatusProviderEnum,
+      options?: RawAxiosRequestConfig,
+    ): Promise<
+      (
+        axios?: AxiosInstance,
+        basePath?: string,
+      ) => AxiosPromise<OAuthStatusResponseDto>
+    > {
+      const localVarAxiosArgs = await localVarAxiosParamCreator.status(
+        provider,
+        options,
+      );
+      const localVarOperationServerIndex = configuration?.serverIndex ?? 0;
+      const localVarOperationServerBasePath =
+        operationServerMap['OauthApi.status']?.[localVarOperationServerIndex]
+          ?.url;
+      return (axios, basePath) =>
+        createRequestFunction(
+          localVarAxiosArgs,
+          globalAxios,
+          BASE_PATH,
+          configuration,
+        )(axios, localVarOperationServerBasePath || basePath);
+    },
+  };
+};
+
+/**
+ * OauthApi - factory interface
+ * @export
+ */
+export const OauthApiFactory = function (
+  configuration?: Configuration,
+  basePath?: string,
+  axios?: AxiosInstance,
+) {
+  const localVarFp = OauthApiFp(configuration);
+  return {
+    /**
+     *
+     * @param {OAuthExchangeRequestDto} oAuthExchangeRequestDto
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
+    exchange(
+      oAuthExchangeRequestDto: OAuthExchangeRequestDto,
+      options?: RawAxiosRequestConfig,
+    ): AxiosPromise<OAuthExchangeResponseDto> {
+      return localVarFp
+        .exchange(oAuthExchangeRequestDto, options)
+        .then((request) => request(axios, basePath));
+    },
+    /**
+     *
+     * @param {StartProviderEnum} provider
+     * @param {string} [graphId]
+     * @param {string} [nodeId]
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
+    start(
+      provider: StartProviderEnum,
+      graphId?: string,
+      nodeId?: string,
+      options?: RawAxiosRequestConfig,
+    ): AxiosPromise<OAuthStartResponseDto> {
+      return localVarFp
+        .start(provider, graphId, nodeId, options)
+        .then((request) => request(axios, basePath));
+    },
+    /**
+     *
+     * @param {StatusProviderEnum} provider
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
+    status(
+      provider: StatusProviderEnum,
+      options?: RawAxiosRequestConfig,
+    ): AxiosPromise<OAuthStatusResponseDto> {
+      return localVarFp
+        .status(provider, options)
+        .then((request) => request(axios, basePath));
+    },
+  };
+};
+
+/**
+ * OauthApi - object-oriented interface
+ * @export
+ * @class OauthApi
+ * @extends {BaseAPI}
+ */
+export class OauthApi extends BaseAPI {
+  /**
+   *
+   * @param {OAuthExchangeRequestDto} oAuthExchangeRequestDto
+   * @param {*} [options] Override http request option.
+   * @throws {RequiredError}
+   * @memberof OauthApi
+   */
+  public exchange(
+    oAuthExchangeRequestDto: OAuthExchangeRequestDto,
+    options?: RawAxiosRequestConfig,
+  ) {
+    return OauthApiFp(this.configuration)
+      .exchange(oAuthExchangeRequestDto, options)
+      .then((request) => request(this.axios, this.basePath));
+  }
+
+  /**
+   *
+   * @param {StartProviderEnum} provider
+   * @param {string} [graphId]
+   * @param {string} [nodeId]
+   * @param {*} [options] Override http request option.
+   * @throws {RequiredError}
+   * @memberof OauthApi
+   */
+  public start(
+    provider: StartProviderEnum,
+    graphId?: string,
+    nodeId?: string,
+    options?: RawAxiosRequestConfig,
+  ) {
+    return OauthApiFp(this.configuration)
+      .start(provider, graphId, nodeId, options)
+      .then((request) => request(this.axios, this.basePath));
+  }
+
+  /**
+   *
+   * @param {StatusProviderEnum} provider
+   * @param {*} [options] Override http request option.
+   * @throws {RequiredError}
+   * @memberof OauthApi
+   */
+  public status(provider: StatusProviderEnum, options?: RawAxiosRequestConfig) {
+    return OauthApiFp(this.configuration)
+      .status(provider, options)
+      .then((request) => request(this.axios, this.basePath));
+  }
+}
+
+/**
+ * @export
+ */
+export const StartProviderEnum = {
+  Linear: 'linear',
+} as const;
+export type StartProviderEnum =
+  (typeof StartProviderEnum)[keyof typeof StartProviderEnum];
+/**
+ * @export
+ */
+export const StatusProviderEnum = {
+  Linear: 'linear',
+} as const;
+export type StatusProviderEnum =
+  (typeof StatusProviderEnum)[keyof typeof StatusProviderEnum];
 
 /**
  * ProjectsApi - axios parameter creator

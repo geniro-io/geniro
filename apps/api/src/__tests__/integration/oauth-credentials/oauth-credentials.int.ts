@@ -1,0 +1,519 @@
+import { EntityManager } from '@mikro-orm/postgresql';
+import { INestApplication } from '@nestjs/common';
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from 'vitest';
+
+import type { AppContextStorage } from '../../../auth/app-context-storage';
+import { CacheService } from '../../../v1/cache/services/cache.service';
+import { NotificationEvent } from '../../../v1/notifications/notifications.types';
+import { NotificationsService } from '../../../v1/notifications/services/notifications.service';
+import { OAuthCredentialEntity } from '../../../v1/oauth-credentials/entity/oauth-credential.entity';
+import {
+  OAUTH_STATE_CACHE_PREFIX,
+  OAUTH_STATE_TTL_SECONDS,
+  OAuthProvider,
+} from '../../../v1/oauth-credentials/oauth-credentials.types';
+import { OAuthCredentialsService } from '../../../v1/oauth-credentials/services/oauth-credentials.service';
+import { OAuthExchangeService } from '../../../v1/oauth-credentials/services/oauth-exchange.service';
+import { SecretEntity } from '../../../v1/secrets/entity/secret.entity';
+import { SecretsStoreService } from '../../../v1/secrets-store/services/secrets-store.service';
+import { buildTestContext, createTestProject } from '../helpers/test-context';
+import { createTestModule } from '../setup';
+
+const OTHER_USER_ID = '00000000-0000-0000-0000-0000000000aa';
+
+// Toggleable OpenBao availability + an in-memory KV stand-in.
+const storeState = { available: true };
+const kvStore = new Map<string, string>();
+
+const mockStore = {
+  isAvailable: vi.fn(() => storeState.available),
+  putSecret: vi.fn(async (projectId: string, name: string, value: string) => {
+    kvStore.set(`${projectId}:${name}`, value);
+  }),
+  getSecret: vi.fn(
+    async (projectId: string, name: string) =>
+      kvStore.get(`${projectId}:${name}`) ?? '',
+  ),
+  deleteSecret: vi.fn(async (projectId: string, name: string) => {
+    kvStore.delete(`${projectId}:${name}`);
+  }),
+};
+
+const mockExchange = {
+  isProviderConfigured: vi.fn().mockReturnValue(true),
+  resolveClientCredentials: vi.fn().mockReturnValue({
+    clientId: 'test-client-id',
+    clientSecret: 'test-secret',
+  }),
+  exchangeAuthorizationCode: vi.fn(),
+};
+
+const startState = async (
+  service: OAuthCredentialsService,
+  ctx: AppContextStorage,
+  query: { graphId?: string; nodeId?: string } = {},
+): Promise<string> => {
+  const { authorizeUrl } = await service.start(
+    ctx,
+    OAuthProvider.Linear,
+    query,
+  );
+  return new URL(authorizeUrl).searchParams.get('state') as string;
+};
+
+describe('OAuthCredentials (integration)', () => {
+  let app: INestApplication;
+  let service: OAuthCredentialsService;
+  let cache: CacheService;
+  let notifications: NotificationsService;
+  let projectId: string;
+  let ctx: AppContextStorage;
+
+  beforeAll(async () => {
+    app = await createTestModule(async (builder) =>
+      builder
+        .overrideProvider(OAuthExchangeService)
+        .useValue(mockExchange)
+        .overrideProvider(SecretsStoreService)
+        .useValue(mockStore)
+        .compile(),
+    );
+    service = app.get(OAuthCredentialsService);
+    cache = app.get(CacheService);
+    notifications = app.get(NotificationsService);
+  });
+
+  afterAll(async () => {
+    await app.close();
+  });
+
+  beforeEach(async () => {
+    storeState.available = true;
+    kvStore.clear();
+    mockExchange.isProviderConfigured.mockReturnValue(true);
+    mockExchange.exchangeAuthorizationCode.mockReset();
+    // These are module-scope vi.fn() stubs — restoreAllMocks does NOT clear
+    // their call history, so clear it explicitly for per-test isolation.
+    mockStore.putSecret.mockClear();
+    mockStore.deleteSecret.mockClear();
+    mockStore.getSecret.mockClear();
+    mockStore.isAvailable.mockClear();
+    vi.restoreAllMocks();
+
+    const created = await createTestProject(app);
+    projectId = created.projectId;
+    ctx = created.ctx;
+  });
+
+  afterEach(async () => {
+    const em = app.get(EntityManager).fork();
+    await em.nativeDelete(OAuthCredentialEntity, { projectId });
+    await em.nativeDelete(SecretEntity, { projectId });
+  });
+
+  it('start() builds an S256 authorize URL and persists the verifier + state server-side', async () => {
+    const state = await startState(service, ctx, {
+      graphId: 'g1',
+      nodeId: 'n1',
+    });
+
+    const cached = await cache.get(`${OAUTH_STATE_CACHE_PREFIX}${state}`);
+    expect(cached).toBeTruthy();
+    const pending = JSON.parse(cached as string);
+    expect(pending.projectId).toBe(projectId);
+    expect(pending.provider).toBe(OAuthProvider.Linear);
+    expect(typeof pending.codeVerifier).toBe('string');
+    expect(pending.graphId).toBe('g1');
+    expect(pending.nodeId).toBe('n1');
+  });
+
+  it('start() rejects an unconfigured provider', async () => {
+    mockExchange.isProviderConfigured.mockReturnValue(false);
+    await expect(
+      service.start(ctx, OAuthProvider.Linear, {}),
+    ).rejects.toThrow();
+  });
+
+  it('exchange() fails CLOSED when the secrets store is unavailable', async () => {
+    storeState.available = false;
+    const state = await startState(service, ctx);
+    await expect(
+      service.exchange(ctx, {
+        provider: OAuthProvider.Linear,
+        code: 'code-1',
+        state,
+      }),
+    ).rejects.toThrow(/SECRETS_STORE_UNAVAILABLE|OpenBao/i);
+    // Nothing persisted, exchange never attempted.
+    expect(mockExchange.exchangeAuthorizationCode).not.toHaveBeenCalled();
+  });
+
+  it('exchange() rejects an unknown state', async () => {
+    await expect(
+      service.exchange(ctx, {
+        provider: OAuthProvider.Linear,
+        code: 'code-1',
+        state: 'does-not-exist',
+      }),
+    ).rejects.toThrow(/OAUTH_STATE_INVALID/);
+  });
+
+  it('exchange() rejects a state minted by a different user', async () => {
+    // The project is taken from the server-stored state; ownership is enforced
+    // by the same-user (createdBy) check, so a different authenticated user
+    // cannot complete this flow.
+    const state = await startState(service, ctx);
+    const otherUserCtx = buildTestContext(OTHER_USER_ID, projectId);
+    await expect(
+      service.exchange(otherUserCtx, {
+        provider: OAuthProvider.Linear,
+        code: 'code-1',
+        state,
+      }),
+    ).rejects.toThrow(/OAUTH_STATE_MISMATCH/);
+  });
+
+  it('exchange() stores the token, upserts the credential, and emits credential.acquired', async () => {
+    mockExchange.exchangeAuthorizationCode.mockResolvedValue({
+      accessToken: 'lin_oauth_token_123',
+      scopes: ['read', 'write'],
+      expiresAt: null,
+      accountLabel: 'Acme Workspace',
+    });
+    const emitSpy = vi.spyOn(notifications, 'emit');
+
+    const state = await startState(service, ctx, {
+      graphId: 'g1',
+      nodeId: 'n1',
+    });
+    const result = await service.exchange(ctx, {
+      provider: OAuthProvider.Linear,
+      code: 'code-1',
+      state,
+    });
+
+    expect(result.accountLabel).toBe('Acme Workspace');
+    expect(result.secretName).toBe('LINEAR_OAUTH_TOKEN');
+
+    // Token written to OpenBao + a selectable secrets row created.
+    expect(mockStore.putSecret).toHaveBeenCalledWith(
+      projectId,
+      'LINEAR_OAUTH_TOKEN',
+      'lin_oauth_token_123',
+    );
+    const em = app.get(EntityManager).fork();
+    const secretRow = await em.findOne(SecretEntity, {
+      projectId,
+      name: 'LINEAR_OAUTH_TOKEN',
+    });
+    expect(secretRow).toBeTruthy();
+    const credRow = await em.findOne(OAuthCredentialEntity, {
+      projectId,
+      provider: OAuthProvider.Linear,
+    });
+    expect(credRow?.accountLabel).toBe('Acme Workspace');
+    expect(credRow?.secretName).toBe('LINEAR_OAUTH_TOKEN');
+
+    // Authoritative server-side completion signal.
+    expect(emitSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: NotificationEvent.CredentialAcquired,
+        projectId,
+        graphId: 'g1',
+        nodeId: 'n1',
+        data: expect.objectContaining({
+          provider: OAuthProvider.Linear,
+          accountLabel: 'Acme Workspace',
+        }),
+      }),
+    );
+
+    // State is single-use — consumed on exchange.
+    expect(await cache.get(`${OAUTH_STATE_CACHE_PREFIX}${state}`)).toBeNull();
+
+    // /status now reflects the credential.
+    const status = await service.status(ctx, OAuthProvider.Linear);
+    expect(status.authenticated).toBe(true);
+    expect(status.accountLabel).toBe('Acme Workspace');
+    expect(status.secretName).toBe('LINEAR_OAUTH_TOKEN');
+  });
+
+  it('status() reports not-authenticated when no credential exists', async () => {
+    const status = await service.status(ctx, OAuthProvider.Linear);
+    expect(status.authenticated).toBe(false);
+    expect(status.accountLabel).toBeNull();
+    expect(status.secretName).toBeNull();
+  });
+
+  it('exchange() is idempotent on rotation — one row, rotated value + scopes', async () => {
+    mockExchange.exchangeAuthorizationCode
+      .mockResolvedValueOnce({
+        accessToken: 'token-v1',
+        scopes: ['read'],
+        expiresAt: null,
+        accountLabel: 'Acme',
+      })
+      .mockResolvedValueOnce({
+        accessToken: 'token-v2',
+        scopes: ['read', 'write'],
+        expiresAt: null,
+        accountLabel: 'Acme',
+      });
+
+    const s1 = await startState(service, ctx);
+    await service.exchange(ctx, {
+      provider: OAuthProvider.Linear,
+      code: 'c1',
+      state: s1,
+    });
+    const s2 = await startState(service, ctx);
+    await service.exchange(ctx, {
+      provider: OAuthProvider.Linear,
+      code: 'c2',
+      state: s2,
+    });
+
+    const em = app.get(EntityManager).fork();
+    const creds = await em.find(OAuthCredentialEntity, {
+      projectId,
+      provider: OAuthProvider.Linear,
+    });
+    expect(creds).toHaveLength(1);
+    expect(creds[0]?.scopes).toEqual(['read', 'write']);
+
+    const secrets = await em.find(SecretEntity, {
+      projectId,
+      name: 'LINEAR_OAUTH_TOKEN',
+    });
+    expect(secrets).toHaveLength(1);
+
+    // The OpenBao value rotated to the latest token.
+    expect(kvStore.get(`${projectId}:LINEAR_OAUTH_TOKEN`)).toBe('token-v2');
+  });
+
+  it('exchange() rejects a header-unsafe token BEFORE writing to OpenBao', async () => {
+    // A token carrying embedded whitespace is header-unsafe — the guard fires
+    // before any secret is persisted.
+    mockExchange.exchangeAuthorizationCode.mockResolvedValue({
+      accessToken: 'lin oauth token with space',
+      scopes: ['read'],
+      expiresAt: null,
+      accountLabel: 'Acme',
+    });
+    const state = await startState(service, ctx);
+    // The code is on `errorCode`; the message is the human description.
+    await expect(
+      service.exchange(ctx, {
+        provider: OAuthProvider.Linear,
+        code: 'code-1',
+        state,
+      }),
+    ).rejects.toMatchObject({ errorCode: 'OAUTH_TOKEN_INVALID' });
+    // Token never reached the store; no credential/secret rows written.
+    expect(mockStore.putSecret).not.toHaveBeenCalled();
+    const em = app.get(EntityManager).fork();
+    expect(
+      await em.count(OAuthCredentialEntity, {
+        projectId,
+        provider: OAuthProvider.Linear,
+      }),
+    ).toBe(0);
+  });
+
+  it('exchange() rejects malformed or partial server-stored state', async () => {
+    // Seed the cache directly so the state survives the existence check but
+    // fails the JSON / shape validation in loadPendingState.
+    const malformed = 'malformed-state';
+    await cache.set(
+      `${OAUTH_STATE_CACHE_PREFIX}${malformed}`,
+      'not-json{',
+      OAUTH_STATE_TTL_SECONDS,
+    );
+    await expect(
+      service.exchange(ctx, {
+        provider: OAuthProvider.Linear,
+        code: 'code-1',
+        state: malformed,
+      }),
+    ).rejects.toThrow(/OAUTH_STATE_INVALID/);
+
+    const partial = 'partial-state';
+    await cache.set(
+      `${OAUTH_STATE_CACHE_PREFIX}${partial}`,
+      JSON.stringify({ projectId: 'p', provider: OAuthProvider.Linear }),
+      OAUTH_STATE_TTL_SECONDS,
+    );
+    await expect(
+      service.exchange(ctx, {
+        provider: OAuthProvider.Linear,
+        code: 'code-1',
+        state: partial,
+      }),
+    ).rejects.toThrow(/OAUTH_STATE_INVALID/);
+    expect(mockExchange.exchangeAuthorizationCode).not.toHaveBeenCalled();
+  });
+
+  it('exchange() resurrects soft-deleted secret + credential rows on re-auth', async () => {
+    mockExchange.exchangeAuthorizationCode.mockResolvedValue({
+      accessToken: 'token-1',
+      scopes: ['read'],
+      expiresAt: null,
+      accountLabel: 'Acme',
+    });
+    const s1 = await startState(service, ctx);
+    await service.exchange(ctx, {
+      provider: OAuthProvider.Linear,
+      code: 'c1',
+      state: s1,
+    });
+
+    // Simulate the user deleting the stored secret + credential (soft delete).
+    const delEm = app.get(EntityManager).fork();
+    await delEm.nativeUpdate(
+      SecretEntity,
+      { projectId, name: 'LINEAR_OAUTH_TOKEN' },
+      { deletedAt: new Date() },
+    );
+    await delEm.nativeUpdate(
+      OAuthCredentialEntity,
+      { projectId, provider: OAuthProvider.Linear },
+      { deletedAt: new Date() },
+    );
+
+    // Re-auth must resurrect the soft-deleted rows, not collide with the plain
+    // UNIQUE constraint (the regression this guards is a 500 on re-auth).
+    const s2 = await startState(service, ctx);
+    await service.exchange(ctx, {
+      provider: OAuthProvider.Linear,
+      code: 'c2',
+      state: s2,
+    });
+
+    const em = app.get(EntityManager).fork();
+    const activeCreds = await em.find(OAuthCredentialEntity, {
+      projectId,
+      provider: OAuthProvider.Linear,
+    });
+    expect(activeCreds).toHaveLength(1);
+    expect(activeCreds[0]?.deletedAt).toBeNull();
+    // Including soft-deleted rows: still exactly one — resurrected, not duplicated.
+    const allCreds = await em.find(
+      OAuthCredentialEntity,
+      { projectId, provider: OAuthProvider.Linear },
+      { filters: { softDelete: false } },
+    );
+    expect(allCreds).toHaveLength(1);
+    const allSecrets = await em.find(
+      SecretEntity,
+      { projectId, name: 'LINEAR_OAUTH_TOKEN' },
+      { filters: { softDelete: false } },
+    );
+    expect(allSecrets).toHaveLength(1);
+  });
+
+  it('exchange() keys the credential on (project, provider) — account-label drift updates one row', async () => {
+    mockExchange.exchangeAuthorizationCode
+      .mockResolvedValueOnce({
+        accessToken: 'token-a',
+        scopes: ['read'],
+        expiresAt: null,
+        accountLabel: 'Acme Workspace',
+      })
+      .mockResolvedValueOnce({
+        accessToken: 'token-b',
+        scopes: ['read'],
+        expiresAt: null,
+        accountLabel: 'Acme Renamed',
+      });
+
+    const s1 = await startState(service, ctx);
+    await service.exchange(ctx, {
+      provider: OAuthProvider.Linear,
+      code: 'c1',
+      state: s1,
+    });
+    const s2 = await startState(service, ctx);
+    await service.exchange(ctx, {
+      provider: OAuthProvider.Linear,
+      code: 'c2',
+      state: s2,
+    });
+
+    const em = app.get(EntityManager).fork();
+    const creds = await em.find(OAuthCredentialEntity, {
+      projectId,
+      provider: OAuthProvider.Linear,
+    });
+    // A different account label on re-auth must NOT create a second row.
+    expect(creds).toHaveLength(1);
+    expect(creds[0]?.accountLabel).toBe('Acme Renamed');
+  });
+
+  it('status() reports not-authenticated for an expired credential', async () => {
+    mockExchange.exchangeAuthorizationCode.mockResolvedValue({
+      accessToken: 'token-expired',
+      scopes: ['read'],
+      expiresAt: new Date(Date.now() - 60_000),
+      accountLabel: 'Acme',
+    });
+    const state = await startState(service, ctx);
+    await service.exchange(ctx, {
+      provider: OAuthProvider.Linear,
+      code: 'code-1',
+      state,
+    });
+
+    const status = await service.status(ctx, OAuthProvider.Linear);
+    expect(status.authenticated).toBe(false);
+    expect(status.accountLabel).toBeNull();
+    expect(status.secretName).toBeNull();
+  });
+
+  it('exchange() is concurrency-safe — two racing exchanges converge to one row', async () => {
+    // The atomic INSERT … ON CONFLICT upsert means two exchanges racing for the
+    // same (projectId, provider) — a double-clicked Authenticate or two tabs —
+    // converge on one row; neither hits a UNIQUE-constraint 500.
+    mockExchange.exchangeAuthorizationCode.mockResolvedValue({
+      accessToken: 'token-concurrent',
+      scopes: ['read'],
+      expiresAt: null,
+      accountLabel: 'Acme',
+    });
+    const s1 = await startState(service, ctx);
+    const s2 = await startState(service, ctx);
+
+    const results = await Promise.allSettled([
+      service.exchange(ctx, {
+        provider: OAuthProvider.Linear,
+        code: 'c1',
+        state: s1,
+      }),
+      service.exchange(ctx, {
+        provider: OAuthProvider.Linear,
+        code: 'c2',
+        state: s2,
+      }),
+    ]);
+    expect(results.every((r) => r.status === 'fulfilled')).toBe(true);
+
+    const em = app.get(EntityManager).fork();
+    expect(
+      await em.count(OAuthCredentialEntity, {
+        projectId,
+        provider: OAuthProvider.Linear,
+      }),
+    ).toBe(1);
+    expect(
+      await em.count(SecretEntity, { projectId, name: 'LINEAR_OAUTH_TOKEN' }),
+    ).toBe(1);
+  });
+});

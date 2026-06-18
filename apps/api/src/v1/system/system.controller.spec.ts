@@ -65,6 +65,7 @@ describe('SystemController', () => {
         litellmManagementEnabled: true,
         isAdmin: false,
         githubWebhookEnabled: false,
+        linearOAuthEnabled: false,
         apiVersion: '1.2.3',
         webVersion: '0.4.5',
       });
@@ -78,6 +79,7 @@ describe('SystemController', () => {
         litellmManagementEnabled: true,
         isAdmin: false,
         githubWebhookEnabled: false,
+        linearOAuthEnabled: false,
         apiVersion: '1.2.3',
         webVersion: '0.4.5',
       });
@@ -92,6 +94,7 @@ describe('SystemController', () => {
         litellmManagementEnabled: false,
         isAdmin: false,
         githubWebhookEnabled: false,
+        linearOAuthEnabled: false,
         apiVersion: '1.2.3',
         webVersion: '0.4.5',
       });
@@ -105,6 +108,7 @@ describe('SystemController', () => {
         litellmManagementEnabled: true,
         isAdmin: true,
         githubWebhookEnabled: false,
+        linearOAuthEnabled: false,
         apiVersion: '1.2.3',
         webVersion: '0.4.5',
       });
@@ -118,6 +122,7 @@ describe('SystemController', () => {
         litellmManagementEnabled: true,
         isAdmin: false,
         githubWebhookEnabled: false,
+        linearOAuthEnabled: false,
         apiVersion: '1.2.3',
         webVersion: '0.4.5',
       });
@@ -132,6 +137,7 @@ describe('SystemController', () => {
         litellmManagementEnabled: true,
         isAdmin: false,
         githubWebhookEnabled: false,
+        linearOAuthEnabled: false,
         apiVersion: '1.2.3',
         webVersion: '0.4.5',
       });
@@ -148,6 +154,7 @@ describe('SystemController', () => {
         litellmManagementEnabled: true,
         isAdmin: true,
         githubWebhookEnabled: false,
+        linearOAuthEnabled: false,
         apiVersion: '1.2.3',
         webVersion: '0.4.5',
       });
@@ -159,6 +166,7 @@ describe('SystemController', () => {
         litellmManagementEnabled: true,
         isAdmin: false,
         githubWebhookEnabled: false,
+        linearOAuthEnabled: false,
         apiVersion: '1.2.3',
         webVersion: '0.4.5',
       });
@@ -169,6 +177,31 @@ describe('SystemController', () => {
       const result = controller.getSettings(nonAdminCtx);
       expect(result.apiVersion).toBe('1.2.3');
       expect(result.webVersion).toBe('0.4.5');
+    });
+
+    it('should return linearOAuthEnabled: true only when both client id and secret are set', () => {
+      mockGitHubAppService.isConfigured.mockReturnValue(false);
+
+      mockEnvironment.linearOAuthClientId = '';
+      mockEnvironment.linearOAuthClientSecret = '';
+      expect(controller.getSettings(nonAdminCtx).linearOAuthEnabled).toBe(
+        false,
+      );
+
+      // Only one of the pair set → still disabled (fail-closed).
+      mockEnvironment.linearOAuthClientId = 'client-id';
+      mockEnvironment.linearOAuthClientSecret = '';
+      expect(controller.getSettings(nonAdminCtx).linearOAuthEnabled).toBe(
+        false,
+      );
+
+      mockEnvironment.linearOAuthClientId = 'client-id';
+      mockEnvironment.linearOAuthClientSecret = 'client-secret';
+      expect(controller.getSettings(nonAdminCtx).linearOAuthEnabled).toBe(true);
+
+      // Reset so other tests see the fail-closed default.
+      mockEnvironment.linearOAuthClientId = '';
+      mockEnvironment.linearOAuthClientSecret = '';
     });
   });
 

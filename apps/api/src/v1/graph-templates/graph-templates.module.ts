@@ -23,6 +23,7 @@ import { CustomInstructionTemplate } from './templates/instructions/custom-instr
 import { CustomMcpTemplate } from './templates/mcp/custom-mcp.template';
 import { FilesystemMcpTemplate } from './templates/mcp/filesystem-mcp.template';
 import { JiraMcpTemplate } from './templates/mcp/jira-mcp.template';
+import { LinearMcpTemplate } from './templates/mcp/linear-mcp.template';
 import { PlaywrightMcpTemplate } from './templates/mcp/playwright-mcp.template';
 import { GithubResourceTemplate } from './templates/resources/github-resource.template';
 import { RuntimeTemplate } from './templates/runtimes/runtime.template';
@@ -71,6 +72,7 @@ import { ManualTriggerTemplate } from './templates/triggers/manual-trigger.templ
     CustomMcpTemplate,
     FilesystemMcpTemplate,
     JiraMcpTemplate,
+    LinearMcpTemplate,
     PlaywrightMcpTemplate,
     // --- resources ---
     GithubResourceTemplate,

@@ -80,4 +80,10 @@ export const environment = () =>
     // --- Secrets store (OpenBao) ---
     openbaoAddr: getEnv('OPENBAO_ADDR', 'http://localhost:8200'),
     openbaoToken: getEnv('OPENBAO_TOKEN', 'dev-openbao-token'),
+
+    // --- OAuth credentials ---
+    // Linear client id/secret intentionally unset in dev (no LINEAR_* env) →
+    // linearOAuthEnabled is false and the feature fails closed until a Linear
+    // OAuth app is provisioned.
+    websiteUrl: getEnv('WEBSITE_URL', 'http://localhost:3004'),
   }) as const satisfies Record<string, string | number | boolean>;
