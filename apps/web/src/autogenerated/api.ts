@@ -2783,12 +2783,6 @@ export interface SystemSettingsResponseDto {
    */
   'githubWebhookEnabled': boolean;
   /**
-   * Whether the Linear OAuth integration is configured (client id + secret)
-   * @type {boolean}
-   * @memberof SystemSettingsResponseDto
-   */
-  'linearOAuthEnabled': boolean;
-  /**
    * Current API server version
    * @type {string}
    * @memberof SystemSettingsResponseDto

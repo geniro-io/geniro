@@ -1,148 +1,92 @@
 import { Injectable } from '@nestjs/common';
-import { BadRequestException, DefaultLogger } from '@packages/common';
+import { BadRequestException } from '@packages/common';
 
-import { environment } from '../../../environments';
-import {
-  OAUTH_PROVIDER_CONFIGS,
-  OAuthProvider,
-  OAuthTokenResult,
-} from '../oauth-credentials.types';
-
-interface OAuthClientCredentials {
-  clientId: string;
-  clientSecret: string;
-}
+import { OAuthProvider, OAuthTokenResult } from '../oauth-credentials.types';
+import { BaseOAuthProvider } from '../providers/base-oauth-provider';
+import { LinearOAuthProvider } from '../providers/linear-oauth-provider';
+import { RegisteredClient } from '../providers/oauth-provider.types';
 
 /**
- * Provider-facing HTTP for the OAuth authorization-code flow. Kept as a
- * separate injectable so integration tests can override it with a fake token
- * result instead of reaching the real provider over the network — the
- * orchestration service ({@link OAuthCredentialsService}) owns everything else.
+ * Resolves the per-provider OAuth strategy and delegates the provider-facing
+ * HTTP — discovery (RFC 9728 -> RFC 8414), Dynamic Client Registration
+ * (RFC 7591), and the token exchange — to it. Kept as a separate injectable so
+ * integration tests can override it with a fake instead of reaching the real
+ * provider over the network; the orchestration service
+ * ({@link OAuthCredentialsService}) owns Redis / OpenBao / DB.
+ *
+ * A new OAuth MCP provider is a single strategy class registered in the module —
+ * this service needs no edit.
  */
 @Injectable()
 export class OAuthExchangeService {
-  constructor(private readonly logger: DefaultLogger) {}
+  private readonly providers: Partial<Record<OAuthProvider, BaseOAuthProvider>>;
 
-  resolveClientCredentials(provider: OAuthProvider): OAuthClientCredentials {
-    switch (provider) {
-      case OAuthProvider.Linear:
-        return {
-          clientId: environment.linearOAuthClientId,
-          clientSecret: environment.linearOAuthClientSecret,
-        };
-      default:
-        return { clientId: '', clientSecret: '' };
-    }
-  }
-
-  /** True only when both client id and secret are configured for the provider. */
-  isProviderConfigured(provider: OAuthProvider): boolean {
-    const { clientId, clientSecret } = this.resolveClientCredentials(provider);
-    return Boolean(clientId) && Boolean(clientSecret);
+  constructor(linearProvider: LinearOAuthProvider) {
+    this.providers = {
+      [OAuthProvider.Linear]: linearProvider,
+    };
   }
 
   /**
-   * Exchange an authorization `code` (+ PKCE verifier) for an access token.
-   * Throws `OAUTH_PROVIDER_NOT_CONFIGURED` when the client id/secret are unset
-   * and `OAUTH_TOKEN_EXCHANGE_FAILED` on a non-OK / token-less response.
+   * Discover the provider's authorization server and register a per-flow client
+   * (DCR), then build the consent URL. Returns the authorize URL plus the
+   * registered client for the caller to stow in the pending-state. Throws
+   * (fail-closed) on any discovery / registration failure so the caller
+   * persists no partial state.
+   *
+   * `redirectUri` MUST be the SAME value later passed to
+   * {@link exchangeAuthorizationCode} — it is registered as `redirect_uris[0]`
+   * and echoed in the authorize URL, so a byte-for-byte mismatch makes the AS
+   * reject the flow.
+   */
+  async prepareAuthorization(
+    provider: OAuthProvider,
+    redirectUri: string,
+    state: string,
+    codeChallenge: string,
+  ): Promise<{ authorizeUrl: string; client: RegisteredClient }> {
+    const strategy = this.resolveProvider(provider);
+    const server = await strategy.discover();
+    const client = await strategy.register(server, redirectUri);
+    const authorizeUrl = strategy.buildAuthorizeUrl(
+      server,
+      client.clientId,
+      redirectUri,
+      state,
+      codeChallenge,
+    );
+    return { authorizeUrl, client };
+  }
+
+  /**
+   * Exchange an authorization `code` (+ PKCE verifier) for an access token,
+   * using the per-flow `client` registered at {@link prepareAuthorization}.
+   * Re-discovers the token endpoint so the exchange always targets the same
+   * authorization server that issued the code.
    */
   async exchangeAuthorizationCode(
     provider: OAuthProvider,
     code: string,
     codeVerifier: string,
     redirectUri: string,
+    client: RegisteredClient,
   ): Promise<OAuthTokenResult> {
-    const { clientId, clientSecret } = this.resolveClientCredentials(provider);
-    if (!clientId || !clientSecret) {
-      throw new BadRequestException('OAUTH_PROVIDER_NOT_CONFIGURED');
-    }
-
-    const config = OAUTH_PROVIDER_CONFIGS[provider];
-    const body = new URLSearchParams({
-      grant_type: 'authorization_code',
+    const strategy = this.resolveProvider(provider);
+    const server = await strategy.discover();
+    return await strategy.exchangeCode(
+      server,
+      client,
       code,
-      redirect_uri: redirectUri,
-      client_id: clientId,
-      client_secret: clientSecret,
-      code_verifier: codeVerifier,
-    });
-
-    const response = await fetch(config.tokenUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        Accept: 'application/json',
-      },
-      body: body.toString(),
-      signal: AbortSignal.timeout(15_000),
-    });
-
-    const data = (await response.json().catch(() => ({}))) as {
-      access_token?: string;
-      token_type?: string;
-      scope?: string;
-      expires_in?: number;
-      error?: string;
-    };
-
-    if (!response.ok || !data.access_token) {
-      this.logger.error(
-        `OAuth token exchange failed for ${provider}: status ${response.status} ${data.error ?? ''}`,
-      );
-      throw new BadRequestException('OAUTH_TOKEN_EXCHANGE_FAILED');
-    }
-
-    const scopes =
-      typeof data.scope === 'string'
-        ? data.scope.split(/[\s,]+/).filter(Boolean)
-        : null;
-    // Any numeric lifetime yields a concrete expiry — a non-positive value maps
-    // to an already-past Date (token dead on arrival) rather than `null`, so
-    // status() never mistakes it for a permanent, non-expiring token. Only an
-    // absent / non-numeric `expires_in` means "expiry unknown" → null.
-    const expiresAt =
-      typeof data.expires_in === 'number'
-        ? new Date(Date.now() + data.expires_in * 1000)
-        : null;
-    const accountLabel = await this.fetchAccountLabel(
-      provider,
-      data.access_token,
+      codeVerifier,
+      redirectUri,
     );
-
-    return { accessToken: data.access_token, scopes, expiresAt, accountLabel };
   }
 
-  /**
-   * Best-effort human-readable account label for the node UI. Never throws —
-   * a failure just yields `null` and the caller falls back to the provider id.
-   */
-  private async fetchAccountLabel(
-    provider: OAuthProvider,
-    accessToken: string,
-  ): Promise<string | null> {
-    if (provider !== OAuthProvider.Linear) {
-      return null;
+  private resolveProvider(provider: OAuthProvider): BaseOAuthProvider {
+    const strategy = this.providers[provider];
+    if (!strategy) {
+      throw new BadRequestException('OAUTH_PROVIDER_NOT_SUPPORTED');
     }
-    try {
-      const response = await fetch('https://api.linear.app/graphql', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: accessToken,
-        },
-        body: JSON.stringify({ query: '{ viewer { name } }' }),
-        signal: AbortSignal.timeout(10_000),
-      });
-      const data = (await response.json().catch(() => ({}))) as {
-        data?: { viewer?: { name?: string } };
-      };
-      const name = data.data?.viewer?.name;
-      return typeof name === 'string' && name.length > 0 ? name : null;
-    } catch (error) {
-      this.logger.debug(
-        `Failed to fetch ${provider} account label: ${error instanceof Error ? error.message : String(error)}`,
-      );
-      return null;
-    }
+    return strategy;
   }
 }

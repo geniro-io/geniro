@@ -16,11 +16,6 @@ export const SystemSettingsResponseSchema = z.object({
     .describe(
       'Whether the GitHub webhook receiver is configured and available',
     ),
-  linearOAuthEnabled: z
-    .boolean()
-    .describe(
-      'Whether the Linear OAuth integration is configured (client id + secret)',
-    ),
   apiVersion: z.string().describe('Current API server version'),
   webVersion: z.string().describe('Current web client version'),
 });

@@ -82,8 +82,8 @@ export const environment = () =>
     openbaoToken: getEnv('OPENBAO_TOKEN', 'dev-openbao-token'),
 
     // --- OAuth credentials ---
-    // Linear client id/secret intentionally unset in dev (no LINEAR_* env) →
-    // linearOAuthEnabled is false and the feature fails closed until a Linear
-    // OAuth app is provisioned.
+    // No provider client id/secret in any environment: each MCP provider's
+    // OAuth client is registered per flow via Dynamic Client Registration, so
+    // the per-project OAuth feature works in dev with zero extra config.
     websiteUrl: getEnv('WEBSITE_URL', 'http://localhost:3004'),
   }) as const satisfies Record<string, string | number | boolean>;

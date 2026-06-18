@@ -2,15 +2,14 @@
 
 ## Properties
 
-| Name                         | Type        | Description                                                             | Notes                  |
-| ---------------------------- | ----------- | ----------------------------------------------------------------------- | ---------------------- |
-| **githubAppEnabled**         | **boolean** | Whether the GitHub App integration is configured and available          | [default to undefined] |
-| **litellmManagementEnabled** | **boolean** | Whether the LiteLLM model management UI is enabled for the frontend     | [default to undefined] |
-| **isAdmin**                  | **boolean** | Whether the current user has the admin role                             | [default to undefined] |
-| **githubWebhookEnabled**     | **boolean** | Whether the GitHub webhook receiver is configured and available         | [default to undefined] |
-| **linearOAuthEnabled**       | **boolean** | Whether the Linear OAuth integration is configured (client id + secret) | [default to undefined] |
-| **apiVersion**               | **string**  | Current API server version                                              | [default to undefined] |
-| **webVersion**               | **string**  | Current web client version                                              | [default to undefined] |
+| Name                         | Type        | Description                                                         | Notes                  |
+| ---------------------------- | ----------- | ------------------------------------------------------------------- | ---------------------- |
+| **githubAppEnabled**         | **boolean** | Whether the GitHub App integration is configured and available      | [default to undefined] |
+| **litellmManagementEnabled** | **boolean** | Whether the LiteLLM model management UI is enabled for the frontend | [default to undefined] |
+| **isAdmin**                  | **boolean** | Whether the current user has the admin role                         | [default to undefined] |
+| **githubWebhookEnabled**     | **boolean** | Whether the GitHub webhook receiver is configured and available     | [default to undefined] |
+| **apiVersion**               | **string**  | Current API server version                                          | [default to undefined] |
+| **webVersion**               | **string**  | Current web client version                                          | [default to undefined] |
 
 ## Example
 
@@ -22,7 +21,6 @@ const instance: SystemSettingsResponseDto = {
   litellmManagementEnabled,
   isAdmin,
   githubWebhookEnabled,
-  linearOAuthEnabled,
   apiVersion,
   webVersion,
 };

@@ -48,12 +48,24 @@ const mockStore = {
   }),
 };
 
+// The exchange service is overridden so the integration suite never reaches the
+// real provider over the network. start() -> prepareAuthorization (discovery +
+// DCR), exchange() -> exchangeAuthorizationCode. The mock authorize URL embeds
+// the `state` passed in so the startState() helper can recover it.
+const defaultPrepareAuthorization = async (
+  _provider: OAuthProvider,
+  _redirectUri: string,
+  state: string,
+): Promise<{
+  authorizeUrl: string;
+  client: { clientId: string; clientSecret: string | null };
+}> => ({
+  authorizeUrl: `https://mock.authorize.test/?state=${state}`,
+  client: { clientId: 'dcr-client-test', clientSecret: null },
+});
+
 const mockExchange = {
-  isProviderConfigured: vi.fn().mockReturnValue(true),
-  resolveClientCredentials: vi.fn().mockReturnValue({
-    clientId: 'test-client-id',
-    clientSecret: 'test-secret',
-  }),
+  prepareAuthorization: vi.fn(),
   exchangeAuthorizationCode: vi.fn(),
 };
 
@@ -99,8 +111,6 @@ describe('OAuthCredentials (integration)', () => {
   beforeEach(async () => {
     storeState.available = true;
     kvStore.clear();
-    mockExchange.isProviderConfigured.mockReturnValue(true);
-    mockExchange.exchangeAuthorizationCode.mockReset();
     // These are module-scope vi.fn() stubs — restoreAllMocks does NOT clear
     // their call history, so clear it explicitly for per-test isolation.
     mockStore.putSecret.mockClear();
@@ -108,6 +118,14 @@ describe('OAuthCredentials (integration)', () => {
     mockStore.getSecret.mockClear();
     mockStore.isAvailable.mockClear();
     vi.restoreAllMocks();
+
+    // Re-establish the exchange-service mock defaults AFTER restoreAllMocks so
+    // they survive into the test body.
+    mockExchange.prepareAuthorization.mockReset();
+    mockExchange.prepareAuthorization.mockImplementation(
+      defaultPrepareAuthorization,
+    );
+    mockExchange.exchangeAuthorizationCode.mockReset();
 
     const created = await createTestProject(app);
     projectId = created.projectId;
@@ -120,11 +138,20 @@ describe('OAuthCredentials (integration)', () => {
     await em.nativeDelete(SecretEntity, { projectId });
   });
 
-  it('start() builds an S256 authorize URL and persists the verifier + state server-side', async () => {
+  it('start() registers a per-flow DCR client and persists the verifier + client + state server-side', async () => {
     const state = await startState(service, ctx, {
       graphId: 'g1',
       nodeId: 'n1',
     });
+
+    // Discovery + DCR happen via the exchange service, keyed on the same
+    // redirect_uri the exchange will use later.
+    expect(mockExchange.prepareAuthorization).toHaveBeenCalledWith(
+      OAuthProvider.Linear,
+      expect.stringContaining('/oauth/callback/linear'),
+      state,
+      expect.any(String),
+    );
 
     const cached = await cache.get(`${OAUTH_STATE_CACHE_PREFIX}${state}`);
     expect(cached).toBeTruthy();
@@ -132,15 +159,25 @@ describe('OAuthCredentials (integration)', () => {
     expect(pending.projectId).toBe(projectId);
     expect(pending.provider).toBe(OAuthProvider.Linear);
     expect(typeof pending.codeVerifier).toBe('string');
+    // The DCR-registered client is carried in the pending-state.
+    expect(pending.clientId).toBe('dcr-client-test');
+    expect(pending.clientSecret).toBeNull();
     expect(pending.graphId).toBe('g1');
     expect(pending.nodeId).toBe('n1');
   });
 
-  it('start() rejects an unconfigured provider', async () => {
-    mockExchange.isProviderConfigured.mockReturnValue(false);
-    await expect(
-      service.start(ctx, OAuthProvider.Linear, {}),
-    ).rejects.toThrow();
+  it('start() fails CLOSED on a discovery/registration failure — no pending-state written', async () => {
+    mockExchange.prepareAuthorization.mockRejectedValueOnce(
+      new Error('OAUTH_DISCOVERY_FAILED'),
+    );
+    const setSpy = vi.spyOn(cache, 'set');
+
+    await expect(service.start(ctx, OAuthProvider.Linear, {})).rejects.toThrow(
+      /OAUTH_DISCOVERY_FAILED/,
+    );
+
+    // No partial pending-state is persisted when discovery/registration throws.
+    expect(setSpy).not.toHaveBeenCalled();
   });
 
   it('exchange() fails CLOSED when the secrets store is unavailable', async () => {
@@ -204,6 +241,17 @@ describe('OAuthCredentials (integration)', () => {
     expect(result.accountLabel).toBe('Acme Workspace');
     expect(result.secretName).toBe('LINEAR_OAUTH_TOKEN');
 
+    // exchange() delegates with the stored DCR client and the SAME redirect_uri
+    // start() used (byte-exact across the two service methods, both derived from
+    // redirectUri(provider)); this pins the positional contract against drift.
+    expect(mockExchange.exchangeAuthorizationCode).toHaveBeenCalledWith(
+      OAuthProvider.Linear,
+      'code-1',
+      expect.any(String),
+      expect.stringContaining('/oauth/callback/linear'),
+      { clientId: 'dcr-client-test', clientSecret: null },
+    );
+
     // Token written to OpenBao + a selectable secrets row created.
     expect(mockStore.putSecret).toHaveBeenCalledWith(
       projectId,
@@ -245,6 +293,32 @@ describe('OAuthCredentials (integration)', () => {
     expect(status.authenticated).toBe(true);
     expect(status.accountLabel).toBe('Acme Workspace');
     expect(status.secretName).toBe('LINEAR_OAUTH_TOKEN');
+  });
+
+  it('exchange() falls back to the provider name when the token carries no account label', async () => {
+    // An MCP-scoped DCR token does not authenticate an identity probe, so the
+    // provider returns accountLabel: null — the service supplies the provider
+    // name as the single source of truth.
+    mockExchange.exchangeAuthorizationCode.mockResolvedValue({
+      accessToken: 'lin_oauth_token_nolabel',
+      scopes: ['read'],
+      expiresAt: null,
+      accountLabel: null,
+    });
+    const state = await startState(service, ctx);
+    const result = await service.exchange(ctx, {
+      provider: OAuthProvider.Linear,
+      code: 'code-1',
+      state,
+    });
+
+    expect(result.accountLabel).toBe(OAuthProvider.Linear);
+    const em = app.get(EntityManager).fork();
+    const cred = await em.findOne(OAuthCredentialEntity, {
+      projectId,
+      provider: OAuthProvider.Linear,
+    });
+    expect(cred?.accountLabel).toBe(OAuthProvider.Linear);
   });
 
   it('status() reports not-authenticated when no credential exists', async () => {

@@ -1,10 +1,14 @@
 /**
- * Per-project OAuth credential providers and their static endpoint config.
+ * Per-project OAuth credential providers and the stable remote-MCP endpoint
+ * each authenticates against.
  *
- * Client id/secret are read from `environment` at the service layer (they are
- * deployment secrets, not constants). Everything that is provider-stable —
- * authorize/token URLs, default scopes, and the remote MCP endpoint — lives
- * here so a new provider is a single registry entry.
+ * There are NO deployment credentials: the authorize / token / registration
+ * endpoints and the OAuth client itself are discovered (RFC 9728 -> RFC 8414)
+ * and registered (RFC 7591 Dynamic Client Registration) per flow by the
+ * provider strategy, against the MCP server's OWN authorization server. Only
+ * `mcpUrl` — the stable endpoint the stored token is injected against — is a
+ * compile-time constant, so a new provider is one strategy class + one registry
+ * entry.
  */
 
 export enum OAuthProvider {
@@ -12,18 +16,12 @@ export enum OAuthProvider {
 }
 
 export interface OAuthProviderConfig {
-  /** Authorization-code endpoint the user is redirected to for consent. */
-  authorizeUrl: string;
-  /** Token endpoint the server exchanges the code (+ PKCE verifier) against. */
-  tokenUrl: string;
-  /** Default scopes requested when none are configured per project. */
-  scopes: string[];
-  /** Separator used to join scopes in the authorize URL (Linear uses comma). */
-  scopeSeparator: string;
   /**
-   * Remote MCP endpoint for this provider. The stored token is injected as a
-   * bearer header — `{type:'http'}` for the Claude bridge (M1), wrapped via
-   * `mcp-remote` for the SimpleAgent stdio path.
+   * Remote MCP endpoint for this provider. Doubles as the RFC 9728 discovery
+   * root and the RFC 8707 resource indicator. The stored token is injected as a
+   * bearer header, wrapped via `mcp-remote` — the same stdio config serves BOTH
+   * the SimpleAgent and the co-located Claude bridge (there is no separate
+   * `{type:'http'}` transport on the Claude path).
    */
   mcpUrl: string;
 }
@@ -37,20 +35,16 @@ export interface OAuthTokenResult {
 }
 
 /**
- * Linear endpoints per its OAuth2 + remote-MCP docs. The exact values must be
- * confirmed against the registered Linear OAuth application before the live
- * flow is exercised; they are centralised here so that confirmation is a
- * one-line change.
+ * Static per-provider config — the stable remote MCP endpoint only. Authorize /
+ * token / registration URLs are discovered at run time from the MCP server's
+ * own authorization-server metadata, so nothing here needs confirming against a
+ * pre-registered OAuth app.
  */
 export const OAUTH_PROVIDER_CONFIGS: Record<
   OAuthProvider,
   OAuthProviderConfig
 > = {
   [OAuthProvider.Linear]: {
-    authorizeUrl: 'https://linear.app/oauth/authorize',
-    tokenUrl: 'https://api.linear.app/oauth/token',
-    scopes: ['read', 'write'],
-    scopeSeparator: ',',
     mcpUrl: 'https://mcp.linear.app/mcp',
   },
 };
@@ -72,6 +66,15 @@ export interface OAuthPendingState {
   provider: OAuthProvider;
   codeVerifier: string;
   createdBy: string;
+  /**
+   * The per-flow client registered via Dynamic Client Registration at
+   * `start()`. Carried here (never persisted durably) so `exchange()` presents
+   * the same `client_id` the authorization code was issued to. `clientSecret`
+   * is null for a public (PKCE-only) client — same sensitivity as the
+   * `codeVerifier` above; server-side, 600s TTL.
+   */
+  clientId: string;
+  clientSecret: string | null;
   graphId?: string;
   nodeId?: string;
   threadId?: string;

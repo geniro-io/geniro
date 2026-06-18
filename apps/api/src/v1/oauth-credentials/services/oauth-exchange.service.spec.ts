@@ -1,230 +1,142 @@
-import { DefaultLogger } from '@packages/common';
-import {
-  afterAll,
-  afterEach,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  vi,
-} from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { OAuthProvider } from '../oauth-credentials.types';
+import { OAuthProvider, OAuthTokenResult } from '../oauth-credentials.types';
+import { LinearOAuthProvider } from '../providers/linear-oauth-provider';
+import {
+  DiscoveredOAuthServer,
+  RegisteredClient,
+} from '../providers/oauth-provider.types';
 import { OAuthExchangeService } from './oauth-exchange.service';
 
-// `environment` runs dotenv + zod validation at import time and the service
-// only reads the two Linear client fields from it — replace the whole module
-// with a mutable stand-in so tests can toggle the configured/unconfigured path.
-const { env, loggerMock } = vi.hoisted(() => ({
-  env: {
-    linearOAuthClientId: 'test-client-id',
-    linearOAuthClientSecret: 'test-client-secret',
-  },
-  loggerMock: { error: vi.fn(), debug: vi.fn() },
-}));
+const REDIRECT_URI = 'https://app.example.com/oauth/callback/linear';
 
-vi.mock('../../../environments', () => ({ environment: env }));
-
-const fetchMock = vi.fn();
-vi.stubGlobal('fetch', fetchMock);
-
-const jsonResponse = (
-  body: unknown,
-  init: { ok?: boolean; status?: number } = {},
-): Response =>
-  ({
-    ok: init.ok ?? true,
-    status: init.status ?? 200,
-    json: async () => body,
-  }) as unknown as Response;
-
-const TOKEN_URL = 'https://api.linear.app/oauth/token';
-const GRAPHQL_URL = 'https://api.linear.app/graphql';
-
-const routeFetch = (handlers: {
-  token: () => Promise<Response>;
-  graphql?: () => Promise<Response>;
-}): void => {
-  fetchMock.mockImplementation((url: string) => {
-    if (url === TOKEN_URL) {
-      return handlers.token();
-    }
-    if (url === GRAPHQL_URL) {
-      return (
-        handlers.graphql?.() ??
-        Promise.resolve(jsonResponse({ data: { viewer: { name: null } } }))
-      );
-    }
-    return Promise.reject(new Error(`unexpected fetch: ${url}`));
-  });
+const server: DiscoveredOAuthServer = {
+  authorizationEndpoint: 'https://mcp.linear.app/authorize',
+  tokenEndpoint: 'https://mcp.linear.app/token',
+  registrationEndpoint: 'https://mcp.linear.app/register',
+  resource: 'https://mcp.linear.app/mcp',
 };
+
+interface ProviderMock {
+  discover: ReturnType<typeof vi.fn>;
+  register: ReturnType<typeof vi.fn>;
+  buildAuthorizeUrl: ReturnType<typeof vi.fn>;
+  exchangeCode: ReturnType<typeof vi.fn>;
+}
 
 describe('OAuthExchangeService', () => {
   let service: OAuthExchangeService;
+  let linear: ProviderMock;
 
   beforeEach(() => {
-    env.linearOAuthClientId = 'test-client-id';
-    env.linearOAuthClientSecret = 'test-client-secret';
-    fetchMock.mockReset();
-    loggerMock.error.mockReset();
-    loggerMock.debug.mockReset();
-    service = new OAuthExchangeService(loggerMock as unknown as DefaultLogger);
+    linear = {
+      discover: vi.fn(),
+      register: vi.fn(),
+      buildAuthorizeUrl: vi.fn(),
+      exchangeCode: vi.fn(),
+    };
+    service = new OAuthExchangeService(
+      linear as unknown as LinearOAuthProvider,
+    );
   });
 
-  afterEach(() => {
-    vi.clearAllMocks();
-  });
+  describe('prepareAuthorization', () => {
+    it('discovers, registers a per-flow client, and builds the consent URL', async () => {
+      const client: RegisteredClient = {
+        clientId: 'dcr-1',
+        clientSecret: null,
+      };
+      linear.discover.mockResolvedValue(server);
+      linear.register.mockResolvedValue(client);
+      linear.buildAuthorizeUrl.mockReturnValue(
+        'https://mcp.linear.app/authorize?client_id=dcr-1',
+      );
 
-  afterAll(() => {
-    vi.unstubAllGlobals();
-  });
+      const result = await service.prepareAuthorization(
+        OAuthProvider.Linear,
+        REDIRECT_URI,
+        'state-1',
+        'challenge-1',
+      );
 
-  describe('isProviderConfigured', () => {
-    it('is true only when both client id and secret are set', () => {
-      expect(service.isProviderConfigured(OAuthProvider.Linear)).toBe(true);
+      expect(linear.discover).toHaveBeenCalledTimes(1);
+      expect(linear.register).toHaveBeenCalledWith(server, REDIRECT_URI);
+      expect(linear.buildAuthorizeUrl).toHaveBeenCalledWith(
+        server,
+        'dcr-1',
+        REDIRECT_URI,
+        'state-1',
+        'challenge-1',
+      );
+      expect(result).toEqual({
+        authorizeUrl: 'https://mcp.linear.app/authorize?client_id=dcr-1',
+        client,
+      });
+    });
 
-      env.linearOAuthClientId = '';
-      expect(service.isProviderConfigured(OAuthProvider.Linear)).toBe(false);
-
-      env.linearOAuthClientId = 'test-client-id';
-      env.linearOAuthClientSecret = '';
-      expect(service.isProviderConfigured(OAuthProvider.Linear)).toBe(false);
+    it('fails closed on a discovery failure — registration is never attempted', async () => {
+      linear.discover.mockRejectedValue(new Error('OAUTH_DISCOVERY_FAILED'));
+      await expect(
+        service.prepareAuthorization(
+          OAuthProvider.Linear,
+          REDIRECT_URI,
+          's',
+          'c',
+        ),
+      ).rejects.toThrow(/OAUTH_DISCOVERY_FAILED/);
+      expect(linear.register).not.toHaveBeenCalled();
+      expect(linear.buildAuthorizeUrl).not.toHaveBeenCalled();
     });
   });
 
   describe('exchangeAuthorizationCode', () => {
-    it('throws OAUTH_PROVIDER_NOT_CONFIGURED when client credentials are unset', async () => {
-      env.linearOAuthClientId = '';
-      env.linearOAuthClientSecret = '';
+    it('re-discovers and delegates to the provider exchange with the stored client', async () => {
+      const tokenResult: OAuthTokenResult = {
+        accessToken: 'tok',
+        scopes: ['read', 'write'],
+        expiresAt: null,
+        accountLabel: null,
+      };
+      const client: RegisteredClient = {
+        clientId: 'dcr-1',
+        clientSecret: null,
+      };
+      linear.discover.mockResolvedValue(server);
+      linear.exchangeCode.mockResolvedValue(tokenResult);
+
+      const result = await service.exchangeAuthorizationCode(
+        OAuthProvider.Linear,
+        'auth-code',
+        'verifier',
+        REDIRECT_URI,
+        client,
+      );
+
+      expect(linear.discover).toHaveBeenCalledTimes(1);
+      expect(linear.exchangeCode).toHaveBeenCalledWith(
+        server,
+        client,
+        'auth-code',
+        'verifier',
+        REDIRECT_URI,
+      );
+      expect(result).toBe(tokenResult);
+    });
+  });
+
+  describe('provider resolution', () => {
+    it('throws OAUTH_PROVIDER_NOT_SUPPORTED for an unregistered provider', async () => {
+      const unknown = 'telegram' as OAuthProvider;
       await expect(
-        service.exchangeAuthorizationCode(
-          OAuthProvider.Linear,
-          'code',
-          'verifier',
-          'https://app/callback/linear',
-        ),
-      ).rejects.toThrow(/OAUTH_PROVIDER_NOT_CONFIGURED/);
-      expect(fetchMock).not.toHaveBeenCalled();
-    });
-
-    it('throws OAUTH_TOKEN_EXCHANGE_FAILED on a non-OK token response', async () => {
-      routeFetch({
-        token: async () =>
-          jsonResponse({ error: 'invalid_grant' }, { ok: false, status: 400 }),
-      });
+        service.prepareAuthorization(unknown, REDIRECT_URI, 's', 'c'),
+      ).rejects.toThrow(/OAUTH_PROVIDER_NOT_SUPPORTED/);
       await expect(
-        service.exchangeAuthorizationCode(
-          OAuthProvider.Linear,
-          'code',
-          'verifier',
-          'https://app/callback/linear',
-        ),
-      ).rejects.toThrow(/OAUTH_TOKEN_EXCHANGE_FAILED/);
-      expect(loggerMock.error).toHaveBeenCalled();
-    });
-
-    it('throws OAUTH_TOKEN_EXCHANGE_FAILED on an OK response with no access_token', async () => {
-      routeFetch({
-        token: async () => jsonResponse({ token_type: 'bearer' }),
-      });
-      await expect(
-        service.exchangeAuthorizationCode(
-          OAuthProvider.Linear,
-          'code',
-          'verifier',
-          'https://app/callback/linear',
-        ),
-      ).rejects.toThrow(/OAUTH_TOKEN_EXCHANGE_FAILED/);
-    });
-
-    it('splits the scope string, derives expiresAt, and resolves the account label', async () => {
-      routeFetch({
-        token: async () =>
-          jsonResponse({
-            access_token: 'lin_oauth_tok',
-            token_type: 'bearer',
-            scope: 'read write',
-            expires_in: 3600,
-          }),
-        graphql: async () =>
-          jsonResponse({ data: { viewer: { name: 'Ada Lovelace' } } }),
-      });
-
-      const before = Date.now();
-      const result = await service.exchangeAuthorizationCode(
-        OAuthProvider.Linear,
-        'code',
-        'verifier',
-        'https://app/callback/linear',
-      );
-
-      expect(result.accessToken).toBe('lin_oauth_tok');
-      expect(result.scopes).toEqual(['read', 'write']);
-      expect(result.accountLabel).toBe('Ada Lovelace');
-      expect(result.expiresAt).toBeInstanceOf(Date);
-      // ~now + 3600s, allowing for test execution slack.
-      const deltaMs = (result.expiresAt as Date).getTime() - before;
-      expect(deltaMs).toBeGreaterThanOrEqual(3600 * 1000 - 1000);
-      expect(deltaMs).toBeLessThanOrEqual(3600 * 1000 + 5000);
-    });
-
-    it('yields null scopes and null expiresAt when the provider omits them', async () => {
-      routeFetch({
-        token: async () => jsonResponse({ access_token: 'lin_oauth_tok' }),
-        graphql: async () =>
-          jsonResponse({ data: { viewer: { name: 'Ada' } } }),
-      });
-
-      const result = await service.exchangeAuthorizationCode(
-        OAuthProvider.Linear,
-        'code',
-        'verifier',
-        'https://app/callback/linear',
-      );
-      expect(result.scopes).toBeNull();
-      expect(result.expiresAt).toBeNull();
-    });
-
-    it('treats a non-positive expires_in as already-expired, not non-expiring', async () => {
-      // expires_in: 0 means the token is already dead on arrival. Mapping it to
-      // a null expiresAt makes status() report the credential as a permanent,
-      // non-expiring token — so the node never prompts re-auth and fails
-      // opaquely at run time. A non-positive lifetime must yield an expiresAt
-      // in the past (<= now), never null.
-      routeFetch({
-        token: async () =>
-          jsonResponse({ access_token: 'lin_oauth_tok', expires_in: 0 }),
-        graphql: async () =>
-          jsonResponse({ data: { viewer: { name: 'Ada' } } }),
-      });
-
-      const result = await service.exchangeAuthorizationCode(
-        OAuthProvider.Linear,
-        'code',
-        'verifier',
-        'https://app/callback/linear',
-      );
-
-      expect(result.expiresAt).toBeInstanceOf(Date);
-      expect((result.expiresAt as Date).getTime()).toBeLessThanOrEqual(
-        Date.now(),
-      );
-    });
-
-    it('never throws when the account-label fetch fails — returns null label', async () => {
-      routeFetch({
-        token: async () => jsonResponse({ access_token: 'lin_oauth_tok' }),
-        graphql: async () => Promise.reject(new Error('network down')),
-      });
-
-      const result = await service.exchangeAuthorizationCode(
-        OAuthProvider.Linear,
-        'code',
-        'verifier',
-        'https://app/callback/linear',
-      );
-      expect(result.accessToken).toBe('lin_oauth_tok');
-      expect(result.accountLabel).toBeNull();
+        service.exchangeAuthorizationCode(unknown, 'code', 'v', REDIRECT_URI, {
+          clientId: 'x',
+          clientSecret: null,
+        }),
+      ).rejects.toThrow(/OAUTH_PROVIDER_NOT_SUPPORTED/);
+      expect(linear.discover).not.toHaveBeenCalled();
     });
   });
 });

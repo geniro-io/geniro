@@ -200,8 +200,9 @@ export const environment = () =>
 
     // --- OAuth credentials (per-project; e.g. Linear) ---
     // Web base URL used to build the OAuth redirect_uri (the callback page).
+    // No provider client id/secret: each MCP provider's OAuth client is
+    // registered per flow via Dynamic Client Registration against the
+    // provider's own authorization server, so the feature needs zero
+    // deployment config.
     websiteUrl: getEnv('WEBSITE_URL'),
-    // Linear OAuth app — feature available only when both are set.
-    linearOAuthClientId: getEnv('LINEAR_OAUTH_CLIENT_ID'),
-    linearOAuthClientSecret: getEnv('LINEAR_OAUTH_CLIENT_SECRET'),
   }) as const satisfies Record<string, string | number | boolean>;

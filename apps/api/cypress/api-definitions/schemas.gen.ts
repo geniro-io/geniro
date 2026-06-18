@@ -4868,9 +4868,6 @@ export const SystemSettingsResponseDtoSchema = {
     githubWebhookEnabled: {
       type: 'boolean',
     },
-    linearOAuthEnabled: {
-      type: 'boolean',
-    },
     apiVersion: {
       type: 'string',
     },
@@ -4883,7 +4880,6 @@ export const SystemSettingsResponseDtoSchema = {
     'litellmManagementEnabled',
     'isAdmin',
     'githubWebhookEnabled',
-    'linearOAuthEnabled',
     'apiVersion',
     'webVersion',
   ],

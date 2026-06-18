@@ -43,12 +43,23 @@ const mockStore = {
   }),
 };
 
+// start() -> prepareAuthorization (discovery + DCR), exchange() ->
+// exchangeAuthorizationCode. The mock authorize URL embeds the `state` so the
+// startState() helper can recover it.
+const defaultPrepareAuthorization = async (
+  _provider: OAuthProvider,
+  _redirectUri: string,
+  state: string,
+): Promise<{
+  authorizeUrl: string;
+  client: { clientId: string; clientSecret: string | null };
+}> => ({
+  authorizeUrl: `https://mock.authorize.test/?state=${state}`,
+  client: { clientId: 'dcr-client-test', clientSecret: null },
+});
+
 const mockExchange = {
-  isProviderConfigured: vi.fn().mockReturnValue(true),
-  resolveClientCredentials: vi.fn().mockReturnValue({
-    clientId: 'test-client-id',
-    clientSecret: 'test-secret',
-  }),
+  prepareAuthorization: vi.fn(),
   exchangeAuthorizationCode: vi.fn(),
 };
 
@@ -85,13 +96,18 @@ describe('OAuthCredentials exchange rollback/concurrency (adversarial)', () => {
   beforeEach(async () => {
     storeState.available = true;
     kvStore.clear();
-    mockExchange.isProviderConfigured.mockReturnValue(true);
-    mockExchange.exchangeAuthorizationCode.mockReset();
     mockStore.putSecret.mockClear();
     mockStore.deleteSecret.mockClear();
     mockStore.getSecret.mockClear();
     mockStore.isAvailable.mockClear();
     vi.restoreAllMocks();
+
+    // Re-establish exchange-service mock defaults AFTER restoreAllMocks.
+    mockExchange.prepareAuthorization.mockReset();
+    mockExchange.prepareAuthorization.mockImplementation(
+      defaultPrepareAuthorization,
+    );
+    mockExchange.exchangeAuthorizationCode.mockReset();
 
     const created = await createTestProject(app);
     projectId = created.projectId;
@@ -157,8 +173,11 @@ describe('OAuthCredentials exchange rollback/concurrency (adversarial)', () => {
     });
     expect(cred?.secretName).toBe('LINEAR_OAUTH_TOKEN');
 
-    // ...so the token it references MUST still resolve. Current code deletes it
-    // unconditionally in the catch block — this assertion goes RED.
-    expect(kvStore.get(SECRET_KEY(projectId))).toBeTruthy();
+    // ...so the token it references MUST still resolve. The catch block restores
+    // the prior value (the `if (priorValue)` branch in exchange()), so the live
+    // credential's secret resolves back to the pre-exchange token — NOT the
+    // orphaned re-auth value, and NOT empty. Asserting the exact value (not just
+    // truthiness) catches a compensation path that restores the wrong token.
+    expect(kvStore.get(SECRET_KEY(projectId))).toBe('token-v1');
   });
 });

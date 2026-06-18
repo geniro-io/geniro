@@ -18,7 +18,6 @@ import {
 } from '../dto/oauth-credentials.dto';
 import { OAuthCredentialEntity } from '../entity/oauth-credential.entity';
 import {
-  OAUTH_PROVIDER_CONFIGS,
   OAUTH_STATE_CACHE_PREFIX,
   OAUTH_STATE_TTL_SECONDS,
   OAuthPendingState,
@@ -43,9 +42,17 @@ export class OAuthCredentialsService {
   ) {}
 
   /**
-   * Begin an authorization-code + PKCE flow. Persists the verifier + a random
-   * CSRF state (carrying the project + resume target) server-side in Redis, and
-   * returns the provider authorize URL for the new tab to navigate to.
+   * Begin an authorization-code + PKCE flow. Discovers the provider's MCP
+   * authorization server and registers a per-flow client via Dynamic Client
+   * Registration (RFC 7591), then persists the PKCE verifier + the registered
+   * client under a random CSRF state (carrying the project + resume target)
+   * server-side in Redis, and returns the discovered authorize URL for the new
+   * tab to navigate to.
+   *
+   * Discovery + registration are two external round-trips that run BEFORE the
+   * pending-state write, so any failure fails CLOSED — it throws and leaves no
+   * orphaned pending-state. (`start()` was always async; it now actually awaits
+   * network I/O — callers already await it.)
    */
   async start(
     ctx: AppContextStorage,
@@ -55,17 +62,29 @@ export class OAuthCredentialsService {
     const projectId = ctx.checkProjectId();
     const userId = ctx.checkSub();
 
-    if (!this.exchangeService.isProviderConfigured(provider)) {
-      throw new BadRequestException('OAUTH_PROVIDER_NOT_CONFIGURED');
-    }
-
     const { codeVerifier, codeChallenge } = generatePkcePair();
     const state = generateOAuthState();
+
+    // Discover + register (DCR) + build the consent URL BEFORE any pending-state
+    // write. A discovery/registration failure throws here, so no orphaned
+    // pending-state is ever persisted — the flow fails closed. The redirect_uri
+    // is registered as `redirect_uris[0]` and echoed in the authorize URL; the
+    // same value is used at exchange() (see redirectUri()).
+    const { authorizeUrl, client } =
+      await this.exchangeService.prepareAuthorization(
+        provider,
+        this.redirectUri(provider),
+        state,
+        codeChallenge,
+      );
+
     const pending: OAuthPendingState = {
       projectId,
       provider,
       codeVerifier,
       createdBy: userId,
+      clientId: client.clientId,
+      clientSecret: client.clientSecret,
       graphId: query.graphId,
       nodeId: query.nodeId,
     };
@@ -75,22 +94,7 @@ export class OAuthCredentialsService {
       OAUTH_STATE_TTL_SECONDS,
     );
 
-    const config = OAUTH_PROVIDER_CONFIGS[provider];
-    const { clientId } =
-      this.exchangeService.resolveClientCredentials(provider);
-    const authorizeUrl = new URL(config.authorizeUrl);
-    authorizeUrl.searchParams.set('response_type', 'code');
-    authorizeUrl.searchParams.set('client_id', clientId);
-    authorizeUrl.searchParams.set('redirect_uri', this.redirectUri(provider));
-    authorizeUrl.searchParams.set(
-      'scope',
-      config.scopes.join(config.scopeSeparator),
-    );
-    authorizeUrl.searchParams.set('state', state);
-    authorizeUrl.searchParams.set('code_challenge', codeChallenge);
-    authorizeUrl.searchParams.set('code_challenge_method', 'S256');
-
-    return { authorizeUrl: authorizeUrl.toString() };
+    return { authorizeUrl };
   }
 
   /** Report whether a valid credential exists for the current project + provider. */
@@ -161,9 +165,17 @@ export class OAuthCredentialsService {
       code,
       pending.codeVerifier,
       this.redirectUri(provider),
+      { clientId: pending.clientId, clientSecret: pending.clientSecret },
     );
 
     const token = assertHeaderSafeToken(result.accessToken, 'OAuth token');
+    // Account-label single source of truth: the provider name. The former
+    // `api.linear.app/graphql { viewer }` identity probe was removed — an
+    // MCP-scoped DCR token does not authenticate it, so there is nothing to
+    // reconcile against. `result.accountLabel` is always null today (no
+    // provider's exchangeCode parses an identity field), so the `?? provider`
+    // fallback is the sole producer; a future provider that surfaces a real
+    // label populates it in its own exchangeCode and it flows through here.
     const accountLabel = result.accountLabel ?? provider;
     const secretName = this.secretName(provider);
 
@@ -230,13 +242,17 @@ export class OAuthCredentialsService {
     } catch {
       throw new BadRequestException('OAUTH_STATE_INVALID');
     }
+    if (parsed == null || typeof parsed !== 'object') {
+      throw new BadRequestException('OAUTH_STATE_INVALID');
+    }
+    const p = parsed as Record<string, unknown>;
     if (
-      parsed == null ||
-      typeof parsed !== 'object' ||
-      typeof (parsed as OAuthPendingState).projectId !== 'string' ||
-      typeof (parsed as OAuthPendingState).codeVerifier !== 'string' ||
-      typeof (parsed as OAuthPendingState).createdBy !== 'string' ||
-      typeof (parsed as OAuthPendingState).provider !== 'string'
+      typeof p.projectId !== 'string' ||
+      typeof p.codeVerifier !== 'string' ||
+      typeof p.createdBy !== 'string' ||
+      typeof p.provider !== 'string' ||
+      typeof p.clientId !== 'string' ||
+      (p.clientSecret !== null && typeof p.clientSecret !== 'string')
     ) {
       throw new BadRequestException('OAUTH_STATE_INVALID');
     }
@@ -329,8 +345,10 @@ export class OAuthCredentialsService {
 
   private redirectUri(provider: OAuthProvider): string {
     // Provider-specific so the new-tab callback can recover the provider from
-    // its route (the redirect carries only `code` + `state`). Must match the
-    // value registered with the provider's OAuth app.
+    // its route (the redirect carries only `code` + `state`). MUST equal the
+    // DCR-registered `redirect_uris[0]` and the authorize `redirect_uri`
+    // byte-for-byte — and it does, because start()/exchange() both derive it
+    // from this one method — or the AS rejects the exchange.
     return `${environment.websiteUrl}/oauth/callback/${provider}`;
   }
 }
