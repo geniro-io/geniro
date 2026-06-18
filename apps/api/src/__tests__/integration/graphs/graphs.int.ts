@@ -474,6 +474,13 @@ describe('Graphs Integration Tests', () => {
       expect(partialResponse.graph.schema).toMatchObject(
         graphForPartial.schema,
       );
+      // Regression: update() loads the entity inside a forked transactional EM
+      // (under a write lock). The response must NOT carry the EM-bound `threads`
+      // relation Collection — leaking it made the HTTP response serialisation
+      // throw a 500 *after* the write had already committed (every field update,
+      // including this sync-only one, 500'd while still persisting the change).
+      expect(partialResponse.graph).not.toHaveProperty('threads');
+      expect(() => JSON.stringify(partialResponse.graph)).not.toThrow();
 
       const fullUpdate: UpdateGraphDto = {
         name: 'Updated Graph Name',

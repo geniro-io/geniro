@@ -98,8 +98,15 @@ export class GraphsService {
     entity: GraphEntity,
     threadCounts?: { total: number; running: number },
   ): GraphDto {
+    // Drop the `threads` relation Collection before building the DTO. GraphDto
+    // has no `threads` field, and when `entity` was loaded inside a forked
+    // transactional EntityManager (as `update()` does, under a write lock),
+    // the spread carries that EM-bound, uninitialised Collection into the
+    // response — serialising it after the transaction closes throws, surfacing
+    // as a 500 even though the write already committed.
+    const { threads: _threads, ...rest } = entity;
     return {
-      ...entity,
+      ...rest,
       runningThreads: threadCounts?.running ?? 0,
       totalThreads: threadCounts?.total ?? 0,
       createdAt: new Date(entity.createdAt).toISOString(),
