@@ -128,3 +128,15 @@ describe('Feature Integration', () => {
 - Prefer the targeted form `pnpm test:integration <file>` while iterating; run the bulk `pnpm test:integration` for pre-push verification.
 - No `it.skip`, `describe.skip`, or conditional skipping. Missing prerequisites must cause test failure.
 - Clean up all created resources in `afterEach`/`afterAll`.
+
+## Opt-in real-network tests — the one sanctioned exception to no-conditional-skip
+
+The no-conditional-skip / must-fail policy above (and in CLAUDE.md) exists so a missing prerequisite that *should* be present fails loudly instead of silently passing. There is exactly ONE sanctioned carve-out: a test that must reach a **rate-limited third party CI cannot guarantee** (e.g. a live MCP server's DCR `/register` endpoint, where there is no provisioned credential and a network round-trip per run).
+
+Such a test MAY be `it.runIf(process.env.RUN_X === '1')`-gated and OFF by default, PROVIDED all three hold:
+
+1. The same file carries an **always-on, no-network sanity test** (e.g. asserting the provider's static config), so the file is never a silent no-op.
+2. When the gate is ON, the test **fails loudly** — no `try/catch` that swallows a network or assertion failure.
+3. A docstring names the env var and explains *why* it is opt-in (third-party, rate-limited, human-consent leg, etc.).
+
+This is NOT a license to gate ordinary missing-env/service cases — those still fail hard. The carve-out is only for a deliberate human opt-in to hit an external host. Exemplar: `apps/api/src/v1/oauth-credentials/providers/linear-oauth-provider.real-network.spec.ts` (`RUN_LINEAR_DCR_E2E=1`).
