@@ -1,3 +1,4 @@
+import { Injectable } from '@nestjs/common';
 import { BadRequestException, DefaultLogger } from '@packages/common';
 
 import { OAuthProvider, OAuthTokenResult } from '../oauth-credentials.types';
@@ -39,6 +40,7 @@ interface JsonResponse {
  * only safe envelope fields (status, stage) reach the log. See
  * `.claude/rules/sandbox-boundary.md`.
  */
+@Injectable()
 export abstract class BaseOAuthProvider {
   protected constructor(protected readonly logger: DefaultLogger) {}
 

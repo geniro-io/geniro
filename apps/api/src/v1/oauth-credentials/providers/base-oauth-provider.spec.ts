@@ -9,7 +9,10 @@ import {
   vi,
 } from 'vitest';
 
-import { OAuthProvider } from '../oauth-credentials.types';
+import {
+  OAUTH_PROVIDER_CONFIGS,
+  OAuthProvider,
+} from '../oauth-credentials.types';
 import { LinearOAuthProvider } from './linear-oauth-provider';
 import { DiscoveredOAuthServer } from './oauth-provider.types';
 
@@ -268,6 +271,39 @@ describe('BaseOAuthProvider (via LinearOAuthProvider)', () => {
               resource: RESOURCE,
               authorization_servers: ['http://[invalid'],
             }),
+          );
+        }
+        return Promise.reject(new Error(`unexpected fetch: ${url}`));
+      });
+
+      await expect(provider.discover()).rejects.toThrow(
+        /OAUTH_DISCOVERY_FAILED/,
+      );
+    });
+
+    it('fails closed when the discovered authorization-server issuer is a valid but non-HTTPS URL', async () => {
+      // A plaintext `http://` issuer is a VALID URL, so it slips past the
+      // malformed-issuer catch and must be rejected by the explicit non-HTTPS
+      // issuer guard (RFC 8414 §3.3 downgrade defense). Valid HTTPS-endpoint AS
+      // metadata is served at the plaintext issuer so the issuer-protocol check
+      // is the ONLY thing between this and a successful discovery — deleting that
+      // guard makes discover() resolve and flips this test red (distinct from the
+      // endpoint-HTTPS case, which flips token_endpoint, and the malformed-URL
+      // case, which throws at `new URL()`).
+      const httpIssuer = 'http://mcp.linear.app';
+      const httpAsmUrl = `${httpIssuer}/.well-known/oauth-authorization-server`;
+      fetchMock.mockImplementation((url: string) => {
+        if (url === PRM_PATH || url === PRM_ORIGIN) {
+          return Promise.resolve(
+            jsonResponse({
+              resource: RESOURCE,
+              authorization_servers: [httpIssuer],
+            }),
+          );
+        }
+        if (url === httpAsmUrl) {
+          return Promise.resolve(
+            jsonResponse({ ...validAsm, issuer: httpIssuer }),
           );
         }
         return Promise.reject(new Error(`unexpected fetch: ${url}`));
@@ -558,6 +594,13 @@ describe('BaseOAuthProvider (via LinearOAuthProvider)', () => {
   it('exposes the Linear provider identity + resource', () => {
     expect(provider.provider).toBe(OAuthProvider.Linear);
     expect(provider.resourceUrl).toBe(RESOURCE);
+    // The inlined resourceUrl MUST stay identical to the central MCP-endpoint
+    // registry the issued token is later injected against (agent-mcp/linear-mcp.ts)
+    // — a drift would make the RFC 8707 audience-bound bearer get rejected at the
+    // resource. Pin it here so any drift fails CI, not opaquely at run time.
+    expect(provider.resourceUrl).toBe(
+      OAUTH_PROVIDER_CONFIGS[OAuthProvider.Linear].mcpUrl,
+    );
     expect(provider.scopes).toEqual(['read', 'write']);
     expect(provider.scopeSeparator).toBe(' ');
   });

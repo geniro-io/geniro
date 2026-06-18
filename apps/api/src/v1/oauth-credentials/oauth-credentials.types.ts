@@ -7,8 +7,9 @@
  * and registered (RFC 7591 Dynamic Client Registration) per flow by the
  * provider strategy, against the MCP server's OWN authorization server. Only
  * `mcpUrl` — the stable endpoint the stored token is injected against — is a
- * compile-time constant, so a new provider is one strategy class + one registry
- * entry.
+ * compile-time constant, so a new provider is one strategy class, one module
+ * `providers[]` line, and one registry line in `OAuthExchangeService`'s
+ * constructor.
  */
 
 export enum OAuthProvider {

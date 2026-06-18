@@ -14,8 +14,8 @@ import { RegisteredClient } from '../providers/oauth-provider.types';
  * provider over the network; the orchestration service
  * ({@link OAuthCredentialsService}) owns Redis / OpenBao / DB.
  *
- * A new OAuth MCP provider is a single strategy class registered in the module —
- * this service needs no edit.
+ * A new OAuth MCP provider is a single strategy class registered in the module,
+ * plus one line in this service's constructor provider-registry (the map below).
  */
 @Injectable()
 export class OAuthExchangeService {

@@ -1,10 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { DefaultLogger } from '@packages/common';
 
-import {
-  OAUTH_PROVIDER_CONFIGS,
-  OAuthProvider,
-} from '../oauth-credentials.types';
+import { OAuthProvider } from '../oauth-credentials.types';
 import { BaseOAuthProvider } from './base-oauth-provider';
 
 /**
@@ -21,7 +18,12 @@ export class LinearOAuthProvider extends BaseOAuthProvider {
   }
 
   readonly provider = OAuthProvider.Linear;
-  readonly resourceUrl = OAUTH_PROVIDER_CONFIGS[OAuthProvider.Linear].mcpUrl;
+  // The stable Linear MCP endpoint — RFC 9728 discovery root + RFC 8707 resource
+  // the issued token is audience-bound to. MUST stay identical to
+  // OAUTH_PROVIDER_CONFIGS[Linear].mcpUrl (the endpoint that same token is later
+  // injected against in agent-mcp/linear-mcp.ts); a drift would make the
+  // audience-bound bearer get rejected at the MCP resource.
+  readonly resourceUrl = 'https://mcp.linear.app/mcp';
   readonly scopes = ['read', 'write'];
   // Standard OAuth scope delimiter. The MCP authorization server is RFC 6749
   // compliant (space-delimited), unlike Linear's legacy app-OAuth which used a

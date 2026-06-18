@@ -22,7 +22,8 @@ import { OAuthExchangeService } from './services/oauth-exchange.service';
     OAuthCredentialsService,
     OAuthExchangeService,
     // Per-provider OAuth strategies — a new provider is one class + one line
-    // here (mirrors agent-mcp.module.ts), zero edits to the exchange service.
+    // here (mirrors agent-mcp.module.ts) plus one registry line in
+    // OAuthExchangeService's constructor.
     LinearOAuthProvider,
   ],
   exports: [OAuthCredentialsService],
