@@ -3,8 +3,10 @@ import { ModuleRef } from '@nestjs/core';
 import { BadRequestException } from '@packages/common';
 import { z } from 'zod';
 
+import type { BaseMcp } from '../../../agent-mcp/services/base-mcp';
 import type { BuiltAgentTool } from '../../../agent-tools/tools/base-tool';
 import { ClaudeAgent } from '../../../agents/services/agents/claude-agent';
+import type { ConnectedMcpServer } from '../../../agents/services/claude/claude-session.types';
 import { ClaudeAuthMode } from '../../../agents/services/claude/claude-session.types';
 import { isToolForwardableToClaude } from '../../../agents/services/claude/claude-session.utils';
 import type { GraphNode } from '../../../graphs/graphs.types';
@@ -180,6 +182,11 @@ export class ClaudeAgentTemplate extends ClaudeAgentNodeBaseTemplate<
       value: NodeKind.Tool,
       multiple: true,
     },
+    {
+      type: 'kind',
+      value: NodeKind.Mcp,
+      multiple: true,
+    },
   ] as const;
 
   constructor(
@@ -259,6 +266,28 @@ export class ClaudeAgentTemplate extends ClaudeAgentNodeBaseTemplate<
         }
         instance.resetTools();
         forwardableTools.forEach((tool) => instance.addTool(tool));
+
+        // Connected MCP blocks (custom/filesystem/playwright/jira) reused on the
+        // Claude node: collected here, then at run() each block's launch config
+        // is resolved against THIS node's runtime and merged into the SDK
+        // `mcpServers` map by the bridge (the SDK spawns the server itself
+        // inside the runtime). The block keeps its own host-side wiring (its
+        // `initialize()` ran against its own required Runtime edge); the
+        // run()-time resolver re-points it at the Claude runtime so config such
+        // as the filesystem workdir is computed correctly.
+        const externalMcpServers: ConnectedMcpServer[] = [];
+        for (const nodeId of params.outputNodeIds) {
+          const node = this.graphRegistry.getNode<BaseMcp>(graphId, nodeId);
+          if (!node || node.type !== NodeKind.Mcp) {
+            continue;
+          }
+          externalMcpServers.push({
+            instance: node.instance,
+            config: node.config,
+            nodeId,
+          });
+        }
+        instance.setExternalMcpServers(externalMcpServers);
 
         instance.setConfig(params.config);
       },

@@ -53,6 +53,7 @@ describe('ClaudeAgentTemplate', () => {
       setRuntimeProvider: vi.fn(),
       resetTools: vi.fn(),
       addTool: vi.fn(),
+      setExternalMcpServers: vi.fn(),
       setConfig: vi.fn(),
       stop: vi.fn(),
       failActiveRunsForRedeploy: vi.fn().mockResolvedValue(undefined),
@@ -89,7 +90,7 @@ describe('ClaudeAgentTemplate', () => {
       expect(template.kind).toBe(NodeKind.ClaudeAgent);
     });
 
-    it('requires a Runtime output and accepts Tool outputs', () => {
+    it('requires a Runtime output and accepts Tool + Mcp outputs', () => {
       expect(template.outputs).toEqual([
         {
           type: 'kind',
@@ -98,6 +99,7 @@ describe('ClaudeAgentTemplate', () => {
           multiple: false,
         },
         { type: 'kind', value: NodeKind.Tool, multiple: true },
+        { type: 'kind', value: NodeKind.Mcp, multiple: true },
       ]);
     });
   });
@@ -307,6 +309,53 @@ describe('ClaudeAgentTemplate', () => {
       const addOrder = vi.mocked(mockClaudeAgent.addTool).mock
         .invocationCallOrder[0]!;
       expect(resetOrder).toBeLessThan(addOrder);
+    });
+
+    it('collects connected MCP output nodes and hands them to the agent', async () => {
+      const mcpInstance = { id: 'custom-mcp-block' } as unknown;
+      const mcpNode = buildCompiledNode({
+        id: 'mcp-node',
+        type: NodeKind.Mcp,
+        template: 'custom-mcp',
+        instance: mcpInstance,
+        config: { command: 'npx -y srv' },
+      });
+
+      vi.mocked(mockGraphRegistry.getNode).mockImplementation((_gid, id) => {
+        if (id === 'runtime-node') {
+          return runtimeNode;
+        }
+        if (id === 'mcp-node') {
+          return mcpNode;
+        }
+        return undefined;
+      });
+
+      const handle = await template.create();
+      const init = makeInit(new Set(['runtime-node', 'mcp-node']));
+      const instance = await handle.provide(init);
+      await handle.configure(init, instance);
+
+      expect(mockClaudeAgent.setExternalMcpServers).toHaveBeenCalledWith([
+        {
+          instance: mcpInstance,
+          config: { command: 'npx -y srv' },
+          nodeId: 'mcp-node',
+        },
+      ]);
+    });
+
+    it('hands the agent an empty MCP list when no MCP node is connected', async () => {
+      vi.mocked(mockGraphRegistry.getNode).mockImplementation((_gid, id) =>
+        id === 'runtime-node' ? runtimeNode : undefined,
+      );
+
+      const handle = await template.create();
+      const init = makeInit(new Set(['runtime-node']));
+      const instance = await handle.provide(init);
+      await handle.configure(init, instance);
+
+      expect(mockClaudeAgent.setExternalMcpServers).toHaveBeenCalledWith([]);
     });
   });
 });

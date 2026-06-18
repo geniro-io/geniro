@@ -127,6 +127,32 @@ export type BridgeToolDefinition = {
   inputSchema: Record<string, unknown>;
 };
 
+/**
+ * A serializable MCP server config the host resolves from a connected Geniro
+ * MCP block and merges into the SDK `mcpServers` map. Kept SDK-import-free:
+ * these are structural subsets of the SDK's `McpStdioServerConfig` /
+ * `McpHttpServerConfig` that the bridge forwards verbatim into `query()`. The
+ * host stamps the `type` discriminator (the blocks' own `getMcpConfig` returns
+ * none). M1 only produces the `stdio` variant (every reused block runs as a
+ * stdio child inside the runtime); `http` is reserved for remote servers (M2).
+ */
+export type SerializableMcpStdioConfig = {
+  type: 'stdio';
+  command: string;
+  args: string[];
+  env?: Record<string, string>;
+};
+
+export type SerializableMcpHttpConfig = {
+  type: 'http';
+  url: string;
+  headers?: Record<string, string>;
+};
+
+export type SerializableMcpConfig =
+  | SerializableMcpStdioConfig
+  | SerializableMcpHttpConfig;
+
 export type BridgeStartOptions = {
   /** Initial user prompt for this turn. */
   prompt: string;
@@ -144,6 +170,13 @@ export type BridgeStartOptions = {
   settingSources?: ('user' | 'project' | 'local')[];
   /** Geniro tools exposed inside the session via the in-bridge MCP server. */
   tools?: BridgeToolDefinition[];
+  /**
+   * External MCP servers (reused Geniro MCP blocks) resolved host-side against
+   * this node's runtime and merged into the SDK `mcpServers` map alongside the
+   * in-bridge `geniro` server. Keyed by server name; the SDK exposes their
+   * tools as `mcp__<key>__<tool>`. Omitted when no MCP block is connected.
+   */
+  externalMcpServers?: Record<string, SerializableMcpConfig>;
 };
 
 export type BridgeCommand =

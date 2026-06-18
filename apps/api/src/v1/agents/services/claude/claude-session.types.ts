@@ -1,5 +1,7 @@
 import type { BridgeQuestion } from '@packages/claude-bridge';
 
+import type { BaseMcp } from '../../../agent-mcp/services/base-mcp';
+
 export const CLAUDE_INSTALL_DIR = '/opt/geniro-claude';
 export const CLAUDE_PLUGINS_DIR = `${CLAUDE_INSTALL_DIR}/plugins`;
 
@@ -96,6 +98,20 @@ export interface ClaudeModelOverrides {
   haiku?: string;
   fable?: string;
 }
+
+/**
+ * A Geniro MCP block (`custom`/`filesystem`/`playwright`/`jira`) connected to a
+ * Claude Agent node's output. Collected from the graph at compile time; at
+ * run() each block's launch config is resolved host-side against the Claude
+ * node's runtime (via `BaseMcp.resolveServerConfigForRuntime`) and merged into
+ * the SDK `mcpServers` map through the bridge. `config` stays `unknown` — each
+ * block validates it against its own schema inside `getMcpConfig`.
+ */
+export type ConnectedMcpServer = {
+  instance: BaseMcp;
+  config: unknown;
+  nodeId: string;
+};
 
 /**
  * Per-thread Claude session metadata persisted in `Thread.metadata` for

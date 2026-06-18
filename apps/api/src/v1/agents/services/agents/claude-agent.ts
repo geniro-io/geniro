@@ -5,6 +5,7 @@ import {
 } from '@langchain/core/messages';
 import { RunnableConfig } from '@langchain/core/runnables';
 import { Injectable, Scope } from '@nestjs/common';
+import type { SerializableMcpConfig } from '@packages/claude-bridge';
 import { DefaultLogger, InternalException } from '@packages/common';
 import { v4 } from 'uuid';
 
@@ -14,6 +15,7 @@ import { MessageRole } from '../../../graphs/graphs.types';
 import { RequestTokenUsage } from '../../../litellm/litellm.types';
 import { LiteLlmClient } from '../../../litellm/services/litellm.client';
 import { LitellmVirtualKeyService } from '../../../litellm/services/litellm-virtual-key.service';
+import type { BaseRuntime } from '../../../runtime/services/base-runtime';
 import { DaytonaRuntime } from '../../../runtime/services/daytona-runtime';
 import { RuntimeThreadProvider } from '../../../runtime/services/runtime-thread-provider';
 import { SecretsService } from '../../../secrets/services/secrets.service';
@@ -35,6 +37,7 @@ import {
   ClaudePluginSource,
   ClaudeQuestionRequest,
   ClaudeThreadMetadata,
+  ConnectedMcpServer,
 } from '../claude/claude-session.types';
 import {
   buildBridgeToolDefinitions,
@@ -150,6 +153,7 @@ export class ClaudeAgent
 {
   private currentConfig?: ClaudeAgentSchemaType;
   private runtimeProvider?: RuntimeThreadProvider;
+  private externalMcpNodes: ConnectedMcpServer[] = [];
   private activeRuns = new Map<string, ClaudeActiveRun>();
 
   constructor(
@@ -183,6 +187,15 @@ export class ClaudeAgent
 
   public setRuntimeProvider(provider: RuntimeThreadProvider): void {
     this.runtimeProvider = provider;
+  }
+
+  /**
+   * Connected MCP blocks collected by the template's `configure()` walk. They
+   * are resolved into SDK `mcpServers` entries at run() against this node's
+   * runtime. Replaced wholesale on each (re)configure — idempotent on redeploy.
+   */
+  public setExternalMcpServers(servers: ConnectedMcpServer[]): void {
+    this.externalMcpNodes = servers;
   }
 
   public async run(
@@ -450,6 +463,9 @@ export class ClaudeAgent
       const toolDefinitions = buildBridgeToolDefinitions(
         Array.from(this.tools.values()) as BuiltAgentTool[],
       );
+      // Resolve connected MCP blocks against THIS node's runtime; the bridge
+      // merges them into the SDK `mcpServers` map next to the `geniro` server.
+      const externalMcpServers = await this.resolveExternalMcpServers(runtime);
       const dispatcher = new ClaudeToolDispatcher({
         tools: this.tools,
         config: mergedConfig,
@@ -543,6 +559,9 @@ export class ClaudeAgent
                 ...(pluginPaths.length > 0 && { pluginPaths }),
                 settingSources: ['project'],
                 ...(toolDefinitions.length > 0 && { tools: toolDefinitions }),
+                ...(Object.keys(externalMcpServers).length > 0 && {
+                  externalMcpServers,
+                }),
               },
             });
             for (const text of runEntry.pendingInjections.splice(0)) {
@@ -1080,6 +1099,73 @@ export class ClaudeAgent
       );
     }
     return key;
+  }
+
+  /**
+   * Resolve each connected MCP block into an SDK `mcpServers` entry, against
+   * THIS node's runtime. The blocks' own `getMcpConfig` reads the runtime from
+   * internal state (e.g. the filesystem block derives its workdir from it), so
+   * `resolveServerConfigForRuntime` re-points each block at the Claude runtime
+   * before producing the config. M1 reuses only stdio blocks (custom/filesystem
+   * run `npx`; playwright/jira run `docker` and need the daemon, handled inside
+   * `resolveServerConfigForRuntime`), so every entry is stamped `type: 'stdio'`.
+   *
+   * External MCP is additive: a single misconfigured block must NOT abort the
+   * run, so a failed resolution is logged (sandbox-redacted) and skipped. Server
+   * keys are de-duplicated — two `custom` blocks both name themselves
+   * `custom-mcp`, and the SDK map keys become the `mcp__<key>__<tool>`
+   * namespace, so a collision would otherwise drop one block's tools.
+   */
+  private async resolveExternalMcpServers(
+    runtime: BaseRuntime,
+  ): Promise<Record<string, SerializableMcpConfig>> {
+    const provider = this.runtimeProvider;
+    if (!provider || this.externalMcpNodes.length === 0) {
+      return {};
+    }
+
+    const resolved: Record<string, SerializableMcpConfig> = {};
+    for (const node of this.externalMcpNodes) {
+      try {
+        const raw = await node.instance.resolveServerConfigForRuntime(
+          node.config,
+          provider,
+          runtime,
+        );
+        const command = raw.command.trim();
+        if (!command) {
+          throw new Error('resolved MCP command is empty');
+        }
+        const key = this.uniqueMcpServerKey(raw.name, resolved);
+        resolved[key] = {
+          type: 'stdio',
+          command,
+          args: raw.args,
+          ...(raw.env && Object.keys(raw.env).length > 0 && { env: raw.env }),
+        };
+      } catch (error) {
+        this.logger.warn(
+          `Skipping MCP server for node ${node.nodeId}: ${sanitizeSandboxError(
+            error instanceof Error ? error.message : String(error),
+          )}`,
+        );
+      }
+    }
+    return resolved;
+  }
+
+  private uniqueMcpServerKey(
+    name: string,
+    existing: Record<string, SerializableMcpConfig>,
+  ): string {
+    if (!(name in existing)) {
+      return name;
+    }
+    let suffix = 2;
+    while (`${name}-${suffix}` in existing) {
+      suffix += 1;
+    }
+    return `${name}-${suffix}`;
   }
 
   /**

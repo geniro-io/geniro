@@ -369,6 +369,47 @@ export abstract class BaseMcp<TConfig = unknown> {
     }
   }
 
+  /**
+   * Resolve this block's MCP launch config against a SPECIFIC runtime, for a
+   * consumer that spawns the server itself — the Claude Agent runs the SDK
+   * inside the runtime and launches stdio MCP children directly, so it needs
+   * only the `{command,args,env}`, not this class's exec-transport. Unlike
+   * `initialize()` this opens no transport and lists no tools.
+   *
+   * `getMcpConfig` reads the runtime from internal state (e.g. the filesystem
+   * block derives its workdir from `getRuntimeInstance()`), so the target
+   * `runtimeThreadProvider` is set BEFORE the call and RESTORED immediately
+   * after: a single MCP node can be wired to both a SimpleAgent and a Claude
+   * node, and the restore keeps this shared instance's own runtime binding
+   * (set by the block's `initialize()`) intact for the other consumer. The
+   * swap window is purely synchronous (`getMcpConfig` is sync), so it is
+   * invisible to any concurrent async caller; the Docker-daemon check uses the
+   * passed `runtime` directly and runs after the binding is restored.
+   */
+  public async resolveServerConfigForRuntime(
+    config: TConfig,
+    runtimeThreadProvider: RuntimeThreadProvider,
+    runtime: BaseRuntime,
+  ): Promise<IMcpServerConfig> {
+    const priorProvider = this.runtimeThreadProvider;
+    const priorConfig = this.config;
+    this.runtimeThreadProvider = runtimeThreadProvider;
+    this.config = config;
+    let mcpConfig: IMcpServerConfig;
+    try {
+      mcpConfig = this.getMcpConfig(config);
+    } finally {
+      this.runtimeThreadProvider = priorProvider;
+      this.config = priorConfig;
+    }
+
+    if (mcpConfig.requiresDockerDaemon) {
+      await this.ensureDockerDaemonReady(runtime);
+    }
+
+    return mcpConfig;
+  }
+
   public async provideTemporaryRuntime(params: {
     runtimeProvider: RuntimeProvider;
     graphId: string;

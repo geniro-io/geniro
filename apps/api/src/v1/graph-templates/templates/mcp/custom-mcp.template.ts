@@ -73,6 +73,7 @@ export class CustomMcpTemplate extends McpNodeBaseTemplate<
 
   readonly inputs = [
     { type: 'kind', value: NodeKind.SimpleAgent, multiple: true },
+    { type: 'kind', value: NodeKind.ClaudeAgent, multiple: true },
   ] as const;
 
   readonly outputs = [
