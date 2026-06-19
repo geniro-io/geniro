@@ -751,6 +751,26 @@ export type KnowledgeDocListResultDto = {
   total: number;
 };
 
+export type NamespaceSummaryDto = {
+  namespace: string;
+  mode: 'kv' | 'append';
+  entryCount: number;
+  lastUpdatedAt: string;
+};
+
+export type ThreadStoreEntryDto = {
+  id: string;
+  threadId: string;
+  namespace: string;
+  key: string;
+  value: unknown;
+  mode: 'kv' | 'append';
+  authorAgentId: string | null;
+  tags: Array<string> | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type ThreadDto = {
   /**
    * Thread ID
@@ -768,6 +788,14 @@ export type ThreadDto = {
    * Last LangGraph run_id observed for this thread
    */
   lastRunId?: string | null;
+  /**
+   * Timestamp when the thread entered Running status; null when not Running
+   */
+  runningStartedAt: string | null;
+  /**
+   * Cumulative milliseconds the thread has spent in Running status
+   */
+  totalRunningMs: number;
   createdAt: string;
   updatedAt: string;
   /**
@@ -1234,6 +1262,27 @@ export type ResumeThreadDto = {
   message?: string;
 };
 
+export type CreateSecretDto = {
+  name: string;
+  value: string;
+  description?: string | null;
+};
+
+export type SecretResponseDto = {
+  id: string;
+  name: string;
+  description?: string | null;
+  projectId: string;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type UpdateSecretDto = {
+  value?: string;
+  description?: string | null;
+};
+
 export type CreateGraphDto = {
   name: string;
   description?: string | null;
@@ -1500,6 +1549,7 @@ export type GraphNodeWithStatusDto = {
     | 'runtime'
     | 'tool'
     | 'simpleAgent'
+    | 'claudeAgent'
     | 'trigger'
     | 'resource'
     | 'mcp'
@@ -2055,6 +2105,7 @@ export type TemplateDto = {
     | 'runtime'
     | 'tool'
     | 'simpleAgent'
+    | 'claudeAgent'
     | 'trigger'
     | 'resource'
     | 'mcp'
@@ -2069,17 +2120,20 @@ export type TemplateDto = {
           | 'runtime'
           | 'tool'
           | 'simpleAgent'
+          | 'claudeAgent'
           | 'trigger'
           | 'resource'
           | 'mcp'
           | 'instruction';
         required?: boolean;
+        requiredGroup?: string;
         multiple: boolean;
       }
     | {
         type: 'template';
         value: string;
         required?: boolean;
+        requiredGroup?: string;
         multiple: boolean;
       }
   >;
@@ -2090,17 +2144,20 @@ export type TemplateDto = {
           | 'runtime'
           | 'tool'
           | 'simpleAgent'
+          | 'claudeAgent'
           | 'trigger'
           | 'resource'
           | 'mcp'
           | 'instruction';
         required?: boolean;
+        requiredGroup?: string;
         multiple: boolean;
       }
     | {
         type: 'template';
         value: string;
         required?: boolean;
+        requiredGroup?: string;
         multiple: boolean;
       }
   >;
@@ -2109,27 +2166,6 @@ export type TemplateDto = {
   systemAgentPredefinedTools?: Array<string>;
   instructionBlockId?: string;
   instructionBlockContentHash?: string;
-};
-
-export type CreateSecretDto = {
-  name: string;
-  value: string;
-  description?: string | null;
-};
-
-export type SecretResponseDto = {
-  id: string;
-  name: string;
-  description?: string | null;
-  projectId: string;
-  createdBy: string;
-  createdAt: string;
-  updatedAt: string;
-};
-
-export type UpdateSecretDto = {
-  value?: string;
-  description?: string | null;
 };
 
 export type SuggestAgentInstructionsDto = {
@@ -2351,6 +2387,36 @@ export type InstructionBlockResponseDto = {
   description: string;
   instructions: string;
   contentHash: string;
+};
+
+export type OAuthStartResponseDto = {
+  /**
+   * Provider authorize URL to navigate the new tab to
+   */
+  authorizeUrl: string;
+};
+
+export type OAuthStatusResponseDto = {
+  provider: 'linear';
+  /**
+   * Whether a valid credential exists for this project + provider
+   */
+  authenticated: boolean;
+  accountLabel: string | null;
+  secretName: string | null;
+};
+
+export type OAuthExchangeRequestDto = {
+  provider: 'linear';
+  code: string;
+  state: string;
+};
+
+export type OAuthExchangeResponseDto = {
+  provider: 'linear';
+  authenticated: true;
+  accountLabel: string;
+  secretName: string;
 };
 
 export type SystemSettingsResponseDto = {
@@ -3047,6 +3113,59 @@ export type UpdateDocResponses = {
 
 export type UpdateDocResponse = UpdateDocResponses[keyof UpdateDocResponses];
 
+export type ListNamespacesData = {
+  body?: never;
+  path: {
+    threadId: string;
+  };
+  query?: never;
+  url: '/api/v1/threads/{threadId}/store';
+};
+
+export type ListNamespacesResponses = {
+  200: Array<NamespaceSummaryDto>;
+};
+
+export type ListNamespacesResponse =
+  ListNamespacesResponses[keyof ListNamespacesResponses];
+
+export type ListEntriesData = {
+  body?: never;
+  path: {
+    threadId: string;
+    namespace: string;
+  };
+  query?: {
+    limit?: number;
+    offset?: number;
+  };
+  url: '/api/v1/threads/{threadId}/store/{namespace}';
+};
+
+export type ListEntriesResponses = {
+  200: Array<ThreadStoreEntryDto>;
+};
+
+export type ListEntriesResponse =
+  ListEntriesResponses[keyof ListEntriesResponses];
+
+export type GetEntryData = {
+  body?: never;
+  path: {
+    threadId: string;
+    namespace: string;
+    key: string;
+  };
+  query?: never;
+  url: '/api/v1/threads/{threadId}/store/{namespace}/{key}';
+};
+
+export type GetEntryResponses = {
+  200: ThreadStoreEntryDto;
+};
+
+export type GetEntryResponse = GetEntryResponses[keyof GetEntryResponses];
+
 export type GetThreadsData = {
   body?: never;
   path?: never;
@@ -3279,6 +3398,77 @@ export type CancelWaitResponses = {
 
 export type CancelWaitResponse = CancelWaitResponses[keyof CancelWaitResponses];
 
+export type ListData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: '/api/v1/secrets';
+};
+
+export type ListResponses = {
+  200: Array<SecretResponseDto>;
+};
+
+export type ListResponse = ListResponses[keyof ListResponses];
+
+export type CreateData = {
+  body: CreateSecretDto;
+  path?: never;
+  query?: never;
+  url: '/api/v1/secrets';
+};
+
+export type CreateResponses = {
+  201: SecretResponseDto;
+};
+
+export type CreateResponse = CreateResponses[keyof CreateResponses];
+
+export type DeleteData = {
+  body?: never;
+  path: {
+    id: string;
+  };
+  query?: never;
+  url: '/api/v1/secrets/{id}';
+};
+
+export type DeleteResponses = {
+  204: void;
+};
+
+export type DeleteResponse = DeleteResponses[keyof DeleteResponses];
+
+export type GetByIdData = {
+  body?: never;
+  path: {
+    id: string;
+  };
+  query?: never;
+  url: '/api/v1/secrets/{id}';
+};
+
+export type GetByIdResponses = {
+  200: SecretResponseDto;
+};
+
+export type GetByIdResponse = GetByIdResponses[keyof GetByIdResponses];
+
+export type UpdateData = {
+  body: UpdateSecretDto;
+  path: {
+    id: string;
+  };
+  query?: never;
+  url: '/api/v1/secrets/{id}';
+};
+
+export type UpdateResponses = {
+  200: SecretResponseDto;
+};
+
+export type UpdateResponse = UpdateResponses[keyof UpdateResponses];
+
 export type GetAllGraphsData = {
   body?: never;
   path?: never;
@@ -3496,77 +3686,6 @@ export type GetAllTemplatesResponses = {
 export type GetAllTemplatesResponse =
   GetAllTemplatesResponses[keyof GetAllTemplatesResponses];
 
-export type ListData = {
-  body?: never;
-  path?: never;
-  query?: never;
-  url: '/api/v1/secrets';
-};
-
-export type ListResponses = {
-  200: Array<SecretResponseDto>;
-};
-
-export type ListResponse = ListResponses[keyof ListResponses];
-
-export type CreateData = {
-  body: CreateSecretDto;
-  path?: never;
-  query?: never;
-  url: '/api/v1/secrets';
-};
-
-export type CreateResponses = {
-  201: SecretResponseDto;
-};
-
-export type CreateResponse = CreateResponses[keyof CreateResponses];
-
-export type DeleteData = {
-  body?: never;
-  path: {
-    id: string;
-  };
-  query?: never;
-  url: '/api/v1/secrets/{id}';
-};
-
-export type DeleteResponses = {
-  204: void;
-};
-
-export type DeleteResponse = DeleteResponses[keyof DeleteResponses];
-
-export type GetByIdData = {
-  body?: never;
-  path: {
-    id: string;
-  };
-  query?: never;
-  url: '/api/v1/secrets/{id}';
-};
-
-export type GetByIdResponses = {
-  200: SecretResponseDto;
-};
-
-export type GetByIdResponse = GetByIdResponses[keyof GetByIdResponses];
-
-export type UpdateData = {
-  body: UpdateSecretDto;
-  path: {
-    id: string;
-  };
-  query?: never;
-  url: '/api/v1/secrets/{id}';
-};
-
-export type UpdateResponses = {
-  200: SecretResponseDto;
-};
-
-export type UpdateResponse = UpdateResponses[keyof UpdateResponses];
-
 export type SuggestAgentInstructionsData = {
   body: SuggestAgentInstructionsDto;
   path: {
@@ -3738,6 +3857,52 @@ export type GetInstructionBlockByIdResponses = {
 
 export type GetInstructionBlockByIdResponse =
   GetInstructionBlockByIdResponses[keyof GetInstructionBlockByIdResponses];
+
+export type StartData = {
+  body?: never;
+  path: {
+    provider: 'linear';
+  };
+  query?: {
+    graphId?: string;
+    nodeId?: string;
+  };
+  url: '/api/v1/oauth/{provider}/start';
+};
+
+export type StartResponses = {
+  200: OAuthStartResponseDto;
+};
+
+export type StartResponse = StartResponses[keyof StartResponses];
+
+export type StatusData = {
+  body?: never;
+  path: {
+    provider: 'linear';
+  };
+  query?: never;
+  url: '/api/v1/oauth/{provider}/status';
+};
+
+export type StatusResponses = {
+  200: OAuthStatusResponseDto;
+};
+
+export type StatusResponse = StatusResponses[keyof StatusResponses];
+
+export type ExchangeData = {
+  body: OAuthExchangeRequestDto;
+  path?: never;
+  query?: never;
+  url: '/api/v1/oauth/credentials/exchange';
+};
+
+export type ExchangeResponses = {
+  200: OAuthExchangeResponseDto;
+};
+
+export type ExchangeResponse = ExchangeResponses[keyof ExchangeResponses];
 
 export type GetSettingsData = {
   body?: never;

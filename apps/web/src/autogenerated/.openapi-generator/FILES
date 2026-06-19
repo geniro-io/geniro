@@ -60,7 +60,12 @@ docs/LiteLlmProvidersResponseDtoProvidersInner.md
 docs/LitellmApi.md
 docs/ModelDefaultsDto.md
 docs/NamespaceSummaryDto.md
+docs/OAuthExchangeRequestDto.md
+docs/OAuthExchangeResponseDto.md
 docs/OAuthLinkRequestDto.md
+docs/OAuthStartResponseDto.md
+docs/OAuthStatusResponseDto.md
+docs/OauthApi.md
 docs/ProjectDto.md
 docs/ProjectsApi.md
 docs/RepoIndexDto.md

@@ -197,4 +197,12 @@ export const environment = () =>
     // --- Secrets store (OpenBao) ---
     openbaoAddr: getEnv('OPENBAO_ADDR'),
     openbaoToken: getEnv('OPENBAO_TOKEN'),
+
+    // --- OAuth credentials (per-project; e.g. Linear) ---
+    // Web base URL used to build the OAuth redirect_uri (the callback page).
+    // No provider client id/secret: each MCP provider's OAuth client is
+    // registered per flow via Dynamic Client Registration against the
+    // provider's own authorization server, so the feature needs zero
+    // deployment config.
+    websiteUrl: getEnv('WEBSITE_URL'),
   }) as const satisfies Record<string, string | number | boolean>;

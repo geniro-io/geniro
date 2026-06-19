@@ -56,6 +56,7 @@ import {
 import { Switch } from '../../../components/ui/switch';
 import { Textarea } from '../../../components/ui/textarea';
 import { API_URL } from '../../../config';
+import { RjsfOAuthAuthenticateField } from '../../oauth/RjsfOAuthAuthenticateField';
 import type { SchemaProperty } from '../types';
 import { getSchemaTypeName } from '../utils/schemaUtils';
 import { ArrayTagInput } from './ArrayTagInput';
@@ -83,6 +84,8 @@ type FormContext = {
   aiSuggestionEnabled: boolean;
   githubAppEnabled: boolean;
   formData: FormData;
+  graphId?: string;
+  nodeId?: string;
 };
 
 const handleNumberWheel: React.WheelEventHandler<HTMLElement> = (event) => {
@@ -215,6 +218,13 @@ const buildUiSchema = (schema: RJSFSchema): UiSchemaShape => {
 
     if (prop['x-ui:secret-multi-select'] === true) {
       fieldUi['ui:field'] = 'secretMultiSelect';
+    }
+
+    // OAuth-authenticate widget. Placed LAST so it overrides secretSelect for a
+    // token field that carries BOTH markers (the widget renders the auth
+    // affordance; the secret-select marker still drives compiler collection).
+    if (prop['x-ui:oauth-authenticate']) {
+      fieldUi['ui:field'] = 'oauthAuthenticate';
     }
 
     if (prop['x-ui:readonly'] === true) {
@@ -1143,6 +1153,7 @@ const RJSF_FIELDS: RjsfFields = {
   githubRepoSelect: RjsfGitHubRepoSelectField,
   secretSelect: RjsfSecretSelectField,
   secretMultiSelect: RjsfSecretMultiSelectField,
+  oauthAuthenticate: RjsfOAuthAuthenticateField,
 } as unknown as RjsfFields;
 
 // --- Component ---
@@ -1162,6 +1173,8 @@ export interface TemplateConfigFormProps {
   aiSuggestionEnabled: boolean;
   githubAppEnabled?: boolean;
   templateId?: string;
+  graphId?: string;
+  nodeId?: string;
 }
 
 export const TemplateConfigForm: React.FC<TemplateConfigFormProps> = ({
@@ -1175,6 +1188,8 @@ export const TemplateConfigForm: React.FC<TemplateConfigFormProps> = ({
   aiSuggestionEnabled,
   githubAppEnabled = false,
   templateId,
+  graphId,
+  nodeId,
 }) => {
   const [copied, setCopied] = useState(false);
   const uiSchema = useMemo(() => buildUiSchema(schema), [schema]);
@@ -1198,11 +1213,15 @@ export const TemplateConfigForm: React.FC<TemplateConfigFormProps> = ({
       aiSuggestionEnabled,
       githubAppEnabled,
       formData,
+      graphId,
+      nodeId,
     }),
     [
       aiSuggestionEnabled,
       formData,
       githubAppEnabled,
+      graphId,
+      nodeId,
       liteLlmModels,
       litellmModelsLoading,
       onOpenAiSuggestion,

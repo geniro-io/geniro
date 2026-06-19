@@ -1079,6 +1079,8 @@ export const NodeEditSidebar = React.memo(
               )}
               githubAppEnabled={githubAppEnabled}
               templateId={nodeData?.template}
+              graphId={graphId}
+              nodeId={node?.id}
             />
           ) : (
             <span className="text-muted-foreground">

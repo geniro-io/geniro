@@ -48,6 +48,9 @@ type UiSchemaExtensions = {
   // by the backend graph compiler.
   'x-ui:secret-select-host'?: boolean;
   'x-ui:secret-multi-select'?: boolean;
+  // Per-MCP-node OAuth "Authenticate" widget marker (UI-only — the backend
+  // graph compiler's collectSecretNames ignores it). Carries the provider.
+  'x-ui:oauth-authenticate'?: { provider: string };
   'x-ui:readonly'?: boolean;
 };
 

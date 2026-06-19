@@ -1757,6 +1757,107 @@ export const KnowledgeDocListResultDtoSchema = {
   required: ['items', 'total'],
 } as const;
 
+export const NamespaceSummaryDtoSchema = {
+  type: 'object',
+  properties: {
+    namespace: {
+      type: 'string',
+    },
+    mode: {
+      type: 'string',
+      enum: ['kv', 'append'],
+    },
+    entryCount: {
+      type: 'integer',
+      minimum: 0,
+      maximum: 9007199254740991,
+    },
+    lastUpdatedAt: {
+      type: 'string',
+      format: 'date-time',
+      pattern:
+        '^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$',
+    },
+  },
+  required: ['namespace', 'mode', 'entryCount', 'lastUpdatedAt'],
+} as const;
+
+export const ThreadStoreEntryDtoSchema = {
+  type: 'object',
+  properties: {
+    id: {
+      type: 'string',
+      format: 'uuid',
+      pattern:
+        '^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$',
+    },
+    threadId: {
+      type: 'string',
+      format: 'uuid',
+      pattern:
+        '^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$',
+    },
+    namespace: {
+      type: 'string',
+    },
+    key: {
+      type: 'string',
+    },
+    value: {},
+    mode: {
+      type: 'string',
+      enum: ['kv', 'append'],
+    },
+    authorAgentId: {
+      anyOf: [
+        {
+          type: 'string',
+        },
+        {
+          type: 'null',
+        },
+      ],
+    },
+    tags: {
+      anyOf: [
+        {
+          type: 'array',
+          items: {
+            type: 'string',
+          },
+        },
+        {
+          type: 'null',
+        },
+      ],
+    },
+    createdAt: {
+      type: 'string',
+      format: 'date-time',
+      pattern:
+        '^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$',
+    },
+    updatedAt: {
+      type: 'string',
+      format: 'date-time',
+      pattern:
+        '^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$',
+    },
+  },
+  required: [
+    'id',
+    'threadId',
+    'namespace',
+    'key',
+    'value',
+    'mode',
+    'authorAgentId',
+    'tags',
+    'createdAt',
+    'updatedAt',
+  ],
+} as const;
+
 export const ThreadDtoSchema = {
   type: 'object',
   properties: {
@@ -1787,6 +1888,24 @@ export const ThreadDtoSchema = {
           type: 'null',
         },
       ],
+    },
+    runningStartedAt: {
+      anyOf: [
+        {
+          type: 'string',
+          format: 'date-time',
+          pattern:
+            '^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$',
+        },
+        {
+          type: 'null',
+        },
+      ],
+    },
+    totalRunningMs: {
+      type: 'integer',
+      minimum: 0,
+      maximum: 9007199254740991,
     },
     createdAt: {
       type: 'string',
@@ -1888,6 +2007,8 @@ export const ThreadDtoSchema = {
     'id',
     'graphId',
     'externalThreadId',
+    'runningStartedAt',
+    'totalRunningMs',
     'createdAt',
     'updatedAt',
     'status',
@@ -2435,6 +2556,102 @@ export const ResumeThreadDtoSchema = {
   },
 } as const;
 
+export const CreateSecretDtoSchema = {
+  type: 'object',
+  properties: {
+    name: {
+      type: 'string',
+      minLength: 1,
+      maxLength: 255,
+      pattern: '^[A-Z][A-Z0-9_]*$',
+    },
+    value: {
+      type: 'string',
+      minLength: 1,
+    },
+    description: {
+      anyOf: [
+        {
+          type: 'string',
+          maxLength: 1000,
+        },
+        {
+          type: 'null',
+        },
+      ],
+    },
+  },
+  required: ['name', 'value'],
+} as const;
+
+export const SecretResponseDtoSchema = {
+  type: 'object',
+  properties: {
+    id: {
+      type: 'string',
+      format: 'uuid',
+      pattern:
+        '^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$',
+    },
+    name: {
+      type: 'string',
+    },
+    description: {
+      anyOf: [
+        {
+          type: 'string',
+        },
+        {
+          type: 'null',
+        },
+      ],
+    },
+    projectId: {
+      type: 'string',
+      format: 'uuid',
+      pattern:
+        '^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$',
+    },
+    createdBy: {
+      type: 'string',
+    },
+    createdAt: {
+      type: 'string',
+      format: 'date-time',
+      pattern:
+        '^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$',
+    },
+    updatedAt: {
+      type: 'string',
+      format: 'date-time',
+      pattern:
+        '^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$',
+    },
+  },
+  required: ['id', 'name', 'projectId', 'createdBy', 'createdAt', 'updatedAt'],
+} as const;
+
+export const UpdateSecretDtoSchema = {
+  type: 'object',
+  properties: {
+    value: {
+      type: 'string',
+      minLength: 1,
+    },
+    description: {
+      anyOf: [
+        {
+          type: 'string',
+          maxLength: 1000,
+        },
+        {
+          type: 'null',
+        },
+      ],
+    },
+  },
+} as const;
+
 export const CreateGraphDtoSchema = {
   type: 'object',
   properties: {
@@ -2967,6 +3184,7 @@ export const GraphNodeWithStatusDtoSchema = {
         'runtime',
         'tool',
         'simpleAgent',
+        'claudeAgent',
         'trigger',
         'resource',
         'mcp',
@@ -4054,6 +4272,7 @@ export const TemplateDtoSchema = {
         'runtime',
         'tool',
         'simpleAgent',
+        'claudeAgent',
         'trigger',
         'resource',
         'mcp',
@@ -4084,6 +4303,7 @@ export const TemplateDtoSchema = {
                   'runtime',
                   'tool',
                   'simpleAgent',
+                  'claudeAgent',
                   'trigger',
                   'resource',
                   'mcp',
@@ -4092,6 +4312,9 @@ export const TemplateDtoSchema = {
               },
               required: {
                 type: 'boolean',
+              },
+              requiredGroup: {
+                type: 'string',
               },
               multiple: {
                 type: 'boolean',
@@ -4111,6 +4334,9 @@ export const TemplateDtoSchema = {
               },
               required: {
                 type: 'boolean',
+              },
+              requiredGroup: {
+                type: 'string',
               },
               multiple: {
                 type: 'boolean',
@@ -4138,6 +4364,7 @@ export const TemplateDtoSchema = {
                   'runtime',
                   'tool',
                   'simpleAgent',
+                  'claudeAgent',
                   'trigger',
                   'resource',
                   'mcp',
@@ -4146,6 +4373,9 @@ export const TemplateDtoSchema = {
               },
               required: {
                 type: 'boolean',
+              },
+              requiredGroup: {
+                type: 'string',
               },
               multiple: {
                 type: 'boolean',
@@ -4165,6 +4395,9 @@ export const TemplateDtoSchema = {
               },
               required: {
                 type: 'boolean',
+              },
+              requiredGroup: {
+                type: 'string',
               },
               multiple: {
                 type: 'boolean',
@@ -4195,102 +4428,6 @@ export const TemplateDtoSchema = {
     },
   },
   required: ['id', 'name', 'description', 'kind', 'schema'],
-} as const;
-
-export const CreateSecretDtoSchema = {
-  type: 'object',
-  properties: {
-    name: {
-      type: 'string',
-      minLength: 1,
-      maxLength: 255,
-      pattern: '^[A-Z][A-Z0-9_]*$',
-    },
-    value: {
-      type: 'string',
-      minLength: 1,
-    },
-    description: {
-      anyOf: [
-        {
-          type: 'string',
-          maxLength: 1000,
-        },
-        {
-          type: 'null',
-        },
-      ],
-    },
-  },
-  required: ['name', 'value'],
-} as const;
-
-export const SecretResponseDtoSchema = {
-  type: 'object',
-  properties: {
-    id: {
-      type: 'string',
-      format: 'uuid',
-      pattern:
-        '^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$',
-    },
-    name: {
-      type: 'string',
-    },
-    description: {
-      anyOf: [
-        {
-          type: 'string',
-        },
-        {
-          type: 'null',
-        },
-      ],
-    },
-    projectId: {
-      type: 'string',
-      format: 'uuid',
-      pattern:
-        '^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$',
-    },
-    createdBy: {
-      type: 'string',
-    },
-    createdAt: {
-      type: 'string',
-      format: 'date-time',
-      pattern:
-        '^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$',
-    },
-    updatedAt: {
-      type: 'string',
-      format: 'date-time',
-      pattern:
-        '^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$',
-    },
-  },
-  required: ['id', 'name', 'projectId', 'createdBy', 'createdAt', 'updatedAt'],
-} as const;
-
-export const UpdateSecretDtoSchema = {
-  type: 'object',
-  properties: {
-    value: {
-      type: 'string',
-      minLength: 1,
-    },
-    description: {
-      anyOf: [
-        {
-          type: 'string',
-          maxLength: 1000,
-        },
-        {
-          type: 'null',
-        },
-      ],
-    },
-  },
 } as const;
 
 export const SuggestAgentInstructionsDtoSchema = {
@@ -4630,6 +4767,90 @@ export const InstructionBlockResponseDtoSchema = {
     'instructions',
     'contentHash',
   ],
+} as const;
+
+export const OAuthStartResponseDtoSchema = {
+  type: 'object',
+  properties: {
+    authorizeUrl: {
+      type: 'string',
+    },
+  },
+  required: ['authorizeUrl'],
+} as const;
+
+export const OAuthStatusResponseDtoSchema = {
+  type: 'object',
+  properties: {
+    provider: {
+      type: 'string',
+      enum: ['linear'],
+    },
+    authenticated: {
+      type: 'boolean',
+    },
+    accountLabel: {
+      anyOf: [
+        {
+          type: 'string',
+        },
+        {
+          type: 'null',
+        },
+      ],
+    },
+    secretName: {
+      anyOf: [
+        {
+          type: 'string',
+        },
+        {
+          type: 'null',
+        },
+      ],
+    },
+  },
+  required: ['provider', 'authenticated', 'accountLabel', 'secretName'],
+} as const;
+
+export const OAuthExchangeRequestDtoSchema = {
+  type: 'object',
+  properties: {
+    provider: {
+      type: 'string',
+      enum: ['linear'],
+    },
+    code: {
+      type: 'string',
+      minLength: 1,
+    },
+    state: {
+      type: 'string',
+      minLength: 1,
+    },
+  },
+  required: ['provider', 'code', 'state'],
+} as const;
+
+export const OAuthExchangeResponseDtoSchema = {
+  type: 'object',
+  properties: {
+    provider: {
+      type: 'string',
+      enum: ['linear'],
+    },
+    authenticated: {
+      type: 'boolean',
+      const: true,
+    },
+    accountLabel: {
+      type: 'string',
+    },
+    secretName: {
+      type: 'string',
+    },
+  },
+  required: ['provider', 'authenticated', 'accountLabel', 'secretName'],
 } as const;
 
 export const SystemSettingsResponseDtoSchema = {
