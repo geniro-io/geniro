@@ -82,6 +82,22 @@ export class OAuthExchangeService {
     );
   }
 
+  /**
+   * Exchange a stored `refresh_token` for a fresh access token, using the issuing
+   * per-flow `client` persisted at exchange time. Re-discovers the token endpoint
+   * (same as {@link exchangeAuthorizationCode}) so the refresh always targets the
+   * authorization server that issued the original token.
+   */
+  async refreshAccessToken(
+    provider: OAuthProvider,
+    refreshToken: string,
+    client: RegisteredClient,
+  ): Promise<OAuthTokenResult> {
+    const strategy = this.resolveProvider(provider);
+    const server = await strategy.discover();
+    return await strategy.refreshAccessToken(server, client, refreshToken);
+  }
+
   private resolveProvider(provider: OAuthProvider): BaseOAuthProvider {
     const strategy = this.providers[provider];
     if (!strategy) {

@@ -28,7 +28,11 @@ export interface DiscoveredOAuthServer {
  * for an MCP authorization server that advertises
  * `token_endpoint_auth_method: "none"`. When the server returns a secret it is
  * carried in the Redis pending-state alongside the PKCE verifier and used at
- * the token exchange; no client is ever persisted durably.
+ * the token exchange. The per-flow client is ephemeral for ACQUISITION; as of
+ * M3.1, a credential that carries a refresh token additionally persists its
+ * issuing client durably (`client_id` on the row, `client_secret` in OpenBao)
+ * so a later `refresh_token` grant can re-present it — see
+ * `.claude/rules/oauth-mcp.md`.
  */
 export interface RegisteredClient {
   clientId: string;

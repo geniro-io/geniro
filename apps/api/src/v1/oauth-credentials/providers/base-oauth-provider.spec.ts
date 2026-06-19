@@ -561,6 +561,173 @@ describe('BaseOAuthProvider (via LinearOAuthProvider)', () => {
         ),
       ).rejects.toThrow(/OAUTH_TOKEN_EXCHANGE_FAILED/);
     });
+
+    it('parses a refresh_token from the token response when present', async () => {
+      fetchMock.mockImplementation((url: string) => {
+        if (url === TOKEN_URL) {
+          return Promise.resolve(
+            jsonResponse({
+              access_token: 'lin_tok',
+              refresh_token: 'lin_refresh_tok',
+              expires_in: 3600,
+            }),
+          );
+        }
+        return Promise.reject(new Error(`unexpected fetch: ${url}`));
+      });
+
+      const result = await provider.exchangeCode(
+        discoveredServer,
+        { clientId: 'c', clientSecret: null },
+        'code',
+        'verifier',
+        REDIRECT_URI,
+      );
+      expect(result.refreshToken).toBe('lin_refresh_tok');
+    });
+
+    it('yields a null refreshToken when the response omits one', async () => {
+      fetchMock.mockImplementation(() =>
+        Promise.resolve(jsonResponse({ access_token: 'lin_tok' })),
+      );
+      const result = await provider.exchangeCode(
+        discoveredServer,
+        { clientId: 'c', clientSecret: null },
+        'code',
+        'verifier',
+        REDIRECT_URI,
+      );
+      expect(result.refreshToken).toBeNull();
+    });
+  });
+
+  describe('refreshAccessToken', () => {
+    it('posts grant_type=refresh_token with the resource indicator + client_id and parses the token', async () => {
+      fetchMock.mockImplementation((url: string) => {
+        if (url === TOKEN_URL) {
+          return Promise.resolve(
+            jsonResponse({
+              access_token: 'lin_tok_refreshed',
+              scope: 'read write',
+              expires_in: 3600,
+            }),
+          );
+        }
+        return Promise.reject(new Error(`unexpected fetch: ${url}`));
+      });
+
+      const before = Date.now();
+      const result = await provider.refreshAccessToken(
+        discoveredServer,
+        { clientId: 'dcr-client-1', clientSecret: null },
+        'refresh-tok-1',
+      );
+
+      expect(result.accessToken).toBe('lin_tok_refreshed');
+      expect(result.scopes).toEqual(['read', 'write']);
+      // No rotated refresh token in this response — the caller keeps the old one.
+      expect(result.refreshToken).toBeNull();
+      expect(result.accountLabel).toBeNull();
+      expect(result.expiresAt).toBeInstanceOf(Date);
+      const deltaMs = (result.expiresAt as Date).getTime() - before;
+      expect(deltaMs).toBeGreaterThanOrEqual(3600 * 1000 - 1000);
+      expect(deltaMs).toBeLessThanOrEqual(3600 * 1000 + 5000);
+
+      const body = new URLSearchParams(String(lastInitFor(TOKEN_URL)?.body));
+      expect(body.get('grant_type')).toBe('refresh_token');
+      expect(body.get('refresh_token')).toBe('refresh-tok-1');
+      expect(body.get('client_id')).toBe('dcr-client-1');
+      expect(body.get('resource')).toBe(RESOURCE);
+      expect(body.has('client_secret')).toBe(false);
+    });
+
+    it('includes client_secret only for a confidential client', async () => {
+      fetchMock.mockImplementation((url: string) => {
+        if (url === TOKEN_URL) {
+          return Promise.resolve(jsonResponse({ access_token: 'lin_tok' }));
+        }
+        return Promise.reject(new Error(`unexpected fetch: ${url}`));
+      });
+
+      await provider.refreshAccessToken(
+        discoveredServer,
+        { clientId: 'dcr-client-2', clientSecret: 'shh' },
+        'refresh-tok-1',
+      );
+      const body = new URLSearchParams(String(lastInitFor(TOKEN_URL)?.body));
+      expect(body.get('client_secret')).toBe('shh');
+    });
+
+    it('surfaces a rotated refresh_token when the AS issues one on the grant', async () => {
+      fetchMock.mockImplementation(() =>
+        Promise.resolve(
+          jsonResponse({
+            access_token: 'lin_tok_2',
+            refresh_token: 'rotated-refresh-2',
+          }),
+        ),
+      );
+      const result = await provider.refreshAccessToken(
+        discoveredServer,
+        { clientId: 'c', clientSecret: null },
+        'refresh-tok-1',
+      );
+      expect(result.accessToken).toBe('lin_tok_2');
+      expect(result.refreshToken).toBe('rotated-refresh-2');
+    });
+
+    it('fails closed on a non-OK refresh response (e.g. a revoked refresh token)', async () => {
+      fetchMock.mockImplementation(() =>
+        Promise.resolve(
+          jsonResponse({ error: 'invalid_grant' }, { ok: false, status: 400 }),
+        ),
+      );
+      await expect(
+        provider.refreshAccessToken(
+          discoveredServer,
+          { clientId: 'c', clientSecret: null },
+          'refresh-tok-1',
+        ),
+      ).rejects.toThrow(/OAUTH_TOKEN_REFRESH_FAILED/);
+    });
+
+    it('fails closed on an OK refresh response with no access_token', async () => {
+      fetchMock.mockImplementation(() =>
+        Promise.resolve(jsonResponse({ token_type: 'bearer' })),
+      );
+      await expect(
+        provider.refreshAccessToken(
+          discoveredServer,
+          { clientId: 'c', clientSecret: null },
+          'refresh-tok-1',
+        ),
+      ).rejects.toThrow(/OAUTH_TOKEN_REFRESH_FAILED/);
+    });
+
+    it('does not echo the rotated refresh token into any log sink on a malformed response', async () => {
+      const SECRET = 'ROTATED_REFRESH_DO_NOT_LOG';
+      fetchMock.mockImplementation(() =>
+        Promise.resolve(
+          jsonResponse({ refresh_token: SECRET }, { ok: false, status: 400 }),
+        ),
+      );
+      await expect(
+        provider.refreshAccessToken(
+          discoveredServer,
+          { clientId: 'c', clientSecret: null },
+          'refresh-tok-1',
+        ),
+      ).rejects.toThrow(/OAUTH_TOKEN_REFRESH_FAILED/);
+
+      const allLogged = [
+        ...loggerMock.error.mock.calls,
+        ...loggerMock.debug.mock.calls,
+      ]
+        .flat()
+        .map((arg) => JSON.stringify(arg))
+        .join(' ');
+      expect(allLogged).not.toContain(SECRET);
+    });
   });
 
   describe('trust boundary — never logs response bodies', () => {

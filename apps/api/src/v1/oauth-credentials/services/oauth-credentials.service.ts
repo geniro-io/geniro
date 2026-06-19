@@ -30,6 +30,13 @@ import {
 } from '../oauth-credentials.utils';
 import { OAuthExchangeService } from './oauth-exchange.service';
 
+/**
+ * Refresh proactively when the access token is within this window of expiry (or
+ * already past it) — so a token that would expire between a run-start pre-flight
+ * and the actual MCP call is rotated up front rather than dying mid-request.
+ */
+const REFRESH_EXPIRY_SKEW_MS = 60_000;
+
 @Injectable()
 export class OAuthCredentialsService {
   constructor(
@@ -107,9 +114,21 @@ export class OAuthCredentialsService {
       { projectId, provider },
       { orderBy: { updatedAt: 'desc' } },
     );
-    // A stored-but-expired token is NOT "authenticated" — surface it so the
-    // node prompts re-auth instead of failing opaquely at run time. A null
-    // expiry means the provider issues non-expiring tokens (or expiry unknown).
+    return this.buildStatus(provider, credential);
+  }
+
+  /**
+   * Map a loaded credential (or its absence) to the public status DTO. A
+   * stored-but-expired token is NOT "authenticated" — surface it so the node
+   * prompts re-auth instead of failing opaquely at run time; a null expiry means
+   * the provider issues non-expiring tokens (or expiry unknown). Side-effect-free
+   * (no DB read), so a caller that already holds the row (refreshIfNeeded's
+   * no-op paths) reuses it without a second read.
+   */
+  private buildStatus(
+    provider: OAuthProvider,
+    credential: OAuthCredentialEntity | null,
+  ): OAuthStatusResponse {
     const expired =
       credential?.expiresAt != null &&
       credential.expiresAt.getTime() <= Date.now();
@@ -120,6 +139,123 @@ export class OAuthCredentialsService {
       accountLabel: authenticated ? (credential?.accountLabel ?? null) : null,
       secretName: authenticated ? (credential?.secretName ?? null) : null,
     };
+  }
+
+  /**
+   * Lazily rotate the (project, provider) access token when it is near or past
+   * expiry and a stored refresh token + issuing client exist, so a valid token
+   * is available at run-start with no user interaction. A no-op returning the
+   * current status when: there is no credential; the expiry is unknown (`null` —
+   * staleness can't be proven, and a blind refresh could revoke a still-valid
+   * long-lived token); the token is still fresh; or no refresh token / client is
+   * stored (the credential then stays near/past expiry and falls to re-auth in
+   * M3.3 — never a silent failure). The rotated access token (and any rotated
+   * refresh token) is re-persisted through the same rollback-safe path as
+   * exchange(); the refreshed token re-passes the header-safety guard. Returns
+   * the post-refresh status.
+   *
+   * This is the service method only — the run-start CALL SITE that invokes it
+   * (background / trigger / resume pre-flight) lands in M3.2 / M3.3.
+   */
+  async refreshIfNeeded(
+    ctx: AppContextStorage,
+    provider: OAuthProvider,
+  ): Promise<OAuthStatusResponse> {
+    const projectId = ctx.checkProjectId();
+    const credential = await this.dao.getOne(
+      { projectId, provider },
+      { orderBy: { updatedAt: 'desc' } },
+    );
+
+    // No credential, or expiry unknown -> nothing to refresh (or no provable
+    // need). A null expiresAt means a non-expiring / unknown-expiry token;
+    // refreshing blind risks revoking a still-valid one, so leave it.
+    if (!credential || credential.expiresAt == null) {
+      return this.buildStatus(provider, credential);
+    }
+    const needsRefresh =
+      credential.expiresAt.getTime() <= Date.now() + REFRESH_EXPIRY_SKEW_MS;
+    if (!needsRefresh) {
+      return this.buildStatus(provider, credential);
+    }
+
+    // A refresh grant is bound to its issuing client; absent the persisted
+    // client_id, the stored refresh token, or the secrets store, the credential
+    // simply stays near/past expiry (re-auth handled in M3.3).
+    if (!credential.clientId || !this.secretsStore.isAvailable()) {
+      return this.buildStatus(provider, credential);
+    }
+    // Capture the narrowed client_id in a local — control-flow narrowing of a
+    // property access does not survive into the async transactional callback
+    // below (the property is mutable), so the closure would see it as nullable.
+    const clientId = credential.clientId;
+    const refreshToken = await this.secretsStore
+      .getSecret(projectId, this.refreshSecretName(provider))
+      .catch(() => null);
+    if (!refreshToken) {
+      return this.buildStatus(provider, credential);
+    }
+    const clientSecret = await this.secretsStore
+      .getSecret(projectId, this.clientSecretName(provider))
+      .catch(() => null);
+
+    const result = await this.exchangeService.refreshAccessToken(
+      provider,
+      refreshToken,
+      { clientId, clientSecret: clientSecret || null },
+    );
+    const token = assertHeaderSafeToken(
+      result.accessToken,
+      'OAuth refresh token',
+    );
+
+    const restores: (() => Promise<void>)[] = [];
+    try {
+      restores.push(
+        await this.applySecretRollbackable(
+          projectId,
+          this.secretName(provider),
+          token,
+        ),
+      );
+      // A rotating provider issues a new refresh token on this grant — persist
+      // it. A non-rotating provider returns none -> keep the existing one (do
+      // NOT clear it; it is still valid for the next refresh).
+      if (result.refreshToken) {
+        restores.push(
+          await this.applySecretRollbackable(
+            projectId,
+            this.refreshSecretName(provider),
+            result.refreshToken,
+          ),
+        );
+      }
+      await this.em.transactional(async (em) => {
+        await this.upsertCredentialRow(em, projectId, credential.createdBy, {
+          provider,
+          accountLabel: credential.accountLabel,
+          secretName: this.secretName(provider),
+          // A refresh response often omits scope (unchanged) — keep the prior.
+          scopes: result.scopes ?? credential.scopes ?? null,
+          // A refresh response without expires_in yields a null expiry
+          // (non-expiring / unknown) — deliberately NOT the prior near/past
+          // value: preserving the stale expiry would re-trip the near-expiry
+          // guard on the very next call and refresh-storm. A token whose new
+          // lifetime the AS did not state rides until it hard-expires, then
+          // M3.3 surfaces auth_required.
+          expiresAt: result.expiresAt,
+          clientId,
+          lastRefreshedAt: new Date(),
+        });
+      });
+    } catch (error) {
+      for (const restore of restores.reverse()) {
+        await restore();
+      }
+      throw error;
+    }
+
+    return await this.status(ctx, provider);
   }
 
   /**
@@ -179,17 +315,34 @@ export class OAuthCredentialsService {
     const accountLabel = result.accountLabel ?? provider;
     const secretName = this.secretName(provider);
 
-    // Snapshot the prior stored value (if any) BEFORE overwriting it, so a
-    // failed write can restore the store to its pre-exchange state. getSecret
-    // throws (or returns '') when absent — either way priorValue is falsy.
-    const priorValue = await this.secretsStore
-      .getSecret(projectId, secretName)
-      .catch(() => null);
-
-    // OpenBao first — an unavailable store throws here, before any DB write.
-    await this.secretsStore.putSecret(projectId, secretName, token);
-
+    // Write the token + its sibling KV keys (the refresh token, and the issuing
+    // DCR client_secret when the AS registered a confidential client) to OpenBao
+    // FIRST — an unavailable store throws here, before any DB write. Each write
+    // snapshots its prior value so a later DB-transaction failure restores the
+    // store to its pre-exchange state: on a FIRST auth the orphan is deleted, on
+    // a RE-AUTH the prior value is restored, so a transient DB failure never
+    // destroys a still-valid existing credential. A fresh authorization-code
+    // grant supersedes any stale sibling from a prior grant — a `null` refresh
+    // token / client_secret CLEARS the sibling key rather than leaving it stale.
+    const restores: (() => Promise<void>)[] = [];
     try {
+      restores.push(
+        await this.applySecretRollbackable(projectId, secretName, token),
+      );
+      restores.push(
+        await this.applySecretRollbackable(
+          projectId,
+          this.refreshSecretName(provider),
+          result.refreshToken ?? null,
+        ),
+      );
+      restores.push(
+        await this.applySecretRollbackable(
+          projectId,
+          this.clientSecretName(provider),
+          pending.clientSecret,
+        ),
+      );
       await this.em.transactional(async (em) => {
         await this.upsertSecretRow(em, projectId, userId, secretName);
         await this.upsertCredentialRow(em, projectId, userId, {
@@ -198,22 +351,18 @@ export class OAuthCredentialsService {
           secretName,
           scopes: result.scopes,
           expiresAt: result.expiresAt,
+          // Persist the issuing per-flow DCR client so a later refresh grant can
+          // re-present it (the client_secret rode the sibling KV key above).
+          clientId: pending.clientId,
+          // A fresh exchange is not a refresh — reset the rotation marker.
+          lastRefreshedAt: null,
         });
       });
     } catch (error) {
-      // The DB rows didn't commit — restore OpenBao to its pre-exchange state.
-      // On a FIRST auth (no prior value) this deletes the orphan; on a RE-AUTH
-      // it restores the prior token, so a transient DB failure never destroys a
-      // still-valid existing credential — the rolled-back credential row keeps
-      // referencing this deterministic secret name. Best-effort.
-      if (priorValue) {
-        await this.secretsStore
-          .putSecret(projectId, secretName, priorValue)
-          .catch(() => undefined);
-      } else {
-        await this.secretsStore
-          .deleteSecret(projectId, secretName)
-          .catch(() => undefined);
+      // The DB rows didn't commit — roll every OpenBao write back (newest
+      // first), restoring the store to its pre-exchange state. Best-effort.
+      for (const restore of restores.reverse()) {
+        await restore();
       }
       throw error;
     }
@@ -300,6 +449,8 @@ export class OAuthCredentialsService {
       secretName: string;
       scopes: string[] | null;
       expiresAt: Date | null;
+      clientId: string | null;
+      lastRefreshedAt: Date | null;
     },
   ): Promise<void> {
     // One credential per (project, provider): the secret name is deterministic
@@ -319,6 +470,8 @@ export class OAuthCredentialsService {
         secretName: fields.secretName,
         scopes: fields.scopes,
         expiresAt: fields.expiresAt,
+        clientId: fields.clientId,
+        lastRefreshedAt: fields.lastRefreshedAt,
         createdBy: userId,
         projectId,
         deletedAt: null,
@@ -332,6 +485,8 @@ export class OAuthCredentialsService {
           'secretName',
           'scopes',
           'expiresAt',
+          'clientId',
+          'lastRefreshedAt',
           'deletedAt',
           'updatedAt',
         ],
@@ -341,6 +496,56 @@ export class OAuthCredentialsService {
 
   private secretName(provider: OAuthProvider): string {
     return `${provider.toUpperCase()}_OAUTH_TOKEN`;
+  }
+
+  /** Sibling OpenBao KV key holding the refresh token — never a plain DB column. */
+  private refreshSecretName(provider: OAuthProvider): string {
+    return `${provider.toUpperCase()}_OAUTH_REFRESH`;
+  }
+
+  /**
+   * Sibling OpenBao KV key holding the issuing DCR `client_secret`, when the AS
+   * registered a confidential client (a public PKCE client has none).
+   */
+  private clientSecretName(provider: OAuthProvider): string {
+    return `${provider.toUpperCase()}_OAUTH_CLIENT_SECRET`;
+  }
+
+  /**
+   * Apply one OpenBao KV write (or clear) with a snapshot-based undo. Reads the
+   * prior value first, then writes `newValue` (non-null) or deletes the key
+   * (`newValue === null` AND a prior value exists). Returns a best-effort
+   * `restore` closure that puts the prior value back — or deletes the key when
+   * there was none — so a caller persisting several keys can roll the store back
+   * to its pre-write state if a later step fails. `getSecret` throws (real store)
+   * or returns '' (absent) for a missing key; the `.catch(() => null)` below
+   * normalizes both (and any read error) to a falsy `prior`, so the `if (prior)`
+   * branches are exhaustive.
+   */
+  private async applySecretRollbackable(
+    projectId: string,
+    name: string,
+    newValue: string | null,
+  ): Promise<() => Promise<void>> {
+    const prior = await this.secretsStore
+      .getSecret(projectId, name)
+      .catch(() => null);
+    if (newValue !== null) {
+      await this.secretsStore.putSecret(projectId, name, newValue);
+    } else if (prior) {
+      await this.secretsStore.deleteSecret(projectId, name);
+    }
+    return async () => {
+      if (prior) {
+        await this.secretsStore
+          .putSecret(projectId, name, prior)
+          .catch(() => undefined);
+      } else {
+        await this.secretsStore
+          .deleteSecret(projectId, name)
+          .catch(() => undefined);
+      }
+    };
   }
 
   private redirectUri(provider: OAuthProvider): string {

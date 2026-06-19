@@ -22,6 +22,7 @@ interface ProviderMock {
   register: ReturnType<typeof vi.fn>;
   buildAuthorizeUrl: ReturnType<typeof vi.fn>;
   exchangeCode: ReturnType<typeof vi.fn>;
+  refreshAccessToken: ReturnType<typeof vi.fn>;
 }
 
 describe('OAuthExchangeService', () => {
@@ -34,6 +35,7 @@ describe('OAuthExchangeService', () => {
       register: vi.fn(),
       buildAuthorizeUrl: vi.fn(),
       exchangeCode: vi.fn(),
+      refreshAccessToken: vi.fn(),
     };
     service = new OAuthExchangeService(
       linear as unknown as LinearOAuthProvider,
@@ -95,6 +97,7 @@ describe('OAuthExchangeService', () => {
         accessToken: 'tok',
         scopes: ['read', 'write'],
         expiresAt: null,
+        refreshToken: null,
         accountLabel: null,
       };
       const client: RegisteredClient = {
@@ -121,6 +124,49 @@ describe('OAuthExchangeService', () => {
         REDIRECT_URI,
       );
       expect(result).toBe(tokenResult);
+    });
+  });
+
+  describe('refreshAccessToken', () => {
+    it('re-discovers and delegates to the provider refresh with the stored client', async () => {
+      const tokenResult: OAuthTokenResult = {
+        accessToken: 'tok-refreshed',
+        scopes: null,
+        expiresAt: null,
+        refreshToken: 'rotated',
+        accountLabel: null,
+      };
+      const client: RegisteredClient = {
+        clientId: 'dcr-1',
+        clientSecret: 'shh',
+      };
+      linear.discover.mockResolvedValue(server);
+      linear.refreshAccessToken.mockResolvedValue(tokenResult);
+
+      const result = await service.refreshAccessToken(
+        OAuthProvider.Linear,
+        'refresh-tok',
+        client,
+      );
+
+      expect(linear.discover).toHaveBeenCalledTimes(1);
+      expect(linear.refreshAccessToken).toHaveBeenCalledWith(
+        server,
+        client,
+        'refresh-tok',
+      );
+      expect(result).toBe(tokenResult);
+    });
+
+    it('throws OAUTH_PROVIDER_NOT_SUPPORTED for an unregistered provider', async () => {
+      const unknown = 'telegram' as OAuthProvider;
+      await expect(
+        service.refreshAccessToken(unknown, 'refresh-tok', {
+          clientId: 'x',
+          clientSecret: null,
+        }),
+      ).rejects.toThrow(/OAUTH_PROVIDER_NOT_SUPPORTED/);
+      expect(linear.discover).not.toHaveBeenCalled();
     });
   });
 
