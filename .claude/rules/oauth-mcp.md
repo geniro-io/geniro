@@ -42,3 +42,11 @@ The refresh token itself is likewise an OpenBao sibling key (`${PROVIDER}_OAUTH_
 ## Acquisition only
 
 This module is the credential ACQUISITION side. The token CONSUMPTION chain (the stored secret → graph-compiler `collectSecretNames` → runtime env → the `mcp-remote` bearer header) is independent and unchanged — the token reaches the sandbox via each block's own `x-ui:secret-select` channel, NEVER `x-ui:secret-select-host` (which is host-only, the opposite side of the trust boundary).
+
+## Single-use Redis tokens MUST be consumed atomically (`getDel`)
+
+Any Redis-backed token that enforces single-use / replay-once semantics — the OAuth `state` pending-state, the M3.3 capability link, any one-shot claim — MUST be consumed with `CacheService.getDel` (atomic Redis `GETDEL`), NEVER a `cache.get` followed by a separate `cache.del`.
+
+A non-atomic get-then-del has a race window: two concurrent redeems of the same token (a double-clicked link, a replayed request, two pods) both observe the value before either delete commits, so the token is honored twice — defeating single-use. The consume MUST happen BEFORE validation (consume-before-parse), so even a malformed or mismatched token cannot be replayed.
+
+Exemplars: `OAuthCapabilityLinkService.redeem` and `OAuthCredentialsService.loadPendingState` both `getDel`. A test must drive the atomic primitive (a store-backed `getDel` whose get+delete run in one synchronous body, returning the value once then `null`) — a get-then-del-flag mock would pass even against the very race the rule guards.

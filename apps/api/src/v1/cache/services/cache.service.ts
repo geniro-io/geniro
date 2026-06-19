@@ -69,6 +69,16 @@ export class CacheService implements OnModuleDestroy {
   }
 
   /**
+   * Atomically get a key's value AND delete it in a single round-trip (Redis
+   * `GETDEL`, 6.2+). Use for single-use tokens where a separate get-then-del
+   * would let two concurrent readers both observe the value before either
+   * deletes it. Returns the prior value, or `null` if the key was absent.
+   */
+  async getDel(key: string): Promise<string | null> {
+    return this.redis.getdel(key);
+  }
+
+  /**
    * Check if a key exists
    */
   async exists(key: string): Promise<boolean> {

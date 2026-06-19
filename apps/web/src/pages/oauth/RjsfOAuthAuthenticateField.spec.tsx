@@ -27,6 +27,8 @@ vi.mock('./oauth-api', async () => {
   };
 });
 
+import { webSocketService } from '../../services/WebSocketService';
+import type { SocketNotification } from '../../services/WebSocketTypes';
 import { RjsfOAuthAuthenticateField } from './RjsfOAuthAuthenticateField';
 
 class FakeBroadcastChannel {
@@ -214,5 +216,42 @@ describe('RjsfOAuthAuthenticateField', () => {
     );
     // No extra status refresh — the foreign-origin message is dropped.
     expect(statusMock.mock.calls.length).toBe(callsBefore);
+  });
+
+  it('surfaces a re-auth prompt on an auth.required event for its provider + node', async () => {
+    statusMock.mockResolvedValue(authenticated);
+    render(<RjsfOAuthAuthenticateField {...makeProps()} />);
+    // Starts in the authenticated state.
+    await screen.findByTestId('oauth-authenticated-label');
+
+    // A paused background run fans `auth.required` for this provider + node.
+    act(() => {
+      webSocketService._unsafeInjectEventForHarness('auth.required', {
+        nodeId: 'n1',
+        data: { provider: 'linear', capabilityToken: 'tok' },
+      } as unknown as SocketNotification);
+    });
+
+    // The re-auth prompt overrides the stale "authenticated" label.
+    await screen.findByTestId('oauth-needs-reauth');
+    expect(screen.getByText(/re-authentication required/i)).toBeTruthy();
+  });
+
+  it('ignores an auth.required event for a different provider', async () => {
+    statusMock.mockResolvedValue(authenticated);
+    render(<RjsfOAuthAuthenticateField {...makeProps()} />);
+    await screen.findByTestId('oauth-authenticated-label');
+
+    act(() => {
+      webSocketService._unsafeInjectEventForHarness('auth.required', {
+        nodeId: 'n1',
+        data: { provider: 'github', capabilityToken: 'tok' },
+      } as unknown as SocketNotification);
+    });
+
+    // Give the (setTimeout-wrapped) handler a tick — it must NOT flip this node.
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(screen.queryByTestId('oauth-needs-reauth')).toBeNull();
+    expect(screen.getByTestId('oauth-authenticated-label')).toBeTruthy();
   });
 });

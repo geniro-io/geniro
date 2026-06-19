@@ -9,6 +9,7 @@ import {
   NodeKind,
 } from '../../graphs/graphs.types';
 import { GraphRegistry } from '../../graphs/services/graph-registry';
+import { OAuthRunPreflightService } from '../../graphs/services/oauth-run-preflight.service';
 import { NotificationEvent } from '../../notifications/notifications.types';
 import { NotificationsService } from '../../notifications/services/notifications.service';
 import { ThreadsDao } from '../dao/threads.dao';
@@ -35,6 +36,11 @@ const mockThreadsDao = {
 
 const mockTransitionService = {
   computeTransition: vi.fn(),
+};
+
+// Default: no credential pause, so existing resume paths proceed unchanged.
+const mockOAuthPreflight = {
+  checkAndPauseIfNeeded: vi.fn().mockResolvedValue(false),
 };
 
 const mockGraphRegistry = {
@@ -125,6 +131,7 @@ describe('ThreadResumeService', () => {
       mockNotificationsService as unknown as NotificationsService,
       mockLogger as unknown as DefaultLogger,
       mockTransitionService as unknown as ThreadStatusTransitionService,
+      mockOAuthPreflight as unknown as OAuthRunPreflightService,
     );
   });
 
@@ -252,6 +259,39 @@ describe('ThreadResumeService', () => {
             graph_id: 'graph-1',
           }),
         }),
+      );
+    });
+
+    it('re-pauses (returns without running) when the OAuth pre-flight still fails at resume', async () => {
+      const thread = makeThread(); // status Waiting
+      mockThreadsDao.getById.mockResolvedValue(thread);
+      // Credential still missing at resume time -> pre-flight re-pauses.
+      mockOAuthPreflight.checkAndPauseIfNeeded.mockResolvedValueOnce(true);
+
+      await service.handleResume({
+        threadId: 'thread-1',
+        graphId: 'graph-1',
+        nodeId: 'node-1',
+        externalThreadId: 'ext-thread-1',
+        checkPrompt: 'go',
+        reason: 'credential',
+        scheduledAt: '2024-01-01T00:05:00.000Z',
+        createdBy: 'user-1',
+      });
+
+      expect(mockOAuthPreflight.checkAndPauseIfNeeded).toHaveBeenCalledWith(
+        expect.objectContaining({
+          graphId: 'graph-1',
+          externalThreadId: 'ext-thread-1',
+          agentNodeId: 'node-1',
+          createdBy: 'user-1',
+        }),
+      );
+      // Returned early: never looked up the graph, never transitioned to Running.
+      expect(mockGraphRegistry.get).not.toHaveBeenCalled();
+      expect(mockTransitionService.computeTransition).not.toHaveBeenCalledWith(
+        thread,
+        ThreadStatus.Running,
       );
     });
 

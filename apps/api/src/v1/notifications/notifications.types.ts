@@ -41,6 +41,7 @@ export enum NotificationEvent {
   GraphPreview = 'graph.preview',
   ThreadStoreUpdate = 'thread.store.update',
   CredentialAcquired = 'credential.acquired',
+  AuthRequired = 'auth.required',
 }
 
 // ---------------------------------------------------------------------------
@@ -369,6 +370,33 @@ export type ICredentialAcquiredNotification = z.infer<
 >;
 
 // ---------------------------------------------------------------------------
+// auth.required — emitted server-side when a background / trigger / resume run
+// pauses (`ThreadStatus.Waiting`) awaiting a missing-or-expired OAuth
+// credential. Project-scoped (fanned out to the project room, NOT a graph room)
+// so it reaches the editor + any node-reauth surface wherever the user is —
+// the paused run has no one watching its thread page. `capabilityToken` is the
+// opaque single-use link that re-opens the flow from any browser; `nodeId` is
+// the OAuth-MCP node that needs auth; `threadId` (envelope) is the paused run.
+// ---------------------------------------------------------------------------
+
+export const AuthRequiredDataSchema = z.object({
+  provider: z.nativeEnum(OAuthProvider),
+  capabilityToken: z.string(),
+});
+export const AuthRequiredNotificationSchema = z.object({
+  type: z.literal(NotificationEvent.AuthRequired),
+  data: AuthRequiredDataSchema,
+  projectId: z.string(),
+  graphId: z.string().optional(),
+  nodeId: z.string().optional(),
+  threadId: z.string().optional(),
+});
+export type IAuthRequiredData = z.infer<typeof AuthRequiredDataSchema>;
+export type IAuthRequiredNotification = z.infer<
+  typeof AuthRequiredNotificationSchema
+>;
+
+// ---------------------------------------------------------------------------
 // Top-level union — discriminated by `type` for fast dispatch.
 // ---------------------------------------------------------------------------
 
@@ -390,6 +418,7 @@ export const NotificationSchema = z.discriminatedUnion('type', [
   GraphPreviewNotificationSchema,
   ThreadStoreUpdateNotificationSchema,
   CredentialAcquiredNotificationSchema,
+  AuthRequiredNotificationSchema,
 ]);
 
 export type Notification = z.infer<typeof NotificationSchema>;

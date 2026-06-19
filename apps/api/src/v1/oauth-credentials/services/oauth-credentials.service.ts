@@ -1,5 +1,6 @@
 import { EntityManager } from '@mikro-orm/postgresql';
 import { Injectable } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { BadRequestException, InternalException } from '@packages/common';
 
 import { AppContextStorage } from '../../../auth/app-context-storage';
@@ -18,6 +19,10 @@ import {
 } from '../dto/oauth-credentials.dto';
 import { OAuthCredentialEntity } from '../entity/oauth-credential.entity';
 import {
+  CREDENTIAL_ACQUIRED_EVENT,
+  CredentialAcquiredEvent,
+} from '../oauth-credentials.events';
+import {
   OAUTH_STATE_CACHE_PREFIX,
   OAUTH_STATE_TTL_SECONDS,
   OAuthPendingState,
@@ -28,6 +33,7 @@ import {
   generateOAuthState,
   generatePkcePair,
 } from '../oauth-credentials.utils';
+import { OAuthCapabilityLinkService } from './oauth-capability-link.service';
 import { OAuthExchangeService } from './oauth-exchange.service';
 
 /**
@@ -45,6 +51,8 @@ export class OAuthCredentialsService {
     private readonly secretsStore: SecretsStoreService,
     private readonly cache: CacheService,
     private readonly notifications: NotificationsService,
+    private readonly capabilityLink: OAuthCapabilityLinkService,
+    private readonly eventEmitter: EventEmitter2,
     private readonly em: EntityManager,
   ) {}
 
@@ -66,8 +74,29 @@ export class OAuthCredentialsService {
     provider: OAuthProvider,
     query: OAuthStartQueryDto,
   ): Promise<OAuthStartResponse> {
-    const projectId = ctx.checkProjectId();
     const userId = ctx.checkSub();
+
+    // A capability token (`?cap=`) re-opens a paused run's flow from any browser:
+    // the project + thread context is recovered from the server-side claims, not
+    // the `x-project-id` header (the notification link is opened outside the
+    // editor tab, which alone carries it). The opaque single-use token is the
+    // capability, but require the authenticated user to match the run initiator
+    // (a leaked link can't be redeemed by a different logged-in user) and the
+    // route provider to match the claims. Absent `cap`, this is the in-editor
+    // flow: project from the header, optional `threadId` from the query.
+    let projectId: string;
+    let threadId: string | undefined;
+    if (query.cap) {
+      const claims = await this.capabilityLink.redeem(query.cap);
+      if (claims.createdBy !== userId || claims.provider !== provider) {
+        throw new BadRequestException('OAUTH_CAPABILITY_MISMATCH');
+      }
+      projectId = claims.projectId;
+      threadId = claims.threadId;
+    } else {
+      projectId = ctx.checkProjectId();
+      threadId = query.threadId;
+    }
 
     const { codeVerifier, codeChallenge } = generatePkcePair();
     const state = generateOAuthState();
@@ -94,6 +123,7 @@ export class OAuthCredentialsService {
       clientSecret: client.clientSecret,
       graphId: query.graphId,
       nodeId: query.nodeId,
+      threadId,
     };
     await this.cache.set(
       `${OAUTH_STATE_CACHE_PREFIX}${state}`,
@@ -291,13 +321,15 @@ export class OAuthCredentialsService {
     }
 
     const cacheKey = `${OAUTH_STATE_CACHE_PREFIX}${state}`;
+    // loadPendingState consumes the state ATOMICALLY (GETDEL), so two concurrent
+    // exchanges presenting the same `state` can't both observe it — only one
+    // proceeds, the other gets OAUTH_STATE_INVALID. (A non-atomic get-then-del
+    // would let both pass the load and double-exchange.)
     const pending = await this.loadPendingState(cacheKey);
     if (pending.createdBy !== userId || pending.provider !== provider) {
       throw new BadRequestException('OAUTH_STATE_MISMATCH');
     }
     const projectId = pending.projectId;
-    // Single-use: consume the state before exchanging so a replay cannot reuse it.
-    await this.cache.del(cacheKey);
 
     const result = await this.exchangeService.exchangeAuthorizationCode(
       provider,
@@ -370,7 +402,8 @@ export class OAuthCredentialsService {
       throw error;
     }
 
-    // Authoritative server-side completion signal (forward-compat seam for M3).
+    // Authoritative server-side completion signal, on the NotificationsService
+    // subscriber bus → WebSocket fan-out.
     await this.notifications.emit({
       type: NotificationEvent.CredentialAcquired,
       data: { provider, accountLabel },
@@ -380,11 +413,22 @@ export class OAuthCredentialsService {
       threadId: pending.threadId,
     });
 
+    // EventEmitter2 bridge — the NotificationsService bus above is DISJOINT from
+    // the EventEmitter2 bus that `@OnEvent` listens on, so a paused-run resume
+    // handler (`ThreadResumeService.@OnEvent(CREDENTIAL_ACQUIRED_EVENT)`) only
+    // fires because of this explicit emit. Load-bearing for M3.3.
+    this.eventEmitter.emit(CREDENTIAL_ACQUIRED_EVENT, {
+      projectId,
+      provider,
+      threadId: pending.threadId,
+    } satisfies CredentialAcquiredEvent);
+
     return { provider, accountLabel, secretName };
   }
 
   private async loadPendingState(cacheKey: string): Promise<OAuthPendingState> {
-    const raw = await this.cache.get(cacheKey);
+    // Atomic get-and-delete: single-use consumption with no get-then-del race.
+    const raw = await this.cache.getDel(cacheKey);
     if (!raw) {
       throw new BadRequestException('OAUTH_STATE_INVALID');
     }

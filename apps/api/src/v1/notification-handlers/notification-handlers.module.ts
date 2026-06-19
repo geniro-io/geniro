@@ -9,6 +9,7 @@ import { ThreadsModule } from '../threads/threads.module';
 import { SocketGateway } from './gateways/socket.gateway';
 import { AgentInvokeNotificationHandler } from './services/event-handlers/agent-invoke-notification-handler';
 import { AgentMessageNotificationHandler } from './services/event-handlers/agent-message-notification-handler';
+import { AuthRequiredNotificationHandler } from './services/event-handlers/auth-required-notification-handler';
 import { GraphRevisionNotificationHandler } from './services/event-handlers/graph-revision-notification-handler';
 import { SimpleEnrichmentHandler } from './services/event-handlers/simple-enrichment-handler';
 import { ThreadLifecycleNotificationHandler } from './services/event-handlers/thread-lifecycle-notification-handler';
@@ -31,6 +32,7 @@ import { NotificationHandler } from './services/notification-handler.service';
     AgentInvokeNotificationHandler,
     ThreadLifecycleNotificationHandler,
     ThreadUpdateNotificationHandler,
+    AuthRequiredNotificationHandler,
     NotificationHandler,
     SocketGateway,
   ],
@@ -45,6 +47,7 @@ export class NotificationHandlersModule implements OnModuleInit {
     private readonly agentInvokeHandler: AgentInvokeNotificationHandler,
     private readonly threadLifecycleHandler: ThreadLifecycleNotificationHandler,
     private readonly threadUpdateHandler: ThreadUpdateNotificationHandler,
+    private readonly authRequiredHandler: AuthRequiredNotificationHandler,
   ) {}
 
   async onModuleInit() {
@@ -54,6 +57,7 @@ export class NotificationHandlersModule implements OnModuleInit {
     this.eventsHandlerService.registerHandler(this.agentInvokeHandler);
     this.eventsHandlerService.registerHandler(this.threadLifecycleHandler);
     this.eventsHandlerService.registerHandler(this.threadUpdateHandler);
+    this.eventsHandlerService.registerHandler(this.authRequiredHandler);
 
     await this.eventsHandlerService.init();
   }

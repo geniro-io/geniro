@@ -24,6 +24,7 @@ class WebSocketService {
   private maxReconnectAttempts = 20;
   private eventHandlers: Map<string, Set<SocketEventHandler>> = new Map();
   private subscribedGraphs: Set<string> = new Set();
+  private subscribedProjects: Set<string> = new Set();
   private isConnecting = false;
 
   /**
@@ -69,9 +70,12 @@ class WebSocketService {
 
     // Re-subscribe only after the server confirms auth is complete
     this.socket.on('socket_connected', () => {
-      console.debug('[WebSocket] Server auth ready, re-subscribing to graphs');
+      console.debug('[WebSocket] Server auth ready, re-subscribing');
       this.subscribedGraphs.forEach((graphId) => {
         this.subscribeToGraph(graphId);
+      });
+      this.subscribedProjects.forEach((projectId) => {
+        this.subscribeToProject(projectId);
       });
     });
 
@@ -140,6 +144,11 @@ class WebSocketService {
 
     this.socket.on('runtime.status', (data: SocketNotification) => {
       this.emitToHandlers('runtime.status', data);
+    });
+
+    // Project-room event: a background/trigger run paused awaiting OAuth auth.
+    this.socket.on('auth.required', (data: SocketNotification) => {
+      this.emitToHandlers('auth.required', data);
     });
 
     this.socket.on('server_error', (error: ServerErrorNotification) => {
@@ -354,6 +363,61 @@ class WebSocketService {
     console.debug('[WebSocket] Unsubscribing from graph:', graphId);
     const payload: UnsubscribeGraphPayload = { graphId };
     this.socket.emit('unsubscribe_graph', payload);
+  }
+
+  /**
+   * Subscribe to a project room for project-scoped events (e.g. `auth.required`
+   * for a paused background/trigger run). Tracked so it resubscribes on
+   * reconnect, mirroring graph subscriptions.
+   */
+  subscribeToProject(projectId: string): void {
+    if (!projectId) {
+      console.warn('[WebSocket] Cannot subscribe - invalid project id');
+      return;
+    }
+
+    this.subscribedProjects.add(projectId);
+
+    if (!this.socket?.connected) {
+      console.debug(
+        '[WebSocket] Socket not connected yet. Queued subscription for project:',
+        projectId,
+      );
+      return;
+    }
+
+    console.debug('[WebSocket] Subscribing to project:', projectId);
+    this.socket.emit(
+      'subscribe_project',
+      { projectId },
+      (response: { success: boolean; error?: string } | undefined) => {
+        if (response && !response.success) {
+          console.error(
+            '[WebSocket] Project subscription failed:',
+            projectId,
+            response.error,
+          );
+        }
+      },
+    );
+  }
+
+  /**
+   * Unsubscribe from a project room.
+   */
+  unsubscribeFromProject(projectId: string): void {
+    if (!projectId) {
+      return;
+    }
+
+    this.subscribedProjects.delete(projectId);
+
+    if (!this.socket?.connected) {
+      return;
+    }
+
+    console.debug('[WebSocket] Unsubscribing from project:', projectId);
+    this.socket.emit('unsubscribe_project', { projectId });
   }
 
   /**

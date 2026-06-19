@@ -31,6 +31,7 @@ import { GraphStateFactory } from './services/graph-state.factory';
 import { GraphStateManager } from './services/graph-state.manager';
 import { GraphsService } from './services/graphs.service';
 import { MessageTransformerService } from './services/message-transformer.service';
+import { OAuthRunPreflightService } from './services/oauth-run-preflight.service';
 
 @Module({
   imports: [
@@ -61,6 +62,7 @@ import { MessageTransformerService } from './services/message-transformer.servic
     GraphStateManager,
     GraphStateFactory,
     GraphsListener,
+    OAuthRunPreflightService,
   ],
   exports: [
     GraphDao,
@@ -73,6 +75,7 @@ import { MessageTransformerService } from './services/message-transformer.servic
     GraphRestorationService,
     MessageTransformerService,
     GraphStateManager,
+    OAuthRunPreflightService,
   ],
 })
 export class GraphsModule implements OnModuleInit {
