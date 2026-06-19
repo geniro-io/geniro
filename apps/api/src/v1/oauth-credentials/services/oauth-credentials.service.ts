@@ -138,6 +138,9 @@ export class OAuthCredentialsService {
       authenticated,
       accountLabel: authenticated ? (credential?.accountLabel ?? null) : null,
       secretName: authenticated ? (credential?.secretName ?? null) : null,
+      // Surface the real expiry whenever a credential exists (even when expired),
+      // so the client pre-flight can show expiry / "expired" without a second call.
+      expiresAt: credential?.expiresAt?.toISOString() ?? null,
     };
   }
 

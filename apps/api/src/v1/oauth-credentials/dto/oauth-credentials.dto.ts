@@ -25,6 +25,13 @@ export const OAuthStatusResponseSchema = z.object({
     .describe('Whether a valid credential exists for this project + provider'),
   accountLabel: z.string().nullable(),
   secretName: z.string().nullable(),
+  expiresAt: z
+    .string()
+    .datetime()
+    .nullable()
+    .describe(
+      'Access-token expiry as an ISO-8601 string; null when the token is non-expiring or no credential exists. Surfaced for the client pre-flight so it can warn ahead of expiry.',
+    ),
 });
 
 export const OAuthExchangeRequestSchema = z.object({

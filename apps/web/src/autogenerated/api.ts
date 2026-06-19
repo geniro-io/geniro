@@ -2055,6 +2055,12 @@ export interface OAuthStatusResponseDto {
    * @memberof OAuthStatusResponseDto
    */
   'secretName': string | null;
+  /**
+   *
+   * @type {string}
+   * @memberof OAuthStatusResponseDto
+   */
+  'expiresAt': string | null;
 }
 
 export const OAuthStatusResponseDtoProviderEnum = {

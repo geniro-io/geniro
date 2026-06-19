@@ -8,6 +8,7 @@
 | **authenticated** | **boolean** | Whether a valid credential exists for this project + provider | [default to undefined] |
 | **accountLabel**  | **string**  |                                                               | [default to undefined] |
 | **secretName**    | **string**  |                                                               | [default to undefined] |
+| **expiresAt**     | **string**  |                                                               | [default to undefined] |
 
 ## Example
 
@@ -19,6 +20,7 @@ const instance: OAuthStatusResponseDto = {
   authenticated,
   accountLabel,
   secretName,
+  expiresAt,
 };
 ```
 
