@@ -319,4 +319,45 @@ describe('ThreadResumeQueueService', () => {
       expect(mockRedis.quit).toHaveBeenCalled();
     });
   });
+
+  describe('connection error routing', () => {
+    const getErrorHandler = (): ((err: unknown) => void) => {
+      const call = mockRedis.on.mock.calls.find(
+        (c: unknown[]) => c[0] === 'error',
+      );
+      return call?.[1] as (err: unknown) => void;
+    };
+
+    it('logs a live (non-shutdown) connection error at error level', () => {
+      const handler = getErrorHandler();
+      expect(handler).toBeDefined();
+      mockLogger.error.mockClear();
+      mockLogger.debug.mockClear();
+
+      handler(new Error('ECONNREFUSED'));
+
+      expect(mockLogger.error).toHaveBeenCalled();
+      expect(mockLogger.debug).not.toHaveBeenCalledWith(
+        expect.stringContaining('during shutdown'),
+        expect.anything(),
+      );
+    });
+
+    it('demotes a connection error to debug during shutdown (teardown EPIPE)', async () => {
+      const handler = getErrorHandler();
+      expect(handler).toBeDefined();
+
+      await service.onModuleDestroy();
+      mockLogger.error.mockClear();
+      mockLogger.debug.mockClear();
+
+      handler(new Error('write EPIPE'));
+
+      expect(mockLogger.debug).toHaveBeenCalledWith(
+        expect.stringContaining('during shutdown (expected)'),
+        expect.objectContaining({ error: 'write EPIPE' }),
+      );
+      expect(mockLogger.error).not.toHaveBeenCalled();
+    });
+  });
 });

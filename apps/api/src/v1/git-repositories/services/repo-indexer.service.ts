@@ -484,20 +484,38 @@ export class RepoIndexerService {
   async resolveCurrentCommit(
     repoRoot: string,
     execFn: RepoExecFn,
+    attempts = GIT_READ_RETRY_ATTEMPTS,
+    delayMs = GIT_READ_RETRY_DELAY_MS,
   ): Promise<string> {
-    const res = await execFn({
-      cmd: `git -C ${shQuote(repoRoot)} rev-parse HEAD`,
-    });
-    if (res.exitCode !== 0) {
-      throw new Error(
-        `Failed to resolve current commit: ${res.stderr || 'unknown error'}`,
-      );
+    // `git rev-parse HEAD` in a valid repo deterministically prints a 40-char
+    // SHA (exit 0, non-empty). An exit-0 result with an EMPTY stdout is
+    // therefore physically impossible from git itself — under heavy parallel
+    // load it is a runtime-exec transport artifact (the stdout stream closing
+    // before the exec captures it). The caller's `withRetry` already absorbs the
+    // exit-124 timeout case but deliberately does NOT retry an empty stdout — an
+    // empty stdout is a valid result for many git reads (e.g. a clean `diff`).
+    // For THIS command an empty stdout cannot be valid, so it is retried here
+    // with the same bounded linear backoff. A non-zero exit is a genuine,
+    // deterministic git error (e.g. not a repository) — surfaced immediately,
+    // never retried.
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      const res = await execFn({
+        cmd: `git -C ${shQuote(repoRoot)} rev-parse HEAD`,
+      });
+      if (res.exitCode !== 0) {
+        throw new Error(
+          `Failed to resolve current commit: ${res.stderr || 'unknown error'}`,
+        );
+      }
+      const commit = res.stdout.trim();
+      if (commit) {
+        return commit;
+      }
+      if (attempt < attempts) {
+        await new Promise((resolve) => setTimeout(resolve, delayMs * attempt));
+      }
     }
-    const commit = res.stdout.trim();
-    if (!commit) {
-      throw new Error('Failed to resolve current commit: empty result');
-    }
-    return commit;
+    throw new Error('Failed to resolve current commit: empty result');
   }
 
   async getCurrentBranch(
