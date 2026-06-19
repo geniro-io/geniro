@@ -8,6 +8,7 @@ import { AgentsModule } from '../agents/agents.module';
 import { GraphTemplatesModule } from '../graph-templates/graph-templates.module';
 import { LitellmModule } from '../litellm/litellm.module';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { OAuthCredentialsModule } from '../oauth-credentials/oauth-credentials.module';
 import { ProjectsModule } from '../projects/projects.module';
 import { SecretsModule } from '../secrets/secrets.module';
 import { ThreadsModule } from '../threads/threads.module';
@@ -40,6 +41,7 @@ import { MessageTransformerService } from './services/message-transformer.servic
     forwardRef(() => AgentsModule),
     forwardRef(() => ThreadsModule),
     ProjectsModule,
+    OAuthCredentialsModule,
     SecretsModule,
     UserPreferencesModule,
   ],

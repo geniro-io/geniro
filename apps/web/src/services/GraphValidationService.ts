@@ -43,6 +43,25 @@ const getNodeData = (node: GraphNode): GraphNodeData =>
 const isRecord = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null;
 
+/**
+ * Read the provider from a field's `x-ui:oauth-authenticate { provider }`
+ * marker in a serialized template schema. Mirrors the backend
+ * `collectOAuthNodes` walk and the per-node `RjsfOAuthAuthenticateField`
+ * reader, so the same UI-only marker drives both the per-node Authenticate
+ * widget and this pre-flight warn. Returns null when the marker is absent or
+ * malformed.
+ */
+const readOAuthProviderFromSchema = (
+  prop: Record<string, unknown>,
+): string | null => {
+  const marker = prop['x-ui:oauth-authenticate'];
+  if (isRecord(marker) && typeof marker['provider'] === 'string') {
+    const provider = marker['provider'];
+    return provider.length > 0 ? provider : null;
+  }
+  return null;
+};
+
 const asStringArray = (v: unknown): string[] =>
   Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
 
@@ -452,11 +471,8 @@ export class GraphValidationService {
     node: GraphNode,
     templates: TemplateDto[],
     availableSecretNames?: string[],
+    oauthStatusByProvider?: Record<string, boolean>,
   ): ValidationError[] {
-    if (!availableSecretNames) {
-      return [];
-    }
-
     const nodeData = getNodeData(node);
     const errors: ValidationError[] = [];
     const nodeTemplate = templates.find((t) => t.id === nodeData.template);
@@ -471,7 +487,17 @@ export class GraphValidationService {
       return errors;
     }
 
-    const availableSet = new Set(availableSecretNames);
+    // The secret-reference checks only run once the secret list has loaded; the
+    // OAuth-authenticate check runs once provider status has loaded. Either may
+    // be absent while its data is still in flight — guard each independently.
+    const availableSet = availableSecretNames
+      ? new Set(availableSecretNames)
+      : undefined;
+
+    // One OAuth warn per provider per node — a provider's marker may sit on
+    // more than one field, but the node only needs to be told once (mirrors the
+    // backend `collectOAuthNodes` per-node dedup).
+    const warnedProviders = new Set<string>();
 
     for (const [key, propUnknown] of Object.entries(propertiesUnknown)) {
       const prop = isRecord(propUnknown) ? propUnknown : undefined;
@@ -480,10 +506,13 @@ export class GraphValidationService {
       }
 
       // Single secret select (incl. the host-only BYO key marker, which is
-      // resolved host-side but still gets the same pre-flight "not found" check)
+      // resolved host-side but still gets the same pre-flight "not found"
+      // check). Guarded by `availableSet` — the check is skipped until the
+      // secret list has loaded.
       if (
-        prop['x-ui:secret-select'] === true ||
-        prop['x-ui:secret-select-host'] === true
+        availableSet &&
+        (prop['x-ui:secret-select'] === true ||
+          prop['x-ui:secret-select-host'] === true)
       ) {
         const value = nodeData.config[key];
         if (typeof value === 'string' && value && !availableSet.has(value)) {
@@ -496,7 +525,7 @@ export class GraphValidationService {
       }
 
       // Multi secret select
-      if (prop['x-ui:secret-multi-select'] === true) {
+      if (availableSet && prop['x-ui:secret-multi-select'] === true) {
         const values = nodeData.config[key];
         if (Array.isArray(values)) {
           for (const v of values) {
@@ -510,9 +539,64 @@ export class GraphValidationService {
           }
         }
       }
+
+      // OAuth-authenticate marker: WARN (never block) when the connected
+      // provider has no valid credential. Only fires on an explicit `false`
+      // status — an absent provider entry means status is still loading, so we
+      // stay quiet. Renders through the same node tooltip as the secret checks;
+      // the server run() pre-flight gate is the hard stop.
+      if (oauthStatusByProvider) {
+        const provider = readOAuthProviderFromSchema(prop);
+        if (
+          provider &&
+          !warnedProviders.has(provider) &&
+          oauthStatusByProvider[provider] === false
+        ) {
+          warnedProviders.add(provider);
+          errors.push({
+            nodeId: node.id,
+            message: `OAuth provider '${provider}' is not authenticated. Click Authenticate on this node to connect before deploying.`,
+            type: 'config',
+          });
+        }
+      }
     }
 
     return errors;
+  }
+
+  /**
+   * Collect the unique OAuth providers referenced by the given nodes via their
+   * template `x-ui:oauth-authenticate` markers. Drives the editor's per-provider
+   * status fetch (batched + cached) that feeds the pre-flight warn.
+   */
+  static collectOAuthProviders(
+    nodes: GraphNode[],
+    templates: TemplateDto[],
+  ): string[] {
+    const providers = new Set<string>();
+    for (const node of nodes) {
+      const nodeData = getNodeData(node);
+      const nodeTemplate = templates.find((t) => t.id === nodeData.template);
+      const schemaUnknown: unknown = nodeTemplate?.schema;
+      if (!isRecord(schemaUnknown)) {
+        continue;
+      }
+      const propertiesUnknown = schemaUnknown['properties'];
+      if (!isRecord(propertiesUnknown)) {
+        continue;
+      }
+      for (const propUnknown of Object.values(propertiesUnknown)) {
+        if (!isRecord(propUnknown)) {
+          continue;
+        }
+        const provider = readOAuthProviderFromSchema(propUnknown);
+        if (provider) {
+          providers.add(provider);
+        }
+      }
+    }
+    return Array.from(providers);
   }
 
   static getNodeValidationErrors(
@@ -521,6 +605,7 @@ export class GraphValidationService {
     edges: GraphEdge[],
     templates: TemplateDto[],
     availableSecretNames?: string[],
+    oauthStatusByProvider?: Record<string, boolean>,
   ): ValidationError[] {
     const node = nodes.find((n) => n.id === nodeId);
     if (!node) {
@@ -570,11 +655,12 @@ export class GraphValidationService {
     const configErrors = this.checkRequiredConfigProperties(node, templates);
     errors.push(...configErrors);
 
-    // Check for missing secret references
+    // Check for missing secret references + unauthenticated OAuth providers
     const secretErrors = this.checkSecretReferences(
       node,
       templates,
       availableSecretNames,
+      oauthStatusByProvider,
     );
     errors.push(...secretErrors);
 

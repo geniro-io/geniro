@@ -8,6 +8,7 @@ import {
   NotFoundException,
 } from '@packages/common';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { z } from 'zod';
 
 import { AppContextStorage } from '../../../auth/app-context-storage';
 import { GraphCheckpointsDao } from '../../agents/dao/graph-checkpoints.dao';
@@ -16,6 +17,8 @@ import { PgCheckpointSaver } from '../../agents/services/pg-checkpoint-saver';
 import { TemplateRegistry } from '../../graph-templates/services/template-registry';
 import { NotificationEvent } from '../../notifications/notifications.types';
 import { NotificationsService } from '../../notifications/services/notifications.service';
+import { OAuthProvider } from '../../oauth-credentials/oauth-credentials.types';
+import { OAuthCredentialsService } from '../../oauth-credentials/services/oauth-credentials.service';
 import { ProjectsDao } from '../../projects/dao/projects.dao';
 import { ThreadsDao } from '../../threads/dao/threads.dao';
 import { ThreadResumeQueueService } from '../../threads/services/thread-resume-queue.service';
@@ -310,6 +313,12 @@ describe('GraphsService', () => {
           useValue: {
             getTemplate: vi.fn().mockReturnValue(undefined),
             getTemplatesByKind: vi.fn().mockReturnValue([]),
+          },
+        },
+        {
+          provide: OAuthCredentialsService,
+          useValue: {
+            refreshIfNeeded: vi.fn().mockResolvedValue({ authenticated: true }),
           },
         },
         {
@@ -1486,6 +1495,209 @@ describe('GraphsService', () => {
       await expect(service.delete(mockCtx, mockGraphId)).rejects.toThrow(
         NotFoundException,
       );
+    });
+  });
+
+  describe('run — OAuth pre-flight gate', () => {
+    // Mirrors linear-mcp.template.ts: a token field carrying the oauth marker.
+    const linearTemplateSchema = z.object({
+      token: z
+        .string()
+        .meta({ 'x-ui:oauth-authenticate': { provider: 'linear' } }),
+    });
+
+    const makeOAuthGraph = (): GraphEntity =>
+      createMockGraphEntity({
+        status: GraphStatus.Created,
+        schema: {
+          nodes: [
+            {
+              id: 'linear-node',
+              template: 'linear-mcp',
+              config: { token: 'LINEAR_OAUTH_TOKEN' },
+            },
+          ],
+          edges: [],
+        },
+      });
+
+    const stubLinearTemplate = (): void => {
+      const templateRegistry = module.get<TemplateRegistry>(TemplateRegistry);
+      vi.mocked(templateRegistry.getTemplate).mockImplementation(
+        (id: string) =>
+          id === 'linear-mcp'
+            ? ({ schema: linearTemplateSchema } as unknown as ReturnType<
+                TemplateRegistry['getTemplate']
+              >)
+            : undefined,
+      );
+    };
+
+    it('throws a clean error and lands GraphStatus.Error when an OAuth node is unauthenticated', async () => {
+      stubLinearTemplate();
+      const oauthService = module.get<OAuthCredentialsService>(
+        OAuthCredentialsService,
+      );
+      vi.mocked(oauthService.refreshIfNeeded).mockResolvedValue({
+        provider: OAuthProvider.Linear,
+        authenticated: false,
+        accountLabel: null,
+        secretName: null,
+        expiresAt: null,
+      });
+
+      vi.mocked(graphDao.getOne).mockResolvedValue(makeOAuthGraph());
+      vi.mocked(graphRegistry.get).mockReturnValue(undefined);
+
+      await expect(service.run(mockCtx, mockGraphId)).rejects.toThrow(
+        /Connect the following OAuth provider/i,
+      );
+
+      // The gate rotates-then-checks the linear provider before compiling.
+      expect(oauthService.refreshIfNeeded).toHaveBeenCalledWith(
+        mockCtx,
+        OAuthProvider.Linear,
+      );
+      expect(graphCompiler.compile).not.toHaveBeenCalled();
+      // run()'s catch handler lands an Error status.
+      expect(graphDao.updateById).toHaveBeenCalledWith(
+        mockGraphId,
+        expect.objectContaining({ status: GraphStatus.Error }),
+      );
+    });
+
+    it('proceeds with compile when the OAuth credential is authenticated', async () => {
+      stubLinearTemplate();
+      const oauthService = module.get<OAuthCredentialsService>(
+        OAuthCredentialsService,
+      );
+      vi.mocked(oauthService.refreshIfNeeded).mockResolvedValue({
+        provider: OAuthProvider.Linear,
+        authenticated: true,
+        accountLabel: 'Acme',
+        secretName: 'LINEAR_OAUTH_TOKEN',
+        expiresAt: null,
+      });
+
+      vi.mocked(graphDao.getOne)
+        .mockResolvedValueOnce(makeOAuthGraph())
+        .mockResolvedValueOnce(
+          createMockGraphEntity({ status: GraphStatus.Running }),
+        );
+      vi.mocked(graphRegistry.get).mockReturnValue(undefined);
+      vi.mocked(graphCompiler.compile).mockResolvedValue(
+        createMockCompiledGraph(),
+      );
+      vi.mocked(graphDao.updateById).mockResolvedValue(1);
+
+      await service.run(mockCtx, mockGraphId);
+
+      expect(oauthService.refreshIfNeeded).toHaveBeenCalledWith(
+        mockCtx,
+        OAuthProvider.Linear,
+      );
+      expect(graphCompiler.compile).toHaveBeenCalled();
+    });
+
+    it('skips the gate entirely when the graph has no OAuth nodes', async () => {
+      // The default TemplateRegistry mock resolves every template to undefined,
+      // so the runtime-only graph carries no oauth marker.
+      const oauthService = module.get<OAuthCredentialsService>(
+        OAuthCredentialsService,
+      );
+      vi.mocked(graphDao.getOne)
+        .mockResolvedValueOnce(
+          createMockGraphEntity({ status: GraphStatus.Created }),
+        )
+        .mockResolvedValueOnce(
+          createMockGraphEntity({ status: GraphStatus.Running }),
+        );
+      vi.mocked(graphRegistry.get).mockReturnValue(undefined);
+      vi.mocked(graphCompiler.compile).mockResolvedValue(
+        createMockCompiledGraph(),
+      );
+      vi.mocked(graphDao.updateById).mockResolvedValue(1);
+
+      await service.run(mockCtx, mockGraphId);
+
+      expect(oauthService.refreshIfNeeded).not.toHaveBeenCalled();
+      expect(graphCompiler.compile).toHaveBeenCalled();
+    });
+
+    it('skips a marker whose provider has no registered OAuth strategy', async () => {
+      const unknownProviderSchema = z.object({
+        token: z
+          .string()
+          .meta({ 'x-ui:oauth-authenticate': { provider: 'unregistered' } }),
+      });
+      const templateRegistry = module.get<TemplateRegistry>(TemplateRegistry);
+      vi.mocked(templateRegistry.getTemplate).mockImplementation(
+        (id: string) =>
+          id === 'mystery-mcp'
+            ? ({ schema: unknownProviderSchema } as unknown as ReturnType<
+                TemplateRegistry['getTemplate']
+              >)
+            : undefined,
+      );
+      const oauthService = module.get<OAuthCredentialsService>(
+        OAuthCredentialsService,
+      );
+
+      const graph = createMockGraphEntity({
+        status: GraphStatus.Created,
+        schema: {
+          nodes: [
+            { id: 'm1', template: 'mystery-mcp', config: { token: 'X' } },
+          ],
+          edges: [],
+        },
+      });
+      vi.mocked(graphDao.getOne)
+        .mockResolvedValueOnce(graph)
+        .mockResolvedValueOnce(
+          createMockGraphEntity({ status: GraphStatus.Running }),
+        );
+      vi.mocked(graphRegistry.get).mockReturnValue(undefined);
+      vi.mocked(graphCompiler.compile).mockResolvedValue(
+        createMockCompiledGraph(),
+      );
+      vi.mocked(graphDao.updateById).mockResolvedValue(1);
+
+      await service.run(mockCtx, mockGraphId);
+
+      // Unknown provider is filtered out before the status loop — no check, no
+      // deploy-blocking error.
+      expect(oauthService.refreshIfNeeded).not.toHaveBeenCalled();
+      expect(graphCompiler.compile).toHaveBeenCalled();
+    });
+
+    it('skips the gate for a project-less context (system / restoration caller)', async () => {
+      stubLinearTemplate();
+      const oauthService = module.get<OAuthCredentialsService>(
+        OAuthCredentialsService,
+      );
+      // A restoration / system context carries no x-project-id header.
+      const projectlessCtx = new AppContextStorage({ sub: mockUserId }, {
+        headers: {},
+      } as unknown as import('fastify').FastifyRequest);
+
+      vi.mocked(graphDao.getOne)
+        .mockResolvedValueOnce(makeOAuthGraph())
+        .mockResolvedValueOnce(
+          createMockGraphEntity({ status: GraphStatus.Running }),
+        );
+      vi.mocked(graphRegistry.get).mockReturnValue(undefined);
+      vi.mocked(graphCompiler.compile).mockResolvedValue(
+        createMockCompiledGraph(),
+      );
+      vi.mocked(graphDao.updateById).mockResolvedValue(1);
+
+      // Must NOT throw PROJECT_NOT_SELECTED nor the OAuth error — the gate is
+      // skipped and the cred check defers to the agent run()-entry pre-flight.
+      await service.run(projectlessCtx, mockGraphId);
+
+      expect(oauthService.refreshIfNeeded).not.toHaveBeenCalled();
+      expect(graphCompiler.compile).toHaveBeenCalled();
     });
   });
 

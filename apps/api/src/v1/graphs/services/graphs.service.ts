@@ -17,6 +17,8 @@ import { CheckpointStateService } from '../../agents/services/checkpoint-state.s
 import { TemplateRegistry } from '../../graph-templates/services/template-registry';
 import { NotificationEvent } from '../../notifications/notifications.types';
 import { NotificationsService } from '../../notifications/services/notifications.service';
+import { OAuthProvider } from '../../oauth-credentials/oauth-credentials.types';
+import { OAuthCredentialsService } from '../../oauth-credentials/services/oauth-credentials.service';
 import { ProjectsDao } from '../../projects/dao/projects.dao';
 import { ThreadsDao } from '../../threads/dao/threads.dao';
 import { ThreadResumeQueueService } from '../../threads/services/thread-resume-queue.service';
@@ -42,7 +44,7 @@ import {
 import { GraphEntity } from '../entity/graph.entity';
 import type { GraphRevisionConfig } from '../entity/graph-revision.entity';
 import { GRAPH_DELETED_EVENT, GraphDeletedEvent } from '../graphs.events';
-import { GraphStatus, NodeKind } from '../graphs.types';
+import { GraphNodeSchemaType, GraphStatus, NodeKind } from '../graphs.types';
 import {
   extractAgentsFromSchema,
   extractNodeDisplayNamesFromMetadata,
@@ -52,6 +54,7 @@ import { CostLimitResolverService } from './cost-limit-resolver.service';
 import { GraphCompiler } from './graph-compiler';
 import { GraphRegistry } from './graph-registry';
 import { GraphRevisionService } from './graph-revision.service';
+import { collectOAuthNodes } from './oauth-node.utils';
 
 /**
  * Snapshot of a previously-terminal thread captured before executeTrigger's
@@ -81,6 +84,7 @@ export class GraphsService {
     private readonly eventEmitter: EventEmitter2,
     private readonly projectsDao: ProjectsDao,
     private readonly templateRegistry: TemplateRegistry,
+    private readonly oauthCredentialsService: OAuthCredentialsService,
     private readonly threadResumeQueueService: ThreadResumeQueueService,
     private readonly costLimitResolver: CostLimitResolverService,
     private readonly checkpointStateService: CheckpointStateService,
@@ -507,6 +511,14 @@ export class GraphsService {
     await this.emitGraphPreview(id, GraphStatus.Compiling, graph);
 
     try {
+      // Pre-flight: an interactive deploy of a graph whose OAuth-MCP nodes are
+      // not authenticated must fail cleanly here rather than at first tool use.
+      // refreshIfNeeded (M3.1) rotates a near/past-expiry token first, so a
+      // still-invalid credential is a genuine missing/expired one. Background /
+      // trigger / resume runs bypass run() entirely — their producer is the
+      // agent run()-entry pre-flight in M3.3, not this interactive-deploy gate.
+      await this.assertOAuthCredentialsValid(ctx, schema.nodes);
+
       // Compile the graph (it will be registered automatically during compilation)
       await this.graphCompiler.compile(graph, {
         graphId: graph.id,
@@ -572,6 +584,82 @@ export class GraphsService {
       await this.emitGraphPreview(id, GraphStatus.Error, graph);
 
       throw error;
+    }
+  }
+
+  /**
+   * Pre-flight an interactive deploy against the graph's OAuth-MCP nodes.
+   * Identifies them via the `x-ui:oauth-authenticate` template marker, rotates
+   * each provider's token when near/past expiry (M3.1 `refreshIfNeeded`), then
+   * checks validity. Throws a clean `BadRequestException` naming every provider
+   * still missing/expired — caught by `run()`'s handler, which lands a
+   * `GraphStatus.Error` + `emitGraphPreview(Error)`. One check per unique
+   * provider; a marker referencing a provider with no registered strategy is
+   * skipped (a dev-time template error, not a deploy-time user error).
+   *
+   * Skipped entirely for a project-less context. `run()` is reused by the
+   * boot-time `GraphRestorationService` (and any future system caller) with a
+   * context that carries no `x-project-id` — those are NOT interactive deploys
+   * and cannot resolve a per-project credential, so they defer the cred check
+   * to the agent run()-entry pre-flight (M3.3); gating them here would make a
+   * pod restart fail-restore every previously-running OAuth-MCP graph.
+   */
+  private async assertOAuthCredentialsValid(
+    ctx: AppContextStorage,
+    nodes: GraphNodeSchemaType[],
+  ): Promise<void> {
+    if (!ctx.projectId) {
+      return;
+    }
+
+    const oauthNodes = collectOAuthNodes(
+      nodes,
+      (templateId) => this.templateRegistry.getTemplate(templateId)?.schema,
+    );
+    if (oauthNodes.length === 0) {
+      return;
+    }
+
+    const knownProviders = new Set<string>(Object.values(OAuthProvider));
+    const providers = new Set<OAuthProvider>();
+    for (const ref of oauthNodes) {
+      if (knownProviders.has(ref.provider)) {
+        providers.add(ref.provider as OAuthProvider);
+      }
+    }
+
+    const unauthenticated: OAuthProvider[] = [];
+    for (const provider of providers) {
+      // refreshIfNeeded rotates a near/past-expiry token; a THROW (network
+      // blip, revoked/rotated refresh token, AS error) is treated as "needs
+      // re-auth" so the user always gets the clean OAUTH_CREDENTIAL_REQUIRED
+      // message rather than a raw provider error landing in graph.error.
+      let authenticated = false;
+      try {
+        const status = await this.oauthCredentialsService.refreshIfNeeded(
+          ctx,
+          provider,
+        );
+        authenticated = status.authenticated;
+      } catch (err) {
+        this.logger.warn(
+          'OAuth pre-flight refresh failed; treating provider as unauthenticated',
+          {
+            provider,
+            error: err instanceof Error ? err.message : String(err),
+          },
+        );
+      }
+      if (!authenticated) {
+        unauthenticated.push(provider);
+      }
+    }
+
+    if (unauthenticated.length > 0) {
+      throw new BadRequestException(
+        'OAUTH_CREDENTIAL_REQUIRED',
+        `Connect the following OAuth provider(s) before deploying this graph: ${unauthenticated.join(', ')}.`,
+      );
     }
   }
 

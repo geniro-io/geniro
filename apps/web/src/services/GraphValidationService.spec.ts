@@ -57,3 +57,166 @@ describe('GraphValidationService.checkSecretReferences', () => {
     expect(errors[0].message).toContain('MISSING');
   });
 });
+
+/**
+ * The `x-ui:oauth-authenticate` marker warns (never blocks) on a node whose
+ * connected OAuth provider has no valid credential. It is orthogonal to the
+ * secret-reference checks — it co-exists with `x-ui:secret-select` on the same
+ * field, fires only on an explicit unauthenticated status, and stays quiet
+ * while status is still loading.
+ */
+describe('GraphValidationService.checkSecretReferences — OAuth pre-flight warn', () => {
+  const makeNode = (config: Record<string, unknown>): GraphNode =>
+    ({
+      id: 'node-1',
+      data: { label: 'n', template: 'linear-mcp', config },
+    }) as unknown as GraphNode;
+
+  // Mirrors linear-mcp.template.ts: the token field carries BOTH markers.
+  const oauthTemplate = (): TemplateDto =>
+    ({
+      id: 'linear-mcp',
+      schema: {
+        properties: {
+          token: {
+            'x-ui:secret-select': true,
+            'x-ui:oauth-authenticate': { provider: 'linear' },
+          },
+        },
+      },
+    }) as unknown as TemplateDto;
+
+  it('warns when the connected OAuth provider is unauthenticated', () => {
+    const errors = GraphValidationService.checkSecretReferences(
+      makeNode({ token: 'LINEAR_OAUTH_TOKEN' }),
+      [oauthTemplate()],
+      ['LINEAR_OAUTH_TOKEN'],
+      { linear: false },
+    );
+
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toMatchObject({ nodeId: 'node-1', type: 'config' });
+    expect(errors[0].message).toMatch(/not authenticated/i);
+  });
+
+  it('does not warn when the provider is authenticated', () => {
+    const errors = GraphValidationService.checkSecretReferences(
+      makeNode({ token: 'LINEAR_OAUTH_TOKEN' }),
+      [oauthTemplate()],
+      ['LINEAR_OAUTH_TOKEN'],
+      { linear: true },
+    );
+
+    expect(errors).toHaveLength(0);
+  });
+
+  it('stays quiet while provider status is still loading (no entry)', () => {
+    const errors = GraphValidationService.checkSecretReferences(
+      makeNode({ token: 'LINEAR_OAUTH_TOKEN' }),
+      [oauthTemplate()],
+      ['LINEAR_OAUTH_TOKEN'],
+      {},
+    );
+
+    expect(errors).toHaveLength(0);
+  });
+
+  it('warns independently of the secret list (availableSecretNames undefined)', () => {
+    const errors = GraphValidationService.checkSecretReferences(
+      makeNode({ token: 'LINEAR_OAUTH_TOKEN' }),
+      [oauthTemplate()],
+      undefined,
+      { linear: false },
+    );
+
+    // Only the OAuth warn fires — the secret-select branch is skipped while the
+    // secret list is still loading.
+    expect(errors).toHaveLength(1);
+    expect(errors[0].message).toMatch(/not authenticated/i);
+  });
+
+  it('does nothing when no OAuth status map is provided', () => {
+    const errors = GraphValidationService.checkSecretReferences(
+      makeNode({ token: 'LINEAR_OAUTH_TOKEN' }),
+      [oauthTemplate()],
+      ['LINEAR_OAUTH_TOKEN'],
+      undefined,
+    );
+
+    expect(errors).toHaveLength(0);
+  });
+
+  // A node whose template carries the SAME unauthenticated provider marker on
+  // two fields must surface exactly one warning for that provider, not one per
+  // field. The backend collectOAuthNodes dedupes per node+provider (see
+  // oauth-node.utils.spec.ts "dedupes by provider when the same provider marker
+  // appears on two fields"); this client pre-flight must match so a single node
+  // does not render two identical "not authenticated" tooltips.
+  it('emits one warning per unauthenticated provider even when the marker repeats on two fields of one node', () => {
+    const twoFieldTemplate = (): TemplateDto =>
+      ({
+        id: 'linear-mcp',
+        schema: {
+          properties: {
+            token: {
+              'x-ui:secret-select': true,
+              'x-ui:oauth-authenticate': { provider: 'linear' },
+            },
+            altToken: {
+              'x-ui:secret-select': true,
+              'x-ui:oauth-authenticate': { provider: 'linear' },
+            },
+          },
+        },
+      }) as unknown as TemplateDto;
+
+    const errors = GraphValidationService.checkSecretReferences(
+      makeNode({ token: 'LINEAR_OAUTH_TOKEN', altToken: 'LINEAR_OAUTH_TOKEN' }),
+      [twoFieldTemplate()],
+      ['LINEAR_OAUTH_TOKEN'],
+      { linear: false },
+    );
+
+    const oauthWarnings = errors.filter((e) =>
+      /not authenticated/i.test(e.message),
+    );
+    expect(oauthWarnings).toHaveLength(1);
+  });
+});
+
+describe('GraphValidationService.collectOAuthProviders', () => {
+  const node = (id: string, template: string): GraphNode =>
+    ({
+      id,
+      data: { label: id, template, config: {} },
+    }) as unknown as GraphNode;
+
+  const oauthTemplate = (id: string, provider: string): TemplateDto =>
+    ({
+      id,
+      schema: {
+        properties: { token: { 'x-ui:oauth-authenticate': { provider } } },
+      },
+    }) as unknown as TemplateDto;
+
+  const plainTemplate = (id: string): TemplateDto =>
+    ({ id, schema: { properties: { name: {} } } }) as unknown as TemplateDto;
+
+  it('collects unique providers across nodes', () => {
+    const providers = GraphValidationService.collectOAuthProviders(
+      [node('a', 'linear-mcp'), node('b', 'plain'), node('c', 'linear-mcp')],
+      [oauthTemplate('linear-mcp', 'linear'), plainTemplate('plain')],
+    );
+
+    expect(providers).toEqual(['linear']);
+  });
+
+  it('returns an empty list when no node carries an OAuth marker', () => {
+    const providers = GraphValidationService.collectOAuthProviders(
+      [node('a', 'plain')],
+      [plainTemplate('plain')],
+    );
+
+    expect(providers).toEqual([]);
+  });
+});
