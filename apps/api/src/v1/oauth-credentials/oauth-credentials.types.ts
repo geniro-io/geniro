@@ -27,11 +27,19 @@ export interface OAuthProviderConfig {
   mcpUrl: string;
 }
 
-/** Result of a successful authorization-code exchange. */
+/** Result of a successful authorization-code exchange or refresh-token grant. */
 export interface OAuthTokenResult {
   accessToken: string;
   scopes: string[] | null;
   expiresAt: Date | null;
+  /**
+   * The refresh token, when the authorization server issues one (often gated on
+   * an `offline_access` scope / `prompt=consent`). `null` when absent. A
+   * provider that ROTATES the refresh token returns a fresh value on every
+   * `refresh_token` grant, so this is re-persisted on each refresh, not only at
+   * first exchange.
+   */
+  refreshToken: string | null;
   accountLabel: string | null;
 }
 

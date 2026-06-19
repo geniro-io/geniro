@@ -202,8 +202,90 @@ export abstract class BaseOAuthProvider {
       typeof data.expires_in === 'number'
         ? new Date(Date.now() + data.expires_in * 1000)
         : null;
+    // The refresh token (when the AS issues one — often gated on an
+    // `offline_access` scope / `prompt=consent`). Absent -> null -> no later
+    // refresh is possible and the credential falls to re-auth at expiry.
+    const refreshToken = this.asString(data.refresh_token);
 
-    return { accessToken, scopes, expiresAt, accountLabel: null };
+    return { accessToken, scopes, expiresAt, refreshToken, accountLabel: null };
+  }
+
+  /**
+   * Exchange a stored `refresh_token` for a fresh access token at the discovered
+   * token endpoint (RFC 6749 §6 `grant_type=refresh_token`). Re-uses the issuing
+   * per-flow client (`client_id`, and `client_secret` when the AS registered a
+   * confidential client — `null` for a public PKCE client, in which case only
+   * the `client_id` identifies the client). Carries the same RFC 8707 `resource`
+   * audience binding as the original exchange so the rotated token stays bound to
+   * the MCP endpoint.
+   *
+   * A provider that ROTATES the refresh token returns a new one in the response;
+   * it surfaces as `refreshToken` so the caller can re-persist it. When the
+   * response omits a refresh token the field is `null` and the caller keeps the
+   * existing one (non-rotating provider).
+   *
+   * Same trust-boundary discipline as {@link exchangeCode}: the response is
+   * untrusted JSON, structurally validated before any dereference, and the body
+   * is NEVER logged (it carries the rotated refresh token + access token) — only
+   * safe envelope fields reach the log.
+   */
+  async refreshAccessToken(
+    server: DiscoveredOAuthServer,
+    client: RegisteredClient,
+    refreshToken: string,
+  ): Promise<OAuthTokenResult> {
+    const body = new URLSearchParams({
+      grant_type: 'refresh_token',
+      refresh_token: refreshToken,
+      client_id: client.clientId,
+      // RFC 8707 — keep the rotated token audience-bound to the MCP resource.
+      resource: server.resource,
+    });
+    if (client.clientSecret) {
+      body.set('client_secret', client.clientSecret);
+    }
+
+    const response = await this.postJson(
+      server.tokenEndpoint,
+      body.toString(),
+      'application/x-www-form-urlencoded',
+      TOKEN_TIMEOUT_MS,
+    );
+    if (!response.ok || !this.isObject(response.body)) {
+      this.logger.error(
+        `OAuth token refresh failed for ${this.provider}: status ${response.status}`,
+      );
+      throw new BadRequestException('OAUTH_TOKEN_REFRESH_FAILED');
+    }
+
+    const data = response.body;
+    const accessToken = this.asString(data.access_token);
+    if (!accessToken) {
+      this.logger.error(
+        `OAuth token refresh returned no access_token for ${this.provider}`,
+      );
+      throw new BadRequestException('OAUTH_TOKEN_REFRESH_FAILED');
+    }
+
+    const scopes =
+      typeof data.scope === 'string'
+        ? data.scope.split(/[\s,]+/).filter(Boolean)
+        : null;
+    const expiresAt =
+      typeof data.expires_in === 'number'
+        ? new Date(Date.now() + data.expires_in * 1000)
+        : null;
+    // A rotated refresh token, when the AS issues one on this grant; null means
+    // the existing refresh token remains valid (the caller keeps it).
+    const refreshTokenOut = this.asString(data.refresh_token);
+
+    return {
+      accessToken,
+      scopes,
+      expiresAt,
+      refreshToken: refreshTokenOut,
+      accountLabel: null,
+    };
   }
 
   /**

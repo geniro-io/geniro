@@ -39,6 +39,7 @@ export class ThreadResumeQueueService implements OnModuleInit, OnModuleDestroy {
   private redisQueue!: IORedis;
   private redisWorker!: IORedis;
   private callbacks?: ThreadResumeQueueCallbacks;
+  private closing = false;
   private readonly queueName = `thread-resume-${getInstanceFingerprint()}`;
 
   constructor(
@@ -79,10 +80,10 @@ export class ThreadResumeQueueService implements OnModuleInit, OnModuleDestroy {
     });
 
     this.redisQueue.on('error', (err) => {
-      this.logger.error(err, 'Thread resume queue Redis connection error');
+      this.logChannelError(err, 'Thread resume queue Redis connection error');
     });
     this.redisWorker.on('error', (err) => {
-      this.logger.error(err, 'Thread resume worker Redis connection error');
+      this.logChannelError(err, 'Thread resume worker Redis connection error');
     });
 
     this.queue = new Queue<ThreadResumeJobData>(this.queueName, {
@@ -290,7 +291,29 @@ export class ThreadResumeQueueService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  /**
+   * Route a Redis connection `error` event. During intentional shutdown
+   * (`onModuleDestroy` closes the worker/queue and quits the connections) a
+   * connection error is expected churn — most visibly an `EPIPE` from BullMQ's
+   * periodic `moveStalledJobsToWait` Lua script racing the socket teardown.
+   * Demote those to `debug` so they don't read as a real fault in logs/CI; a
+   * connection error while the service is live still surfaces at `error`.
+   */
+  private logChannelError(err: unknown, message: string): void {
+    if (this.closing) {
+      this.logger.debug(`${message} during shutdown (expected)`, {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return;
+    }
+    this.logger.error(
+      err instanceof Error ? err : new Error(String(err)),
+      message,
+    );
+  }
+
   async onModuleDestroy(): Promise<void> {
+    this.closing = true;
     if (this.worker) {
       try {
         await this.worker.close();

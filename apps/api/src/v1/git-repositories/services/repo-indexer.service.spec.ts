@@ -511,6 +511,51 @@ describe('RepoIndexerService', () => {
       const commit = await service.resolveCurrentCommit('/repo', execFn);
       expect(commit).toBe('abc123def456');
     });
+
+    it('retries an exit-0 empty stdout (transient exec artifact) and returns the SHA on a later attempt', async () => {
+      // Under heavy parallel load the runtime exec can resolve `rev-parse HEAD`
+      // with exitCode 0 but an empty stdout — physically impossible from git in
+      // a valid repo. The bounded retry absorbs it instead of throwing.
+      const execFn: RepoExecFn = vi
+        .fn()
+        .mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' })
+        .mockResolvedValueOnce({ exitCode: 0, stdout: '   \n', stderr: '' })
+        .mockResolvedValueOnce({
+          exitCode: 0,
+          stdout: 'cafebabe1234\n',
+          stderr: '',
+        });
+
+      const commit = await service.resolveCurrentCommit('/repo', execFn, 3, 1);
+      expect(commit).toBe('cafebabe1234');
+      expect(execFn).toHaveBeenCalledTimes(3);
+    });
+
+    it('throws after exhausting attempts when stdout stays empty', async () => {
+      const execFn: RepoExecFn = vi
+        .fn()
+        .mockResolvedValue({ exitCode: 0, stdout: '', stderr: '' });
+
+      await expect(
+        service.resolveCurrentCommit('/repo', execFn, 3, 1),
+      ).rejects.toThrow('Failed to resolve current commit: empty result');
+      expect(execFn).toHaveBeenCalledTimes(3);
+    });
+
+    it('surfaces a genuine non-zero git error immediately without retrying', async () => {
+      const execFn: RepoExecFn = vi.fn().mockResolvedValue({
+        exitCode: 128,
+        stdout: '',
+        stderr: 'fatal: not a git repository',
+      });
+
+      await expect(
+        service.resolveCurrentCommit('/repo', execFn, 3, 1),
+      ).rejects.toThrow(
+        'Failed to resolve current commit: fatal: not a git repository',
+      );
+      expect(execFn).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe('getCurrentBranch', () => {

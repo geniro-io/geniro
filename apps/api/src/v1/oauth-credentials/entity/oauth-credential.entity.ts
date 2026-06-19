@@ -43,4 +43,21 @@ export class OAuthCredentialEntity extends AuditEntity {
 
   @Property({ type: 'timestamptz', nullable: true })
   expiresAt?: Date | null;
+
+  /**
+   * The `client_id` of the per-flow DCR client that issued this credential.
+   * Persisted because a `refresh_token` grant is bound to its issuing client,
+   * and M2's per-flow client rode the (now-consumed) Redis pending-state. The
+   * paired `client_secret` (when the AS issued a confidential client) lives in
+   * OpenBao alongside the token, never in this row. Nullable: legacy M2 rows and
+   * any credential acquired without a durable client have none. This durable
+   * client storage is the documented M3.1 reversal of the M2 "no durable client"
+   * rule — see `.claude/rules/oauth-mcp.md`.
+   */
+  @Property({ type: 'string', length: 255, nullable: true })
+  clientId?: string | null;
+
+  /** Last time the access token was rotated via a `refresh_token` grant — `null` until the first refresh. */
+  @Property({ type: 'timestamptz', nullable: true })
+  lastRefreshedAt?: Date | null;
 }

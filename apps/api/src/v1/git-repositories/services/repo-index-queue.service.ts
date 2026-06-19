@@ -39,6 +39,7 @@ export class RepoIndexQueueService implements OnModuleInit, OnModuleDestroy {
   private redisWorker!: IORedis;
   private redisSub!: IORedis;
   private callbacks?: RepoIndexQueueCallbacks;
+  private closing = false;
   private readonly queueName = `repo-index-${getInstanceFingerprint()}`;
   private readonly cancelChannel = `repo-index-cancel:${getInstanceFingerprint()}`;
 
@@ -80,10 +81,10 @@ export class RepoIndexQueueService implements OnModuleInit, OnModuleDestroy {
     });
 
     this.redisQueue.on('error', (err) => {
-      this.logger.error(err, 'Redis queue connection error');
+      this.logChannelError(err, 'Redis queue connection error');
     });
     this.redisWorker.on('error', (err) => {
-      this.logger.error(err, 'Redis worker connection error');
+      this.logChannelError(err, 'Redis worker connection error');
     });
 
     this.redisSub = new IORedis(environment.redisUrl, {
@@ -92,7 +93,7 @@ export class RepoIndexQueueService implements OnModuleInit, OnModuleDestroy {
       disableClientInfo: true,
     });
     this.redisSub.on('error', (err) => {
-      this.logger.error(err, 'Redis subscriber connection error');
+      this.logChannelError(err, 'Redis subscriber connection error');
     });
 
     this.queue = new Queue<RepoIndexJobData>(this.queueName, {
@@ -406,7 +407,29 @@ export class RepoIndexQueueService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  /**
+   * Route a Redis connection `error` event. During intentional shutdown
+   * (`onModuleDestroy` closes the worker/queue and quits the connections) a
+   * connection error is expected churn — most visibly an `EPIPE` from BullMQ's
+   * periodic `moveStalledJobsToWait` Lua script racing the socket teardown.
+   * Demote those to `debug` so they don't read as a real fault in logs/CI; a
+   * connection error while the service is live still surfaces at `error`.
+   */
+  private logChannelError(err: unknown, message: string): void {
+    if (this.closing) {
+      this.logger.debug(`${message} during shutdown (expected)`, {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return;
+    }
+    this.logger.error(
+      err instanceof Error ? err : new Error(String(err)),
+      message,
+    );
+  }
+
   async onModuleDestroy(): Promise<void> {
+    this.closing = true;
     // Close each resource in its own try/catch to ensure all resources are
     // cleaned up even if one fails. Worker may not exist if setCallbacks
     // was never called (e.g. partial startup).

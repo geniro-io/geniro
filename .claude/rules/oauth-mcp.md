@@ -21,9 +21,16 @@ The acquisition flow (owned by `BaseOAuthProvider`):
 
 Add a `BaseOAuthProvider` subclass that declares only `provider`, `resourceUrl` (the MCP endpoint — also the RFC 9728 discovery root and the RFC 8707 resource), `scopes`, and `scopeSeparator` (standard OAuth uses a SPACE, not a comma — the legacy app-OAuth comma does not apply to the MCP AS), then register it in `OAuthCredentialsModule`'s `providers` AND add one line to the `OAuthExchangeService` constructor's provider-registry map (mirrors the `agent-mcp` `BaseMcp` + per-provider pattern). The explicit, type-safe constructor registry is kept deliberately over a dynamic multi-provider DI token, so a 2nd provider is one strategy class + one module line + one exchange-service constructor line — not a zero-edit drop-in. Providers are stateless → plain `@Injectable()` singletons (not `Scope.TRANSIENT`, which is for the per-runtime mutable state MCP blocks hold). Keep the explicit `constructor(logger) { super(logger); }` for reliable NestJS DI metadata emission on the subclass.
 
-## No durable client storage, no migration
+## Durable client storage — required for refresh (M3.1), not for acquisition
 
-The per-flow client (`clientId` + nullable `clientSecret`) rides the EXISTING Redis pending-state alongside the PKCE verifier (server-side, short TTL) — never a durable column or a new table. A per-`(project, provider)` credential row has no home for a per-deployment client, so durable / cached DCR registration is the wrong shape; re-discover + re-register per flow instead.
+During the acquisition leg the per-flow client (`clientId` + nullable `clientSecret`) rides the EXISTING Redis pending-state alongside the PKCE verifier (server-side, short TTL): `start()` registers it, `exchange()` reads it from the pending-state, and acquisition itself never needs a durable copy — re-discover + re-register per flow.
+
+**M3.1 (refresh-token rotation) intentionally reverses the "no durable client" rule** — a `refresh_token` grant (RFC 6749 §6) is bound to the client that issued it, but the pending-state client is gone after `exchange()` consumes it. So a credential that carries a refresh token MUST persist its issuing client to refresh later:
+
+- `clientId` → a nullable `client_id` column on the `oauth_credentials` row (`oauth-credential.entity.ts`; migration `Migration20260619114004`). Nullable because legacy M2 rows and any credential acquired without a durable client have none.
+- `clientSecret` (only when the AS registered a confidential client) → an OpenBao SIBLING KV key to the access token (`${PROVIDER}_OAUTH_CLIENT_SECRET`), never a DB column.
+
+The refresh token itself is likewise an OpenBao sibling key (`${PROVIDER}_OAUTH_REFRESH`), never a column. This durable client storage applies ONLY to the refresh path; the acquisition flow above is unchanged. Absent a stored client or refresh token, the credential simply falls to re-auth at expiry — never a silent failure.
 
 ## Fail closed, and validate the untrusted discovery responses
 

@@ -21,6 +21,7 @@ export class GraphRevisionQueueService
   private redisQueue!: IORedis;
   private redisWorker!: IORedis;
   private processor?: (job: GraphRevisionJobData) => Promise<void>;
+  private closing = false;
   private readonly queueName = `graph-revisions-${getInstanceFingerprint()}`;
 
   constructor(
@@ -61,10 +62,10 @@ export class GraphRevisionQueueService
     });
 
     this.redisQueue.on('error', (err) => {
-      this.logger.error(err, 'Redis queue connection error');
+      this.logChannelError(err, 'Redis queue connection error');
     });
     this.redisWorker.on('error', (err) => {
-      this.logger.error(err, 'Redis worker connection error');
+      this.logChannelError(err, 'Redis worker connection error');
     });
 
     this.queue = new Queue<GraphRevisionJobData>(this.queueName, {
@@ -195,7 +196,29 @@ export class GraphRevisionQueueService
     );
   }
 
+  /**
+   * Route a Redis connection `error` event. During intentional shutdown
+   * (`onModuleDestroy` closes the worker/queue and quits the connections) a
+   * connection error is expected churn — most visibly an `EPIPE` from BullMQ's
+   * periodic `moveStalledJobsToWait` Lua script racing the socket teardown.
+   * Demote those to `debug` so they don't read as a real fault in logs/CI; a
+   * connection error while the service is live still surfaces at `error`.
+   */
+  private logChannelError(err: unknown, message: string): void {
+    if (this.closing) {
+      this.logger.debug(`${message} during shutdown (expected)`, {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return;
+    }
+    this.logger.error(
+      err instanceof Error ? err : new Error(String(err)),
+      message,
+    );
+  }
+
   async onModuleDestroy(): Promise<void> {
+    this.closing = true;
     try {
       await this.worker.close();
     } catch (err) {
