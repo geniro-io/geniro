@@ -291,4 +291,77 @@ describe('OAuth auth_required pause/resume (integration)', () => {
       expect(scheduleSpy).not.toHaveBeenCalled();
     });
   });
+
+  describe('watchdog backstop — recoverOverdueThreads for credential-waits', () => {
+    /**
+     * A run paused for an OAuth-MCP credential clears `scheduledResumeAt` (the
+     * resume is event-driven via `credential.acquired`, NOT clock-driven), so
+     * the thread sits in Waiting with `waitReason === 'credential'` and NO
+     * `scheduledResumeAt`. If the event-driven resume never lands — a co-pending
+     * thread on the same (project, provider) whose `credential.acquired` carried
+     * a different threadId, a Connections-page proactive connect with no
+     * threadId, or a BullMQ retry-exhaustion that stopped only the event's own
+     * thread — the credential is now valid but this thread is stranded Waiting
+     * forever with no recovery path.
+     *
+     * The watchdog is the only periodic safety net. It MUST re-enqueue a resume
+     * for a credential-wait thread once the provider's credential is valid. This
+     * test seeds exactly that state (Waiting, waitReason=credential, no
+     * scheduledResumeAt) with a valid credential present, drives the watchdog,
+     * and asserts the thread is recovered (a resume is enqueued for it).
+     */
+    it('recovers a stranded credential-wait thread once the credential is valid', async () => {
+      const graphId = await seedLinearGraph();
+      const externalThreadId = `${graphId}:wd1`;
+      const threadRowId = await seedThread(
+        graphId,
+        externalThreadId,
+        ThreadStatus.Waiting,
+        {
+          waitReason: 'credential',
+          waitNodeId: 'agent-1',
+          waitCheckPrompt: 'go',
+          // No scheduledResumeAt — a credential wait is event-driven, not timed.
+        },
+      );
+
+      // The credential is now present and valid (far-future expiry), exactly as
+      // it would be the instant after the user authenticated from any browser.
+      await oauthDao.create({
+        provider: OAuthProvider.Linear,
+        accountLabel: 'Acme',
+        secretName: 'LINEAR_OAUTH_TOKEN',
+        scopes: ['read'],
+        createdBy: TEST_USER_ID,
+        projectId,
+        expiresAt: new Date(Date.now() + 3_600_000),
+        clientId: 'dcr-client-test',
+      });
+
+      const scheduleSpy = vi
+        .spyOn(queueService, 'scheduleResume')
+        .mockResolvedValue(undefined);
+
+      // Drive the periodic safety net directly (it is otherwise on a 60s timer).
+      await (
+        resumeService as unknown as {
+          recoverOverdueThreads: () => Promise<void>;
+        }
+      ).recoverOverdueThreads();
+
+      // The stranded credential-wait thread must be re-enqueued for resume —
+      // it is the only periodic recovery path once the event-driven resume is
+      // missed. RED today: the watchdog does `if (!scheduledResumeAt) continue`
+      // and skips every credential wait.
+      expect(scheduleSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          threadId: threadRowId,
+          graphId,
+          externalThreadId,
+          reason: 'credential',
+        }),
+        expect.any(Number),
+      );
+    });
+  });
 });
