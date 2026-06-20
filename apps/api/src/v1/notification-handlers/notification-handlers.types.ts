@@ -17,9 +17,13 @@ export enum NotificationScope {
 export interface IEnrichedNotification<T> {
   type: NotificationEvent;
   data: T;
-  graphId: string;
+  // Optional because a Project- or User-scoped notification need not be bound to
+  // a single graph or owner — e.g. `credential.acquired` from a cap-link / the
+  // Connections page carries no graph context. Graph-scoped events still always
+  // populate `graphId`; the gateway guards each room-push on the field it needs.
+  graphId?: string;
   projectId: string;
-  ownerId: string;
+  ownerId?: string;
   nodeId?: string;
   threadId?: string;
   runId?: string;

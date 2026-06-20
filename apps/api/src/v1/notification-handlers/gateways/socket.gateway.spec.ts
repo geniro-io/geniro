@@ -238,6 +238,39 @@ describe('SocketGateway', () => {
         mockDualScopeNotification,
       );
     });
+
+    it('routes a Project-scoped notification with no graphId to the project room only', () => {
+      const mockServer = {
+        emit: vi.fn(),
+        to: vi.fn().mockReturnThis(),
+      };
+      (gateway as unknown as { ws: unknown }).ws = mockServer;
+
+      gateway.afterInit();
+
+      // credential.acquired from a cap-link / Connections page carries no graph
+      // or owner context — it must still fan out to the project room (the
+      // graphId/ownerId room-push guards make this a no-op-free single room).
+      const projectScopedNoGraph: IEnrichedNotification<unknown> = {
+        type: 'credential.acquired' as any,
+        projectId: mockProjectId,
+        data: { provider: 'linear', accountLabel: 'Acme' },
+        scope: [NotificationScope.Project],
+      };
+
+      const eventHandlerCallback =
+        eventsHandler.onEnrichedNotification.mock.calls[0]![0];
+      eventHandlerCallback(projectScopedNoGraph);
+
+      // Exactly one room (the project room) — the undefined graphId/ownerId
+      // contribute NO stray rooms via the room-push guards.
+      expect(mockServer.to).toHaveBeenCalledTimes(1);
+      expect(mockServer.to).toHaveBeenCalledWith([`project:${mockProjectId}`]);
+      expect(mockServer.emit).toHaveBeenCalledWith(
+        'credential.acquired',
+        projectScopedNoGraph,
+      );
+    });
   });
 
   describe('handleConnection', () => {

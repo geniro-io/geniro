@@ -109,9 +109,16 @@ describe('RjsfOAuthAuthenticateField', () => {
 
     // Blank tab opened synchronously in the click handler (popup-safe).
     expect(openSpy).toHaveBeenCalledWith('', '_blank');
-    // /start passes the editor context for the resume target.
+    // /start passes the editor context; threadId + cap are undefined for
+    // ordinary proactive auth (no paused run to resume).
     await waitFor(() =>
-      expect(startMock).toHaveBeenCalledWith('linear', 'g1', 'n1'),
+      expect(startMock).toHaveBeenCalledWith(
+        'linear',
+        'g1',
+        'n1',
+        undefined,
+        undefined,
+      ),
     );
     await waitFor(() =>
       expect(fakeTab.location.href).toBe(
@@ -253,5 +260,65 @@ describe('RjsfOAuthAuthenticateField', () => {
     await new Promise((resolve) => setTimeout(resolve, 5));
     expect(screen.queryByTestId('oauth-needs-reauth')).toBeNull();
     expect(screen.getByTestId('oauth-authenticated-label')).toBeTruthy();
+  });
+
+  it('redeems the capability token + threadId when authenticating after a paused-run prompt', async () => {
+    statusMock.mockResolvedValue(authenticated);
+    startMock.mockResolvedValue({
+      data: { authorizeUrl: 'https://linear.app/oauth/authorize?z=3' },
+    });
+    const fakeTab = { location: { href: '' }, close: vi.fn() };
+    vi.spyOn(window, 'open').mockReturnValue(fakeTab as unknown as Window);
+
+    render(<RjsfOAuthAuthenticateField {...makeProps()} />);
+    await screen.findByTestId('oauth-authenticated-label');
+
+    // A paused background run fans auth.required with a single-use cap token +
+    // the paused run's threadId (envelope).
+    act(() => {
+      webSocketService._unsafeInjectEventForHarness('auth.required', {
+        nodeId: 'n1',
+        threadId: 'g1:thread-7',
+        data: { provider: 'linear', capabilityToken: 'cap-xyz' },
+      } as unknown as SocketNotification);
+    });
+
+    await screen.findByTestId('oauth-needs-reauth');
+    fireEvent.click(
+      await screen.findByRole('button', { name: /^authenticate$/i }),
+    );
+
+    // start() redeems the cap + threadId so the exchange resumes the paused run.
+    await waitFor(() =>
+      expect(startMock).toHaveBeenCalledWith(
+        'linear',
+        'g1',
+        'n1',
+        'g1:thread-7',
+        'cap-xyz',
+      ),
+    );
+    // The tab navigating confirms the post-start ref-clearing ran.
+    await waitFor(() =>
+      expect(fakeTab.location.href).toBe(
+        'https://linear.app/oauth/authorize?z=3',
+      ),
+    );
+
+    // A SECOND Authenticate click must NOT resend the now-spent single-use
+    // token — the refs were cleared after the first start() consumed it.
+    startMock.mockClear();
+    fireEvent.click(
+      await screen.findByRole('button', { name: /^authenticate$/i }),
+    );
+    await waitFor(() =>
+      expect(startMock).toHaveBeenCalledWith(
+        'linear',
+        'g1',
+        'n1',
+        undefined,
+        undefined,
+      ),
+    );
   });
 });

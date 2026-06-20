@@ -95,10 +95,14 @@ export class SocketGateway
         for (const scopeItem of scope) {
           switch (scopeItem) {
             case NotificationScope.Graph:
-              rooms.push(this.getGraphRoomName(graphId));
+              if (graphId) {
+                rooms.push(this.getGraphRoomName(graphId));
+              }
               break;
             case NotificationScope.User:
-              rooms.push(this.getUserRoomName(ownerId));
+              if (ownerId) {
+                rooms.push(this.getUserRoomName(ownerId));
+              }
               break;
             case NotificationScope.Project:
               if (projectId) {

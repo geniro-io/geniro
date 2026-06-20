@@ -17,6 +17,7 @@ import { GraphsListPage } from './pages/graphs/list';
 import { KnowledgeListPage } from './pages/knowledge/list';
 import { MainPage } from './pages/main/page';
 import { OAuthCallbackPage } from './pages/oauth/components/OAuthCallbackPage';
+import { ConnectionsPage } from './pages/oauth/ConnectionsPage';
 import { CreateProjectPage } from './pages/projects/create';
 import { ProjectsListPage } from './pages/projects/list';
 import { RepositoriesListPage } from './pages/repositories/list';
@@ -167,6 +168,10 @@ function App({ authModule }: { authModule: AuthModule }) {
             <Route
               path="/projects/:projectId/knowledge"
               element={<KnowledgeListPage />}
+            />
+            <Route
+              path="/projects/:projectId/connections"
+              element={<ConnectionsPage />}
             />
             {/* Legacy route redirects */}
             <Route

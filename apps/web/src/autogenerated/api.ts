@@ -12205,6 +12205,56 @@ export const OauthApiAxiosParamCreator = function (
   return {
     /**
      *
+     * @summary
+     * @param {DisconnectOAuthCredentialProviderEnum} provider
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
+    disconnectOAuthCredential: async (
+      provider: DisconnectOAuthCredentialProviderEnum,
+      options: RawAxiosRequestConfig = {},
+    ): Promise<RequestArgs> => {
+      // verify required parameter 'provider' is not null or undefined
+      assertParamExists('disconnectOAuthCredential', 'provider', provider);
+      const localVarPath = `/api/v1/oauth/{provider}/credentials`.replace(
+        `{${'provider'}}`,
+        encodeURIComponent(String(provider)),
+      );
+      // use dummy base URL string because the URL constructor only accepts absolute URLs.
+      const localVarUrlObj = new URL(localVarPath, DUMMY_BASE_URL);
+      let baseOptions;
+      if (configuration) {
+        baseOptions = configuration.baseOptions;
+      }
+
+      const localVarRequestOptions = {
+        method: 'DELETE',
+        ...baseOptions,
+        ...options,
+      };
+      const localVarHeaderParameter = {} as any;
+      const localVarQueryParameter = {} as any;
+
+      // authentication bearer required
+      // http bearer authentication required
+      await setBearerAuthToObject(localVarHeaderParameter, configuration);
+
+      setSearchParams(localVarUrlObj, localVarQueryParameter);
+      let headersFromBaseOptions =
+        baseOptions && baseOptions.headers ? baseOptions.headers : {};
+      localVarRequestOptions.headers = {
+        ...localVarHeaderParameter,
+        ...headersFromBaseOptions,
+        ...options.headers,
+      };
+
+      return {
+        url: toPathString(localVarUrlObj),
+        options: localVarRequestOptions,
+      };
+    },
+    /**
+     *
      * @param {OAuthExchangeRequestDto} oAuthExchangeRequestDto
      * @param {*} [options] Override http request option.
      * @throws {RequiredError}
@@ -12262,9 +12312,54 @@ export const OauthApiAxiosParamCreator = function (
     },
     /**
      *
+     * @summary
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
+    listOAuthCredentials: async (
+      options: RawAxiosRequestConfig = {},
+    ): Promise<RequestArgs> => {
+      const localVarPath = `/api/v1/oauth/credentials`;
+      // use dummy base URL string because the URL constructor only accepts absolute URLs.
+      const localVarUrlObj = new URL(localVarPath, DUMMY_BASE_URL);
+      let baseOptions;
+      if (configuration) {
+        baseOptions = configuration.baseOptions;
+      }
+
+      const localVarRequestOptions = {
+        method: 'GET',
+        ...baseOptions,
+        ...options,
+      };
+      const localVarHeaderParameter = {} as any;
+      const localVarQueryParameter = {} as any;
+
+      // authentication bearer required
+      // http bearer authentication required
+      await setBearerAuthToObject(localVarHeaderParameter, configuration);
+
+      setSearchParams(localVarUrlObj, localVarQueryParameter);
+      let headersFromBaseOptions =
+        baseOptions && baseOptions.headers ? baseOptions.headers : {};
+      localVarRequestOptions.headers = {
+        ...localVarHeaderParameter,
+        ...headersFromBaseOptions,
+        ...options.headers,
+      };
+
+      return {
+        url: toPathString(localVarUrlObj),
+        options: localVarRequestOptions,
+      };
+    },
+    /**
+     *
      * @param {StartProviderEnum} provider
      * @param {string} [graphId]
      * @param {string} [nodeId]
+     * @param {string} [threadId] Resume target for a run that paused awaiting this credential; carried into the pending state so the &#x60;credential.acquired&#x60; signal can resume the exact thread.
+     * @param {string} [cap] Opaque single-use capability token from an &#x60;auth_required&#x60; notification. Re-opens a paused run\&#39;s OAuth flow from any browser — the project + thread context is recovered server-side from the token, so the editor tab is not required.
      * @param {*} [options] Override http request option.
      * @throws {RequiredError}
      */
@@ -12272,6 +12367,8 @@ export const OauthApiAxiosParamCreator = function (
       provider: StartProviderEnum,
       graphId?: string,
       nodeId?: string,
+      threadId?: string,
+      cap?: string,
       options: RawAxiosRequestConfig = {},
     ): Promise<RequestArgs> => {
       // verify required parameter 'provider' is not null or undefined
@@ -12305,6 +12402,14 @@ export const OauthApiAxiosParamCreator = function (
 
       if (nodeId !== undefined) {
         localVarQueryParameter['nodeId'] = nodeId;
+      }
+
+      if (threadId !== undefined) {
+        localVarQueryParameter['threadId'] = threadId;
+      }
+
+      if (cap !== undefined) {
+        localVarQueryParameter['cap'] = cap;
       }
 
       setSearchParams(localVarUrlObj, localVarQueryParameter);
@@ -12382,6 +12487,37 @@ export const OauthApiFp = function (configuration?: Configuration) {
   return {
     /**
      *
+     * @summary
+     * @param {DisconnectOAuthCredentialProviderEnum} provider
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
+    async disconnectOAuthCredential(
+      provider: DisconnectOAuthCredentialProviderEnum,
+      options?: RawAxiosRequestConfig,
+    ): Promise<
+      (axios?: AxiosInstance, basePath?: string) => AxiosPromise<void>
+    > {
+      const localVarAxiosArgs =
+        await localVarAxiosParamCreator.disconnectOAuthCredential(
+          provider,
+          options,
+        );
+      const localVarOperationServerIndex = configuration?.serverIndex ?? 0;
+      const localVarOperationServerBasePath =
+        operationServerMap['OauthApi.disconnectOAuthCredential']?.[
+          localVarOperationServerIndex
+        ]?.url;
+      return (axios, basePath) =>
+        createRequestFunction(
+          localVarAxiosArgs,
+          globalAxios,
+          BASE_PATH,
+          configuration,
+        )(axios, localVarOperationServerBasePath || basePath);
+    },
+    /**
+     *
      * @param {OAuthExchangeRequestDto} oAuthExchangeRequestDto
      * @param {*} [options] Override http request option.
      * @throws {RequiredError}
@@ -12413,9 +12549,40 @@ export const OauthApiFp = function (configuration?: Configuration) {
     },
     /**
      *
+     * @summary
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
+    async listOAuthCredentials(
+      options?: RawAxiosRequestConfig,
+    ): Promise<
+      (
+        axios?: AxiosInstance,
+        basePath?: string,
+      ) => AxiosPromise<Array<OAuthStatusResponseDto>>
+    > {
+      const localVarAxiosArgs =
+        await localVarAxiosParamCreator.listOAuthCredentials(options);
+      const localVarOperationServerIndex = configuration?.serverIndex ?? 0;
+      const localVarOperationServerBasePath =
+        operationServerMap['OauthApi.listOAuthCredentials']?.[
+          localVarOperationServerIndex
+        ]?.url;
+      return (axios, basePath) =>
+        createRequestFunction(
+          localVarAxiosArgs,
+          globalAxios,
+          BASE_PATH,
+          configuration,
+        )(axios, localVarOperationServerBasePath || basePath);
+    },
+    /**
+     *
      * @param {StartProviderEnum} provider
      * @param {string} [graphId]
      * @param {string} [nodeId]
+     * @param {string} [threadId] Resume target for a run that paused awaiting this credential; carried into the pending state so the &#x60;credential.acquired&#x60; signal can resume the exact thread.
+     * @param {string} [cap] Opaque single-use capability token from an &#x60;auth_required&#x60; notification. Re-opens a paused run\&#39;s OAuth flow from any browser — the project + thread context is recovered server-side from the token, so the editor tab is not required.
      * @param {*} [options] Override http request option.
      * @throws {RequiredError}
      */
@@ -12423,6 +12590,8 @@ export const OauthApiFp = function (configuration?: Configuration) {
       provider: StartProviderEnum,
       graphId?: string,
       nodeId?: string,
+      threadId?: string,
+      cap?: string,
       options?: RawAxiosRequestConfig,
     ): Promise<
       (
@@ -12434,6 +12603,8 @@ export const OauthApiFp = function (configuration?: Configuration) {
         provider,
         graphId,
         nodeId,
+        threadId,
+        cap,
         options,
       );
       const localVarOperationServerIndex = configuration?.serverIndex ?? 0;
@@ -12495,6 +12666,21 @@ export const OauthApiFactory = function (
   return {
     /**
      *
+     * @summary
+     * @param {DisconnectOAuthCredentialProviderEnum} provider
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
+    disconnectOAuthCredential(
+      provider: DisconnectOAuthCredentialProviderEnum,
+      options?: RawAxiosRequestConfig,
+    ): AxiosPromise<void> {
+      return localVarFp
+        .disconnectOAuthCredential(provider, options)
+        .then((request) => request(axios, basePath));
+    },
+    /**
+     *
      * @param {OAuthExchangeRequestDto} oAuthExchangeRequestDto
      * @param {*} [options] Override http request option.
      * @throws {RequiredError}
@@ -12509,9 +12695,24 @@ export const OauthApiFactory = function (
     },
     /**
      *
+     * @summary
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
+    listOAuthCredentials(
+      options?: RawAxiosRequestConfig,
+    ): AxiosPromise<Array<OAuthStatusResponseDto>> {
+      return localVarFp
+        .listOAuthCredentials(options)
+        .then((request) => request(axios, basePath));
+    },
+    /**
+     *
      * @param {StartProviderEnum} provider
      * @param {string} [graphId]
      * @param {string} [nodeId]
+     * @param {string} [threadId] Resume target for a run that paused awaiting this credential; carried into the pending state so the &#x60;credential.acquired&#x60; signal can resume the exact thread.
+     * @param {string} [cap] Opaque single-use capability token from an &#x60;auth_required&#x60; notification. Re-opens a paused run\&#39;s OAuth flow from any browser — the project + thread context is recovered server-side from the token, so the editor tab is not required.
      * @param {*} [options] Override http request option.
      * @throws {RequiredError}
      */
@@ -12519,10 +12720,12 @@ export const OauthApiFactory = function (
       provider: StartProviderEnum,
       graphId?: string,
       nodeId?: string,
+      threadId?: string,
+      cap?: string,
       options?: RawAxiosRequestConfig,
     ): AxiosPromise<OAuthStartResponseDto> {
       return localVarFp
-        .start(provider, graphId, nodeId, options)
+        .start(provider, graphId, nodeId, threadId, cap, options)
         .then((request) => request(axios, basePath));
     },
     /**
@@ -12551,6 +12754,23 @@ export const OauthApiFactory = function (
 export class OauthApi extends BaseAPI {
   /**
    *
+   * @summary
+   * @param {DisconnectOAuthCredentialProviderEnum} provider
+   * @param {*} [options] Override http request option.
+   * @throws {RequiredError}
+   * @memberof OauthApi
+   */
+  public disconnectOAuthCredential(
+    provider: DisconnectOAuthCredentialProviderEnum,
+    options?: RawAxiosRequestConfig,
+  ) {
+    return OauthApiFp(this.configuration)
+      .disconnectOAuthCredential(provider, options)
+      .then((request) => request(this.axios, this.basePath));
+  }
+
+  /**
+   *
    * @param {OAuthExchangeRequestDto} oAuthExchangeRequestDto
    * @param {*} [options] Override http request option.
    * @throws {RequiredError}
@@ -12567,9 +12787,24 @@ export class OauthApi extends BaseAPI {
 
   /**
    *
+   * @summary
+   * @param {*} [options] Override http request option.
+   * @throws {RequiredError}
+   * @memberof OauthApi
+   */
+  public listOAuthCredentials(options?: RawAxiosRequestConfig) {
+    return OauthApiFp(this.configuration)
+      .listOAuthCredentials(options)
+      .then((request) => request(this.axios, this.basePath));
+  }
+
+  /**
+   *
    * @param {StartProviderEnum} provider
    * @param {string} [graphId]
    * @param {string} [nodeId]
+   * @param {string} [threadId] Resume target for a run that paused awaiting this credential; carried into the pending state so the &#x60;credential.acquired&#x60; signal can resume the exact thread.
+   * @param {string} [cap] Opaque single-use capability token from an &#x60;auth_required&#x60; notification. Re-opens a paused run\&#39;s OAuth flow from any browser — the project + thread context is recovered server-side from the token, so the editor tab is not required.
    * @param {*} [options] Override http request option.
    * @throws {RequiredError}
    * @memberof OauthApi
@@ -12578,10 +12813,12 @@ export class OauthApi extends BaseAPI {
     provider: StartProviderEnum,
     graphId?: string,
     nodeId?: string,
+    threadId?: string,
+    cap?: string,
     options?: RawAxiosRequestConfig,
   ) {
     return OauthApiFp(this.configuration)
-      .start(provider, graphId, nodeId, options)
+      .start(provider, graphId, nodeId, threadId, cap, options)
       .then((request) => request(this.axios, this.basePath));
   }
 
@@ -12599,6 +12836,14 @@ export class OauthApi extends BaseAPI {
   }
 }
 
+/**
+ * @export
+ */
+export const DisconnectOAuthCredentialProviderEnum = {
+  Linear: 'linear',
+} as const;
+export type DisconnectOAuthCredentialProviderEnum =
+  (typeof DisconnectOAuthCredentialProviderEnum)[keyof typeof DisconnectOAuthCredentialProviderEnum];
 /**
  * @export
  */

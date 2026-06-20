@@ -54,6 +54,11 @@ export const RjsfOAuthAuthenticateField = (
   // (the `auth.required` project-room event). Overrides a stale "authenticated"
   // label until the user re-connects.
   const [needsReauth, setNeedsReauth] = useState(false);
+  // The single-use capability token + paused-run threadId carried by that same
+  // `auth.required` event. Held in refs (not state — they don't drive render)
+  // so clicking Authenticate redeems them, resuming the paused run server-side.
+  const capabilityTokenRef = useRef<string | null>(null);
+  const pausedThreadIdRef = useRef<string | null>(null);
 
   // Wrap onChange in a ref so the status-refresh callback can wire the secret
   // name into the field value without re-subscribing the cross-tab listeners.
@@ -133,16 +138,21 @@ export const RjsfOAuthAuthenticateField = (
   // Project-room signal: a paused run needs this provider authenticated. Match
   // on provider, and on nodeId too when both are known (the producer carries the
   // OAuth-MCP node id), so an unrelated node's prompt doesn't flip this field.
-  // NOTE (M3.4): the event also carries a single-use `capabilityToken` + the
-  // paused run's `threadId`. Surfacing the re-auth prompt is M3.3; passing the
-  // token/threadId to `start()` so clicking Authenticate AUTO-resumes the run
-  // (rather than the user re-triggering) lands with the M3.4 Connections page.
+  // The event also carries a single-use `capabilityToken` (in `data`) + the
+  // paused run's `threadId` (envelope); stash both so clicking Authenticate
+  // redeems them and the exchange resumes the paused run server-side.
   useWebSocketEvent('auth.required', (data) => {
-    const evt = data as { nodeId?: string; data?: { provider?: string } };
+    const evt = data as {
+      nodeId?: string;
+      threadId?: string;
+      data?: { provider?: string; capabilityToken?: string };
+    };
     if (
       evt.data?.provider === provider &&
       (!nodeId || !evt.nodeId || evt.nodeId === nodeId)
     ) {
+      capabilityTokenRef.current = evt.data?.capabilityToken ?? null;
+      pausedThreadIdRef.current = evt.threadId ?? null;
       setNeedsReauth(true);
     }
   });
@@ -158,11 +168,21 @@ export const RjsfOAuthAuthenticateField = (
     const tab = window.open('', '_blank');
     setStarting(true);
     try {
+      // When a paused run flagged this node (needsReauth), redeem its single-use
+      // capability token + threadId so the exchange resumes that run. The server
+      // recovers project + thread from the token's claims; both are `undefined`
+      // for ordinary proactive auth, leaving the in-editor flow unchanged.
       const { data } = await oauthApi.start(
         provider as StartProviderEnum,
         graphId,
         nodeId,
+        pausedThreadIdRef.current ?? undefined,
+        capabilityTokenRef.current ?? undefined,
       );
+      // The token is single-use (redeemed server-side on this call) — clear it
+      // so a later re-auth doesn't resend a spent token.
+      capabilityTokenRef.current = null;
+      pausedThreadIdRef.current = null;
       if (tab) {
         tab.location.href = data.authorizeUrl;
       } else {
@@ -172,6 +192,11 @@ export const RjsfOAuthAuthenticateField = (
     } catch (error) {
       console.warn('Failed to start OAuth flow', error);
       tab?.close();
+      // Intentionally DON'T clear the cap refs on failure: a transient error
+      // before the server redeems the token leaves it still valid, so keeping it
+      // lets the user retry. The rare redeem-then-network-fail window (token
+      // consumed server-side, response lost) self-heals — the paused run
+      // re-emits `auth.required` with a fresh cap on its next pre-flight.
     } finally {
       setStarting(false);
     }
@@ -189,9 +214,7 @@ export const RjsfOAuthAuthenticateField = (
         {props.schema.title ?? props.name}
       </span>
       {props.schema.description && (
-        <span
-          className="text-muted-foreground"
-          style={{ display: 'block', fontSize: 12, marginBottom: 8 }}>
+        <span className="text-muted-foreground mb-2 block text-xs">
           {props.schema.description}
         </span>
       )}

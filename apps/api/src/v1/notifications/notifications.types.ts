@@ -345,9 +345,11 @@ export type IThreadStoreUpdateNotification = z.infer<
 // This is the AUTHORITATIVE completion signal (the editor's postMessage /
 // BroadcastChannel refresh is a browser-convenience layer on top). It is
 // project-scoped, so `graphId` is OPTIONAL here (unlike the graph-routed
-// envelope) — the editor flow carries it for routing; a future background /
-// trigger run (M3) carries `threadId` as the durable-resume target instead.
-// M2 only emits the event; a server-side resume subscriber is M3's to add.
+// envelope) — the editor flow carries it for routing; a background / trigger
+// run carries `threadId` as the durable-resume target instead. The server-side
+// resume subscriber is `ThreadResumeService.onCredentialAcquired`
+// (`@OnEvent(CREDENTIAL_ACQUIRED_EVENT)`), bridged from this NotificationsService
+// emit by the explicit EventEmitter2 emission in `OAuthCredentialsService.exchange`.
 // ---------------------------------------------------------------------------
 
 export const CredentialAcquiredDataSchema = z.object({

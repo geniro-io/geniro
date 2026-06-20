@@ -1,7 +1,12 @@
 import { EntityManager } from '@mikro-orm/postgresql';
 import { Injectable } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { BadRequestException, InternalException } from '@packages/common';
+import {
+  BadRequestException,
+  DefaultLogger,
+  InternalException,
+  NotFoundException,
+} from '@packages/common';
 
 import { AppContextStorage } from '../../../auth/app-context-storage';
 import { environment } from '../../../environments';
@@ -53,6 +58,7 @@ export class OAuthCredentialsService {
     private readonly notifications: NotificationsService,
     private readonly capabilityLink: OAuthCapabilityLinkService,
     private readonly eventEmitter: EventEmitter2,
+    private readonly logger: DefaultLogger,
     private readonly em: EntityManager,
   ) {}
 
@@ -145,6 +151,90 @@ export class OAuthCredentialsService {
       { orderBy: { updatedAt: 'desc' } },
     );
     return this.buildStatus(provider, credential);
+  }
+
+  /**
+   * List every stored OAuth credential for the current project, each mapped
+   * through the same `buildStatus` projection as `status()` — so a
+   * stored-but-expired token reports `authenticated: false` and the Connections
+   * page can prompt re-auth rather than show a stale "connected" state.
+   * Soft-deleted (disconnected) credentials are excluded by the entity filter.
+   */
+  async listCredentials(
+    ctx: AppContextStorage,
+  ): Promise<OAuthStatusResponse[]> {
+    const projectId = ctx.checkProjectId();
+    const credentials = await this.dao.getAll(
+      { projectId },
+      { orderBy: { provider: 'asc' } },
+    );
+    return credentials.map((credential) =>
+      this.buildStatus(credential.provider, credential),
+    );
+  }
+
+  /**
+   * Disconnect a provider for the current project: soft-delete the credential
+   * row AND its selectable `secrets` row (in one transaction), then remove all
+   * three OpenBao sibling keys (access token + refresh token + DCR
+   * client_secret). The DB rows go FIRST, then the store — mirroring
+   * `secrets.service.delete` order so a store error can never leave a live
+   * selectable secret pointing at a deleted value (the dangling secret this
+   * ordering forbids). A later re-auth via `exchange()` resurrects both rows
+   * (the upserts clear `deletedAt`). Throws when no credential exists for the
+   * (project, provider).
+   */
+  async disconnect(
+    ctx: AppContextStorage,
+    provider: OAuthProvider,
+  ): Promise<void> {
+    const projectId = ctx.checkProjectId();
+    const credential = await this.dao.getOne({ projectId, provider });
+    if (!credential) {
+      throw new NotFoundException('OAUTH_CREDENTIAL_NOT_FOUND');
+    }
+    const secretName = this.secretName(provider);
+
+    // Soft-delete the credential row and the selectable `secrets` row that
+    // pointed at the token together, in one transaction — so a failure between
+    // the two writes can't leave a credential gone but its selectable secret
+    // still offered in the picker (the inverse dangling-secret state). The
+    // `secrets` UNIQUE(project_id, name) is not partial on `deleted_at`, so
+    // there is exactly one row to stamp.
+    await this.em.transactional(async (em) => {
+      await this.dao.deleteById(credential.id, em);
+      await em.nativeUpdate(
+        SecretEntity,
+        { projectId, name: secretName },
+        { deletedAt: new Date() },
+      );
+    });
+
+    // Remove all three OpenBao sibling keys best-effort. A non-rotating
+    // provider / public client never wrote the refresh / client_secret key
+    // (OpenBao metadata DELETE is idempotent — 204 on an absent key). The
+    // deletes are INDEPENDENT: a transient failure on one key must not strand
+    // the others with live token material now that the rows are gone, so each
+    // failure is logged (key name only — never the value) and never propagated.
+    // Skipped entirely when the store is unavailable (nothing reachable to
+    // purge; a later re-auth or disconnect retry supersedes any residue).
+    if (this.secretsStore.isAvailable()) {
+      const keys = [
+        secretName,
+        this.refreshSecretName(provider),
+        this.clientSecretName(provider),
+      ];
+      await Promise.all(
+        keys.map((name) =>
+          this.secretsStore.deleteSecret(projectId, name).catch((error) => {
+            this.logger.warn(
+              `OAuth disconnect: failed to delete secret "${name}" for project ${projectId}`,
+              { error: error instanceof Error ? error.message : String(error) },
+            );
+          }),
+        ),
+      );
+    }
   }
 
   /**

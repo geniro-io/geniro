@@ -10,6 +10,7 @@ import { SocketGateway } from './gateways/socket.gateway';
 import { AgentInvokeNotificationHandler } from './services/event-handlers/agent-invoke-notification-handler';
 import { AgentMessageNotificationHandler } from './services/event-handlers/agent-message-notification-handler';
 import { AuthRequiredNotificationHandler } from './services/event-handlers/auth-required-notification-handler';
+import { CredentialAcquiredNotificationHandler } from './services/event-handlers/credential-acquired-notification-handler';
 import { GraphRevisionNotificationHandler } from './services/event-handlers/graph-revision-notification-handler';
 import { SimpleEnrichmentHandler } from './services/event-handlers/simple-enrichment-handler';
 import { ThreadLifecycleNotificationHandler } from './services/event-handlers/thread-lifecycle-notification-handler';
@@ -33,6 +34,7 @@ import { NotificationHandler } from './services/notification-handler.service';
     ThreadLifecycleNotificationHandler,
     ThreadUpdateNotificationHandler,
     AuthRequiredNotificationHandler,
+    CredentialAcquiredNotificationHandler,
     NotificationHandler,
     SocketGateway,
   ],
@@ -48,6 +50,7 @@ export class NotificationHandlersModule implements OnModuleInit {
     private readonly threadLifecycleHandler: ThreadLifecycleNotificationHandler,
     private readonly threadUpdateHandler: ThreadUpdateNotificationHandler,
     private readonly authRequiredHandler: AuthRequiredNotificationHandler,
+    private readonly credentialAcquiredHandler: CredentialAcquiredNotificationHandler,
   ) {}
 
   async onModuleInit() {
@@ -58,6 +61,7 @@ export class NotificationHandlersModule implements OnModuleInit {
     this.eventsHandlerService.registerHandler(this.threadLifecycleHandler);
     this.eventsHandlerService.registerHandler(this.threadUpdateHandler);
     this.eventsHandlerService.registerHandler(this.authRequiredHandler);
+    this.eventsHandlerService.registerHandler(this.credentialAcquiredHandler);
 
     await this.eventsHandlerService.init();
   }

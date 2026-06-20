@@ -151,6 +151,13 @@ class WebSocketService {
       this.emitToHandlers('auth.required', data);
     });
 
+    // Project-room event: an OAuth credential was acquired (from any browser —
+    // the in-editor flow, the Connections page, or a cap-link on another
+    // device). Drives live-refresh of the Connections page + node auth-state.
+    this.socket.on('credential.acquired', (data: SocketNotification) => {
+      this.emitToHandlers('credential.acquired', data);
+    });
+
     this.socket.on('server_error', (error: ServerErrorNotification) => {
       console.error('[WebSocket] Server error:', error);
     });

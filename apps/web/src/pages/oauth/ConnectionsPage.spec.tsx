@@ -1,0 +1,162 @@
+// @vitest-environment jsdom
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+const { listMock, startMock, disconnectMock } = vi.hoisted(() => ({
+  listMock: vi.fn(),
+  startMock: vi.fn(),
+  disconnectMock: vi.fn(),
+}));
+
+// Stub only the network client; keep the real cross-tab guards.
+vi.mock('./oauth-api', async () => {
+  const actual =
+    await vi.importActual<typeof import('./oauth-api')>('./oauth-api');
+  return {
+    ...actual,
+    oauthApi: {
+      listOAuthCredentials: listMock,
+      start: startMock,
+      disconnectOAuthCredential: disconnectMock,
+    },
+  };
+});
+
+// The page only reads the project to keep the header in sync — stub it so the
+// test needs no Router / ProjectProvider wrapper.
+vi.mock('@/hooks/useCurrentProject', () => ({
+  useCurrentProject: () => ({
+    projectId: 'p1',
+    currentProject: null,
+    projects: [],
+    loading: false,
+    loadProjects: vi.fn(),
+  }),
+}));
+
+import { webSocketService } from '../../services/WebSocketService';
+import type { SocketNotification } from '../../services/WebSocketTypes';
+import { ConnectionsPage } from './ConnectionsPage';
+
+const connected = {
+  provider: 'linear',
+  authenticated: true,
+  accountLabel: 'Acme Workspace',
+  secretName: 'LINEAR_OAUTH_TOKEN',
+  expiresAt: null,
+};
+
+describe('ConnectionsPage', () => {
+  beforeEach(() => {
+    listMock.mockReset();
+    startMock.mockReset();
+    disconnectMock.mockReset();
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it('renders a not-connected card with a Connect button when the project has no credentials', async () => {
+    listMock.mockResolvedValue({ data: [] });
+
+    render(<ConnectionsPage />);
+
+    const card = await screen.findByTestId('connection-card-linear');
+    expect(within(card).getByText('Linear')).toBeTruthy();
+    // Exact string targets the Badge only (the description is "Not connected.").
+    expect(within(card).getByText('Not connected')).toBeTruthy();
+    expect(
+      within(card).getByRole('button', { name: /^connect$/i }),
+    ).toBeTruthy();
+  });
+
+  it('renders a connected card with the account label + a Disconnect button', async () => {
+    listMock.mockResolvedValue({ data: [connected] });
+
+    render(<ConnectionsPage />);
+
+    const card = await screen.findByTestId('connection-card-linear');
+    expect(
+      within(card).getByText(/Authenticated as Acme Workspace/),
+    ).toBeTruthy();
+    expect(
+      within(card).getByRole('button', { name: /disconnect/i }),
+    ).toBeTruthy();
+    expect(
+      within(card).getByRole('button', { name: /reconnect/i }),
+    ).toBeTruthy();
+  });
+
+  it('opens a blank tab and starts the flow on Connect', async () => {
+    listMock.mockResolvedValue({ data: [] });
+    startMock.mockResolvedValue({
+      data: { authorizeUrl: 'https://linear.app/oauth/authorize?c=1' },
+    });
+    const fakeTab = { location: { href: '' }, close: vi.fn() };
+    const openSpy = vi
+      .spyOn(window, 'open')
+      .mockReturnValue(fakeTab as unknown as Window);
+
+    render(<ConnectionsPage />);
+    const card = await screen.findByTestId('connection-card-linear');
+    fireEvent.click(within(card).getByRole('button', { name: /^connect$/i }));
+
+    expect(openSpy).toHaveBeenCalledWith('', '_blank');
+    await waitFor(() => expect(startMock).toHaveBeenCalledWith('linear'));
+    await waitFor(() =>
+      expect(fakeTab.location.href).toBe(
+        'https://linear.app/oauth/authorize?c=1',
+      ),
+    );
+  });
+
+  it('disconnects after confirming the dialog', async () => {
+    listMock.mockResolvedValue({ data: [connected] });
+    disconnectMock.mockResolvedValue(undefined);
+
+    render(<ConnectionsPage />);
+    const card = await screen.findByTestId('connection-card-linear');
+    fireEvent.click(within(card).getByRole('button', { name: /disconnect/i }));
+
+    // Confirm in the dialog (a separate Disconnect action button).
+    const dialog = await screen.findByRole('alertdialog');
+    fireEvent.click(
+      within(dialog).getByRole('button', { name: /disconnect/i }),
+    );
+
+    await waitFor(() => expect(disconnectMock).toHaveBeenCalledWith('linear'));
+  });
+
+  it('live-refreshes on a credential.acquired project-room event', async () => {
+    // First load: not connected. After the event: connected.
+    listMock.mockResolvedValueOnce({ data: [] });
+    render(<ConnectionsPage />);
+
+    const card = await screen.findByTestId('connection-card-linear');
+    // Exact string targets the Badge only (the description is "Not connected.").
+    expect(within(card).getByText('Not connected')).toBeTruthy();
+
+    listMock.mockResolvedValueOnce({ data: [connected] });
+    act(() => {
+      webSocketService._unsafeInjectEventForHarness('credential.acquired', {
+        projectId: 'p1',
+        data: { provider: 'linear', accountLabel: 'Acme Workspace' },
+      } as unknown as SocketNotification);
+    });
+
+    await waitFor(() =>
+      expect(screen.getByText(/Authenticated as Acme Workspace/)).toBeTruthy(),
+    );
+  });
+});
