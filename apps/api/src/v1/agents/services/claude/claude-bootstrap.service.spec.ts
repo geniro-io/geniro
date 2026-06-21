@@ -165,6 +165,43 @@ describe('ClaudeBootstrapService', () => {
         message: expect.stringContaining('network timeout'),
       });
     });
+
+    it('verifies the native CLI binary landed BEFORE touching the install marker', async () => {
+      // The Claude Code CLI ships as a per-platform OPTIONAL dep; npm silently
+      // skips one whose fetch fails, so `npm install` can exit 0 without the
+      // binary and then fail opaquely at first `query()`. The install chain must
+      // assert the platform package is present and gate the marker on it — so a
+      // half-install is never cached as good and the next session retries.
+      exec.mockImplementation(async (params: { cmd: string | string[] }) => {
+        const cmd = Array.isArray(params.cmd)
+          ? params.cmd.join(' && ')
+          : params.cmd;
+        // Marker absent → take the install branch; everything else succeeds.
+        if (cmd.startsWith('test -f') && cmd.includes('.installed-p')) {
+          return { exitCode: 1, fail: false, stderr: '' };
+        }
+        return { exitCode: 0, fail: false, stderr: '' };
+      });
+
+      await service.ensureSessionReady(runtime, {});
+
+      const joined = (cmd: string | string[]): string =>
+        Array.isArray(cmd) ? cmd.join(' && ') : String(cmd);
+      const installCall = exec.mock.calls.find((c) =>
+        joined(c[0].cmd).includes('npm install'),
+      );
+      expect(installCall).toBeDefined();
+      const installCmd = joined(installCall![0].cmd);
+      // The platform-native-package presence guard is part of the `&&` chain (the
+      // `-*` glob is unique to the guard — `npm install …claude-agent-sdk@<ver>`
+      // has no trailing dash), so a missing binary fails the chain.
+      expect(installCmd).toContain("-name 'claude-agent-sdk-*'");
+      expect(installCmd).toContain('exit 1');
+      // ...and it gates the marker: the verification precedes `touch <marker>`.
+      expect(installCmd.indexOf("-name 'claude-agent-sdk-*'")).toBeLessThan(
+        installCmd.lastIndexOf('touch '),
+      );
+    });
   });
 
   describe('plugin repo URL validation', () => {
