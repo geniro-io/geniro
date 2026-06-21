@@ -12,6 +12,7 @@ import {
   vi,
 } from 'vitest';
 
+import { AppContextStorage } from '../../../auth/app-context-storage';
 import { GraphDao } from '../../../v1/graphs/dao/graph.dao';
 import { GraphEntity } from '../../../v1/graphs/entity/graph.entity';
 import { GraphStatus } from '../../../v1/graphs/graphs.types';
@@ -25,6 +26,9 @@ import {
   CredentialAcquiredEvent,
 } from '../../../v1/oauth-credentials/oauth-credentials.events';
 import { OAuthProvider } from '../../../v1/oauth-credentials/oauth-credentials.types';
+import { OAuthCredentialsService } from '../../../v1/oauth-credentials/services/oauth-credentials.service';
+import { OAuthExchangeService } from '../../../v1/oauth-credentials/services/oauth-exchange.service';
+import { SecretEntity } from '../../../v1/secrets/entity/secret.entity';
 import { SecretsStoreService } from '../../../v1/secrets-store/services/secrets-store.service';
 import { ThreadsDao } from '../../../v1/threads/dao/threads.dao';
 import { ThreadEntity } from '../../../v1/threads/entity/thread.entity';
@@ -41,6 +45,27 @@ const mockStore = {
   deleteSecret: vi.fn(async () => undefined),
 };
 
+const defaultPrepareAuthorization = async (
+  _provider: OAuthProvider,
+  _redirectUri: string,
+  state: string,
+): Promise<{
+  authorizeUrl: string;
+  client: { clientId: string; clientSecret: string | null };
+}> => ({
+  authorizeUrl: `https://mock.authorize.test/?state=${state}`,
+  client: { clientId: 'dcr-client-test', clientSecret: null },
+});
+
+// The exchange service is overridden so the suite never reaches the real
+// provider over the network. The "deletion-resistant" describe below drives the
+// REAL exchange() producer through this mock (NOT a hand-emitted event), so
+// removing the load-bearing eventEmitter.emit in exchange() turns it red.
+const mockExchange = {
+  prepareAuthorization: vi.fn(),
+  exchangeAuthorizationCode: vi.fn(),
+};
+
 describe('OAuth auth_required pause/resume (integration)', () => {
   let app: INestApplication;
   let preflight: OAuthRunPreflightService;
@@ -51,8 +76,10 @@ describe('OAuth auth_required pause/resume (integration)', () => {
   let graphDao: GraphDao;
   let oauthDao: OAuthCredentialsDao;
   let threadsDao: ThreadsDao;
+  let credentialsService: OAuthCredentialsService;
   let em: EntityManager;
   let projectId: string;
+  let ctx: AppContextStorage;
   const createdGraphIds: string[] = [];
 
   beforeAll(async () => {
@@ -60,6 +87,8 @@ describe('OAuth auth_required pause/resume (integration)', () => {
       builder
         .overrideProvider(SecretsStoreService)
         .useValue(mockStore)
+        .overrideProvider(OAuthExchangeService)
+        .useValue(mockExchange)
         .compile(),
     );
     preflight = app.get(OAuthRunPreflightService);
@@ -70,6 +99,7 @@ describe('OAuth auth_required pause/resume (integration)', () => {
     graphDao = app.get(GraphDao);
     oauthDao = app.get(OAuthCredentialsDao);
     threadsDao = app.get(ThreadsDao);
+    credentialsService = app.get(OAuthCredentialsService);
     em = app.get(EntityManager);
   });
 
@@ -79,7 +109,14 @@ describe('OAuth auth_required pause/resume (integration)', () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
-    projectId = (await createTestProject(app)).projectId;
+    mockExchange.prepareAuthorization.mockReset();
+    mockExchange.prepareAuthorization.mockImplementation(
+      defaultPrepareAuthorization,
+    );
+    mockExchange.exchangeAuthorizationCode.mockReset();
+    const created = await createTestProject(app);
+    projectId = created.projectId;
+    ctx = created.ctx;
   });
 
   afterEach(async () => {
@@ -88,6 +125,7 @@ describe('OAuth auth_required pause/resume (integration)', () => {
     await forked.nativeDelete(ThreadEntity, { projectId });
     await forked.nativeDelete(GraphEntity, { projectId });
     await forked.nativeDelete(OAuthCredentialEntity, { projectId });
+    await forked.nativeDelete(SecretEntity, { projectId });
   });
 
   const seedLinearGraph = async (): Promise<string> => {
@@ -361,6 +399,112 @@ describe('OAuth auth_required pause/resume (integration)', () => {
           reason: 'credential',
         }),
         expect.any(Number),
+      );
+    });
+
+    /**
+     * The companion to the recovery case above, exercised through the REAL
+     * preflight (no credential row seeded -> `refreshIfNeeded` reports
+     * unauthenticated). A credential-wait thread whose credential is STILL
+     * missing must be left untouched — re-enqueuing it would churn a
+     * resume -> re-pause -> re-fan `auth_required` loop minting a fresh
+     * capability link every 60s sweep. The unit spec pins this with a mocked
+     * resolver; this pins it end-to-end against the real `collectUnauthenticated
+     * Providers` + DB so a regression in the real resolver is caught.
+     */
+    it('does NOT recover a credential-wait thread while the credential is still missing', async () => {
+      const graphId = await seedLinearGraph();
+      const externalThreadId = `${graphId}:wd2`;
+      await seedThread(graphId, externalThreadId, ThreadStatus.Waiting, {
+        waitReason: 'credential',
+        waitNodeId: 'agent-1',
+        waitCheckPrompt: 'go',
+        // No scheduledResumeAt; and crucially no OAuth credential row seeded —
+        // the provider is genuinely unauthenticated at sweep time.
+      });
+
+      const scheduleSpy = vi
+        .spyOn(queueService, 'scheduleResume')
+        .mockResolvedValue(undefined);
+
+      await (
+        resumeService as unknown as {
+          recoverOverdueThreads: () => Promise<void>;
+        }
+      ).recoverOverdueThreads();
+
+      // Still-missing credential -> the watchdog leaves the thread stranded
+      // (no resume enqueued), avoiding the re-pause churn loop.
+      expect(scheduleSpy).not.toHaveBeenCalled();
+      const thread = await threadsDao.getOne({ graphId, externalThreadId });
+      expect(thread?.status).toBe(ThreadStatus.Waiting);
+    });
+  });
+
+  describe('resume bridge — driven by the REAL exchange() producer (deletion-resistant)', () => {
+    /**
+     * The `credential.acquired @OnEvent` tests above hand-emit the event, so
+     * deleting the load-bearing `eventEmitter.emit(CREDENTIAL_ACQUIRED_EVENT)` in
+     * `OAuthCredentialsService.exchange()` keeps them green. This test instead
+     * drives a real `exchange()` end-to-end: start() stashes the pending-state
+     * carrying the paused thread's id, exchange() persists the token and emits
+     * the bridge event, and the @OnEvent resume handler enqueues the resume —
+     * exactly the production path. Deleting the emit makes THIS go red.
+     */
+    it('a completed exchange() resumes the paused credential-wait thread', async () => {
+      const graphId = await seedLinearGraph();
+      const externalThreadId = `${graphId}:x1`;
+      const threadRowId = await seedThread(
+        graphId,
+        externalThreadId,
+        ThreadStatus.Waiting,
+        {
+          waitReason: 'credential',
+          waitNodeId: 'agent-1',
+          waitCheckPrompt: 'go',
+        },
+      );
+
+      mockExchange.exchangeAuthorizationCode.mockResolvedValue({
+        accessToken: 'lin_oauth_token_f3',
+        scopes: ['read'],
+        expiresAt: null,
+        accountLabel: 'Acme',
+      });
+      const scheduleSpy = vi
+        .spyOn(queueService, 'scheduleResume')
+        .mockResolvedValue(undefined);
+
+      // start() persists the pending-state carrying this thread's id, so the real
+      // exchange() emits `credential.acquired` with `threadId` set (no hand-emit).
+      const { authorizeUrl } = await credentialsService.start(
+        ctx,
+        OAuthProvider.Linear,
+        { threadId: externalThreadId },
+      );
+      const state = new URL(authorizeUrl).searchParams.get('state') as string;
+
+      await credentialsService.exchange(ctx, {
+        provider: OAuthProvider.Linear,
+        code: 'code-f3',
+        state,
+      });
+
+      // The EventEmitter2 bridge is fire-and-forget, so the @OnEvent handler runs
+      // on a later tick — poll for the enqueue. Deleting the emit → never fires.
+      await vi.waitFor(
+        () => {
+          expect(scheduleSpy).toHaveBeenCalledWith(
+            expect.objectContaining({
+              threadId: threadRowId,
+              graphId,
+              externalThreadId,
+              reason: 'credential',
+            }),
+            0,
+          );
+        },
+        { timeout: 5000, interval: 50 },
       );
     });
   });

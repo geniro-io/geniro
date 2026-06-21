@@ -189,4 +189,84 @@ describe('OAuthRunPreflightService', () => {
       }),
     );
   });
+
+  describe('collectUnauthenticatedProviders', () => {
+    const collectParams = { graphId: 'graph-1', createdBy: 'user-1' };
+
+    it('returns an empty list and mints nothing when every provider is authenticated', async () => {
+      mockedCollect.mockReturnValue([{ nodeId: 'mcp-1', provider: 'linear' }]);
+      oauthCredentialsService.refreshIfNeeded.mockResolvedValue({
+        authenticated: true,
+      });
+
+      await expect(
+        service.collectUnauthenticatedProviders(collectParams),
+      ).resolves.toEqual([]);
+      // Read-only: the watchdog's resolver must never mint/pause/fan.
+      expect(capabilityLink.mint).not.toHaveBeenCalled();
+      expect(threadsDao.updateById).not.toHaveBeenCalled();
+      expect(notifications.emit).not.toHaveBeenCalled();
+    });
+
+    it('returns the provider when its credential is missing', async () => {
+      mockedCollect.mockReturnValue([{ nodeId: 'mcp-1', provider: 'linear' }]);
+      oauthCredentialsService.refreshIfNeeded.mockResolvedValue({
+        authenticated: false,
+      });
+
+      await expect(
+        service.collectUnauthenticatedProviders(collectParams),
+      ).resolves.toEqual([{ provider: OAuthProvider.Linear, nodeId: 'mcp-1' }]);
+    });
+
+    it('treats a refreshIfNeeded THROW as unauthenticated, returning the provider (fail-closed)', async () => {
+      // The watchdog acts on the EMPTY-result outcome (re-enqueue a stranded
+      // resume). If a transient AS error here collapsed to [] instead of
+      // surfacing the provider, the watchdog would falsely recover a thread whose
+      // credential is actually still unreachable — churning resume → re-pause.
+      mockedCollect.mockReturnValue([{ nodeId: 'mcp-1', provider: 'linear' }]);
+      oauthCredentialsService.refreshIfNeeded.mockRejectedValue(
+        new Error('AS unreachable'),
+      );
+
+      await expect(
+        service.collectUnauthenticatedProviders(collectParams),
+      ).resolves.toEqual([{ provider: OAuthProvider.Linear, nodeId: 'mcp-1' }]);
+      expect(logger.warn).toHaveBeenCalled();
+    });
+
+    it('returns an empty list for a graph with no OAuth nodes', async () => {
+      mockedCollect.mockReturnValue([]);
+
+      await expect(
+        service.collectUnauthenticatedProviders(collectParams),
+      ).resolves.toEqual([]);
+      expect(oauthCredentialsService.refreshIfNeeded).not.toHaveBeenCalled();
+    });
+
+    it('returns an empty list for a graph with no projectId', async () => {
+      graphDao.getById.mockResolvedValue({
+        projectId: null,
+        schema: {
+          nodes: [{ id: 'mcp-1', template: 'linear-mcp', config: {} }],
+        },
+      });
+
+      await expect(
+        service.collectUnauthenticatedProviders(collectParams),
+      ).resolves.toEqual([]);
+      expect(oauthCredentialsService.refreshIfNeeded).not.toHaveBeenCalled();
+    });
+
+    it('returns an empty list for a deleted/missing graph (getById -> null)', async () => {
+      // The watchdog calls this for a credential-wait thread whose graph row may
+      // have been deleted. A null graph must resolve to [] (no providers to
+      // resolve), never throw — a throw here would abort the per-thread recovery.
+      graphDao.getById.mockResolvedValue(null);
+
+      await expect(
+        service.collectUnauthenticatedProviders(collectParams),
+      ).resolves.toEqual([]);
+    });
+  });
 });

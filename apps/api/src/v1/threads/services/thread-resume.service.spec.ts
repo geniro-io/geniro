@@ -39,8 +39,11 @@ const mockTransitionService = {
 };
 
 // Default: no credential pause, so existing resume paths proceed unchanged.
+// collectUnauthenticatedProviders defaults to [] (every credential valid), so a
+// credential-wait recovery enqueues unless a test overrides it.
 const mockOAuthPreflight = {
   checkAndPauseIfNeeded: vi.fn().mockResolvedValue(false),
+  collectUnauthenticatedProviders: vi.fn().mockResolvedValue([]),
 };
 
 const mockGraphRegistry = {
@@ -531,7 +534,10 @@ describe('ThreadResumeService', () => {
       expect(mockQueueService.scheduleResume).not.toHaveBeenCalled();
     });
 
-    it('skips threads without scheduledResumeAt metadata', async () => {
+    it('skips a non-credential thread without scheduledResumeAt metadata', async () => {
+      // A timer wait clears `scheduledResumeAt` on completion; a thread with no
+      // wait metadata at all is neither a timer nor a credential wait — it must
+      // not be touched by the watchdog.
       const threadNoMeta = makeThread({ metadata: {} });
       mockThreadsDao.getAll.mockResolvedValue([threadNoMeta]);
 
@@ -539,8 +545,180 @@ describe('ThreadResumeService', () => {
         service as unknown as { recoverOverdueThreads: () => Promise<void> }
       ).recoverOverdueThreads();
 
-      expect(mockQueueService.hasJob).not.toHaveBeenCalled();
+      expect(
+        mockOAuthPreflight.collectUnauthenticatedProviders,
+      ).not.toHaveBeenCalled();
       expect(mockQueueService.scheduleResume).not.toHaveBeenCalled();
+    });
+
+    it('recovers a credential-wait thread (no scheduledResumeAt) once the credential is valid', async () => {
+      // A credential wait is event-driven (no timer). If its `credential.acquired`
+      // resume was missed, this watchdog is the only recovery path — it must
+      // re-enqueue the resume the moment the provider's credential is valid.
+      const credentialWait = makeThread({
+        metadata: {
+          waitReason: 'credential',
+          waitNodeId: 'node-1',
+          waitCheckPrompt: 'go',
+        },
+      });
+      mockThreadsDao.getAll.mockResolvedValue([credentialWait]);
+      mockQueueService.hasJob.mockResolvedValue(false);
+      mockOAuthPreflight.collectUnauthenticatedProviders.mockResolvedValue([]);
+
+      await (
+        service as unknown as { recoverOverdueThreads: () => Promise<void> }
+      ).recoverOverdueThreads();
+
+      expect(
+        mockOAuthPreflight.collectUnauthenticatedProviders,
+      ).toHaveBeenCalledWith({ graphId: 'graph-1', createdBy: 'user-1' });
+      expect(mockQueueService.scheduleResume).toHaveBeenCalledWith(
+        expect.objectContaining({
+          threadId: 'thread-1',
+          graphId: 'graph-1',
+          externalThreadId: 'ext-thread-1',
+          nodeId: 'node-1',
+          checkPrompt: 'go',
+          reason: 'credential',
+          createdBy: 'user-1',
+        }),
+        0,
+      );
+    });
+
+    it('does NOT recover a credential-wait thread while the credential is still missing', async () => {
+      // Re-enqueuing while the credential is still gone would churn a
+      // resume → re-pause → re-fan `auth_required` loop every sweep.
+      const credentialWait = makeThread({
+        metadata: { waitReason: 'credential', waitNodeId: 'node-1' },
+      });
+      mockThreadsDao.getAll.mockResolvedValue([credentialWait]);
+      mockQueueService.hasJob.mockResolvedValue(false);
+      mockOAuthPreflight.collectUnauthenticatedProviders.mockResolvedValue([
+        { provider: 'linear', nodeId: 'node-1' },
+      ]);
+
+      await (
+        service as unknown as { recoverOverdueThreads: () => Promise<void> }
+      ).recoverOverdueThreads();
+
+      expect(mockQueueService.scheduleResume).not.toHaveBeenCalled();
+    });
+
+    it('does NOT recover a credential-wait thread that already has a pending job', async () => {
+      const credentialWait = makeThread({
+        metadata: { waitReason: 'credential', waitNodeId: 'node-1' },
+      });
+      mockThreadsDao.getAll.mockResolvedValue([credentialWait]);
+      mockQueueService.hasJob.mockResolvedValue(true);
+
+      await (
+        service as unknown as { recoverOverdueThreads: () => Promise<void> }
+      ).recoverOverdueThreads();
+
+      expect(
+        mockOAuthPreflight.collectUnauthenticatedProviders,
+      ).not.toHaveBeenCalled();
+      expect(mockQueueService.scheduleResume).not.toHaveBeenCalled();
+    });
+
+    it('keeps sweeping when one credential-wait throws — a later thread still recovers', async () => {
+      // Two credential-wait threads. The FIRST throws inside the provider
+      // resolution; the per-thread guard must swallow it so the SECOND (whose
+      // credential is now valid) is still re-enqueued. A regression that lets the
+      // throw escape recoverCredentialWait would either abort the loop before the
+      // second thread or bubble to the outer catch — both leave thread-2 stranded.
+      const throwingThread = makeThread({
+        id: 'thread-throws',
+        externalThreadId: 'ext-throws',
+        metadata: { waitReason: 'credential', waitNodeId: 'node-1' },
+      });
+      const recoverableThread = makeThread({
+        id: 'thread-ok',
+        externalThreadId: 'ext-ok',
+        metadata: {
+          waitReason: 'credential',
+          waitNodeId: 'node-9',
+          waitCheckPrompt: 'resume me',
+        },
+      });
+      mockThreadsDao.getAll.mockResolvedValue([
+        throwingThread,
+        recoverableThread,
+      ]);
+      mockQueueService.hasJob.mockResolvedValue(false);
+      mockOAuthPreflight.collectUnauthenticatedProviders
+        .mockRejectedValueOnce(new Error('AS unreachable'))
+        .mockResolvedValueOnce([]);
+
+      await (
+        service as unknown as { recoverOverdueThreads: () => Promise<void> }
+      ).recoverOverdueThreads();
+
+      // Thread-2 recovered despite thread-1 throwing.
+      expect(mockQueueService.scheduleResume).toHaveBeenCalledTimes(1);
+      expect(mockQueueService.scheduleResume).toHaveBeenCalledWith(
+        expect.objectContaining({
+          threadId: 'thread-ok',
+          externalThreadId: 'ext-ok',
+          nodeId: 'node-9',
+          checkPrompt: 'resume me',
+          reason: 'credential',
+        }),
+        0,
+      );
+      // The first thread's failure was logged, not re-thrown, and produced no
+      // false resume enqueue for itself.
+      expect(mockLogger.error).toHaveBeenCalledWith(
+        expect.any(Error),
+        'Failed to recover stranded credential-wait thread',
+        expect.objectContaining({ threadId: 'thread-throws' }),
+      );
+    });
+
+    it('does NOT abort the sweep when a credential-wait throws before a timer wait — the timer still re-schedules', async () => {
+      // A credential-wait thread that throws must not prevent an OVERDUE TIMER
+      // wait later in the same batch from being re-scheduled. This guards the
+      // cross-cohort path: the credential branch (no scheduledResumeAt) and the
+      // timer branch (overdue scheduledResumeAt) share one loop, and a throw on
+      // the former must not strand the latter.
+      const throwingCredential = makeThread({
+        id: 'thread-cred-throws',
+        metadata: { waitReason: 'credential', waitNodeId: 'node-1' },
+      });
+      const overdueTimer = makeThread({
+        id: 'thread-timer',
+        externalThreadId: 'ext-timer',
+        metadata: {
+          scheduledResumeAt: new Date(Date.now() - 120_000).toISOString(),
+          waitReason: 'Waiting for deploy',
+          waitNodeId: 'node-7',
+          waitCheckPrompt: 'check deploy',
+        },
+      });
+      mockThreadsDao.getAll.mockResolvedValue([
+        throwingCredential,
+        overdueTimer,
+      ]);
+      mockQueueService.hasJob.mockResolvedValue(false);
+      mockOAuthPreflight.collectUnauthenticatedProviders.mockRejectedValue(
+        new Error('AS unreachable'),
+      );
+
+      await (
+        service as unknown as { recoverOverdueThreads: () => Promise<void> }
+      ).recoverOverdueThreads();
+
+      expect(mockQueueService.scheduleResume).toHaveBeenCalledTimes(1);
+      expect(mockQueueService.scheduleResume).toHaveBeenCalledWith(
+        expect.objectContaining({
+          threadId: 'thread-timer',
+          externalThreadId: 'ext-timer',
+          nodeId: 'node-7',
+        }),
+        0,
+      );
     });
 
     it('logs error and does not throw on failure', async () => {

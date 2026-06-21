@@ -46,7 +46,7 @@ export class CacheService implements OnModuleDestroy {
    * Get a string value by key
    */
   async get(key: string): Promise<string | null> {
-    return this.redis.get(key);
+    return await this.redis.get(key);
   }
 
   /**
@@ -75,7 +75,7 @@ export class CacheService implements OnModuleDestroy {
    * deletes it. Returns the prior value, or `null` if the key was absent.
    */
   async getDel(key: string): Promise<string | null> {
-    return this.redis.getdel(key);
+    return await this.redis.getdel(key);
   }
 
   /**
@@ -97,14 +97,14 @@ export class CacheService implements OnModuleDestroy {
    * Get a hash field
    */
   async hget(key: string, field: string): Promise<string | null> {
-    return this.redis.hget(key, field);
+    return await this.redis.hget(key, field);
   }
 
   /**
    * Get all hash fields
    */
   async hgetall(key: string): Promise<Record<string, string>> {
-    return this.redis.hgetall(key);
+    return await this.redis.hgetall(key);
   }
 
   /**

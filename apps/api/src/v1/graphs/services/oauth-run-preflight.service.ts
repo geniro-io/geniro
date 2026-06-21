@@ -73,12 +73,78 @@ export class OAuthRunPreflightService {
     }
     const projectId = graph.projectId;
 
+    const unauthenticated = await this.resolveUnauthenticatedForGraph(
+      graph,
+      createdBy,
+    );
+    if (unauthenticated.length === 0) {
+      return false;
+    }
+
+    await this.pauseThread(
+      graphId,
+      externalThreadId,
+      agentNodeId,
+      params.pendingMessageText,
+    );
+
+    // One `auth_required` per still-unauthenticated provider, each with its own
+    // single-use capability link. With "resume the event's threadId only", a
+    // multi-provider graph resolves iteratively: authenticating one provider
+    // resumes the run, which re-pre-flights and re-pauses for the next.
+    for (const { provider, nodeId } of unauthenticated) {
+      const capabilityToken = await this.capabilityLink.mint({
+        projectId,
+        provider,
+        threadId: externalThreadId,
+        createdBy,
+      });
+      await this.notifications.emit({
+        type: NotificationEvent.AuthRequired,
+        data: { provider, capabilityToken },
+        projectId,
+        graphId,
+        nodeId,
+        threadId: externalThreadId,
+      });
+    }
+
+    return true;
+  }
+
+  /**
+   * Read-only: the OAuth-MCP providers on `graphId` whose credential is missing
+   * or expired (and not refreshable) for `createdBy`. An EMPTY result means every
+   * needed credential is valid right now. No side effects — the single source of
+   * truth shared by two consumers that act on OPPOSITE outcomes:
+   * `checkAndPauseIfNeeded` pauses + fans `auth_required` on a NON-empty result,
+   * and the resume watchdog (`ThreadResumeService.recoverOverdueThreads`)
+   * re-enqueues a stranded credential-wait on an EMPTY result. Keeping the
+   * provider-resolution in one place stops the two paths from drifting.
+   */
+  async collectUnauthenticatedProviders(params: {
+    graphId: string;
+    createdBy: string;
+  }): Promise<{ provider: OAuthProvider; nodeId: string }[]> {
+    const graph = await this.graphDao.getById(params.graphId);
+    return await this.resolveUnauthenticatedForGraph(graph, params.createdBy);
+  }
+
+  private async resolveUnauthenticatedForGraph(
+    graph: Awaited<ReturnType<GraphDao['getById']>>,
+    createdBy: string,
+  ): Promise<{ provider: OAuthProvider; nodeId: string }[]> {
+    if (!graph?.projectId || !graph.schema?.nodes) {
+      return [];
+    }
+    const projectId = graph.projectId;
+
     const oauthNodes = collectOAuthNodes(
       graph.schema.nodes,
       (templateId) => this.templateRegistry.getTemplate(templateId)?.schema,
     );
     if (oauthNodes.length === 0) {
-      return false;
+      return [];
     }
 
     // A background run carries no HTTP context; build a synthetic one with the
@@ -128,39 +194,7 @@ export class OAuthRunPreflightService {
       }
     }
 
-    if (unauthenticated.length === 0) {
-      return false;
-    }
-
-    await this.pauseThread(
-      graphId,
-      externalThreadId,
-      agentNodeId,
-      params.pendingMessageText,
-    );
-
-    // One `auth_required` per still-unauthenticated provider, each with its own
-    // single-use capability link. With "resume the event's threadId only", a
-    // multi-provider graph resolves iteratively: authenticating one provider
-    // resumes the run, which re-pre-flights and re-pauses for the next.
-    for (const { provider, nodeId } of unauthenticated) {
-      const capabilityToken = await this.capabilityLink.mint({
-        projectId,
-        provider,
-        threadId: externalThreadId,
-        createdBy,
-      });
-      await this.notifications.emit({
-        type: NotificationEvent.AuthRequired,
-        data: { provider, capabilityToken },
-        projectId,
-        graphId,
-        nodeId,
-        threadId: externalThreadId,
-      });
-    }
-
-    return true;
+    return unauthenticated;
   }
 
   private async pauseThread(

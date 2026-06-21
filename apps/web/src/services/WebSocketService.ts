@@ -476,6 +476,7 @@ class WebSocketService {
     if (this.socket) {
       console.debug('[WebSocket] Disconnecting');
       this.subscribedGraphs.clear();
+      this.subscribedProjects.clear();
       this.socket.disconnect();
       this.socket = null;
     }

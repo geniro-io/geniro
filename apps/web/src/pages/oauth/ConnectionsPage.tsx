@@ -46,12 +46,14 @@ const providerLabel = (provider: string): string =>
 
 interface DisconnectConfirmationProps {
   provider: string | null;
+  accountLabel: string | null;
   onClose: () => void;
   onDisconnected: () => void;
 }
 
 const DisconnectConfirmationDialog = ({
   provider,
+  accountLabel,
   onClose,
   onDisconnected,
 }: DisconnectConfirmationProps) => {
@@ -92,8 +94,9 @@ const DisconnectConfirmationDialog = ({
             <span className="font-semibold">
               {provider ? providerLabel(provider) : ''}
             </span>
-            ? The stored token will be deleted. Any agents using this connection
-            will stop working until you reconnect.
+            {accountLabel ? ` (${accountLabel})` : ''}? The stored token will be
+            deleted. Any agents using this connection will stop working until
+            you reconnect.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
@@ -131,13 +134,16 @@ export const ConnectionsPage = () => {
     provider: string;
     url: string;
   } | null>(null);
+  const [loadError, setLoadError] = useState(false);
 
   const fetchCredentials = useCallback(async () => {
     try {
       const { data } = await oauthApi.listOAuthCredentials();
       setCredentials(data);
+      setLoadError(false);
     } catch (err: unknown) {
       toast.error(extractApiErrorMessage(err, 'Failed to load connections'));
+      setLoadError(true);
     } finally {
       setLoading(false);
     }
@@ -226,6 +232,24 @@ export const ConnectionsPage = () => {
         <div className="flex items-center justify-center py-12">
           <Loader2 className="text-muted-foreground size-6 animate-spin" />
         </div>
+      ) : loadError ? (
+        <Card data-testid="connections-load-error">
+          <CardContent className="flex flex-col items-center gap-3 py-8 text-center">
+            <span className="text-muted-foreground text-sm">
+              Couldn&apos;t load your connections.
+            </span>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                setLoadError(false);
+                setLoading(true);
+                void fetchCredentials();
+              }}>
+              Retry
+            </Button>
+          </CardContent>
+        </Card>
       ) : (
         <div className="space-y-3">
           {ALL_PROVIDERS.map((provider) => {
@@ -320,6 +344,13 @@ export const ConnectionsPage = () => {
 
       <DisconnectConfirmationDialog
         provider={disconnectProvider}
+        accountLabel={
+          disconnectProvider
+            ? (statusByProvider.get(
+                disconnectProvider as OAuthStatusResponseDto['provider'],
+              )?.accountLabel ?? null)
+            : null
+        }
         onClose={() => setDisconnectProvider(null)}
         onDisconnected={fetchCredentials}
       />

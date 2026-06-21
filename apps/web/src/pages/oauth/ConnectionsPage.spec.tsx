@@ -10,10 +10,18 @@ import {
 } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { listMock, startMock, disconnectMock } = vi.hoisted(() => ({
+const {
+  listMock,
+  startMock,
+  disconnectMock,
+  toastErrorMock,
+  toastSuccessMock,
+} = vi.hoisted(() => ({
   listMock: vi.fn(),
   startMock: vi.fn(),
   disconnectMock: vi.fn(),
+  toastErrorMock: vi.fn(),
+  toastSuccessMock: vi.fn(),
 }));
 
 // Stub only the network client; keep the real cross-tab guards.
@@ -29,6 +37,11 @@ vi.mock('./oauth-api', async () => {
     },
   };
 });
+
+// Capture toasts so the error/success paths are assertable.
+vi.mock('sonner', () => ({
+  toast: { error: toastErrorMock, success: toastSuccessMock },
+}));
 
 // The page only reads the project to keep the header in sync — stub it so the
 // test needs no Router / ProjectProvider wrapper.
@@ -59,6 +72,8 @@ describe('ConnectionsPage', () => {
     listMock.mockReset();
     startMock.mockReset();
     disconnectMock.mockReset();
+    toastErrorMock.mockReset();
+    toastSuccessMock.mockReset();
   });
 
   afterEach(() => {
@@ -158,5 +173,58 @@ describe('ConnectionsPage', () => {
     await waitFor(() =>
       expect(screen.getByText(/Authenticated as Acme Workspace/)).toBeTruthy(),
     );
+  });
+
+  it('names the account in the disconnect confirmation dialog', async () => {
+    listMock.mockResolvedValue({ data: [connected] });
+
+    render(<ConnectionsPage />);
+    const card = await screen.findByTestId('connection-card-linear');
+    fireEvent.click(within(card).getByRole('button', { name: /disconnect/i }));
+
+    const dialog = await screen.findByRole('alertdialog');
+    // The dialog names the account being disconnected, not just the provider.
+    expect(within(dialog).getByText(/\(Acme Workspace\)/)).toBeTruthy();
+  });
+
+  it('keeps the dialog open and toasts an error when disconnect fails', async () => {
+    listMock.mockResolvedValue({ data: [connected] });
+    disconnectMock.mockRejectedValue(new Error('boom'));
+
+    render(<ConnectionsPage />);
+    const card = await screen.findByTestId('connection-card-linear');
+    fireEvent.click(within(card).getByRole('button', { name: /disconnect/i }));
+
+    const dialog = await screen.findByRole('alertdialog');
+    fireEvent.click(
+      within(dialog).getByRole('button', { name: /disconnect/i }),
+    );
+
+    await waitFor(() => expect(disconnectMock).toHaveBeenCalledWith('linear'));
+    await waitFor(() => expect(toastErrorMock).toHaveBeenCalled());
+    // The dialog stays open on failure so the user can retry — not dismissed.
+    expect(screen.queryByRole('alertdialog')).not.toBeNull();
+  });
+
+  it('shows a retry affordance when the list fails to load, then recovers', async () => {
+    listMock.mockRejectedValueOnce(new Error('nope'));
+
+    render(<ConnectionsPage />);
+
+    const errorCard = await screen.findByTestId('connections-load-error');
+    expect(
+      within(errorCard).getByRole('button', { name: /retry/i }),
+    ).toBeTruthy();
+    expect(toastErrorMock).toHaveBeenCalled();
+
+    // Retry succeeds → the provider cards render in place of the error card.
+    listMock.mockResolvedValueOnce({ data: [connected] });
+    fireEvent.click(within(errorCard).getByRole('button', { name: /retry/i }));
+
+    const card = await screen.findByTestId('connection-card-linear');
+    expect(
+      within(card).getByText(/Authenticated as Acme Workspace/),
+    ).toBeTruthy();
+    expect(screen.queryByTestId('connections-load-error')).toBeNull();
   });
 });

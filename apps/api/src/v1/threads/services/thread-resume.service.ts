@@ -14,6 +14,7 @@ import { NotificationsService } from '../../notifications/services/notifications
 import type { CredentialAcquiredEvent } from '../../oauth-credentials/oauth-credentials.events';
 import { CREDENTIAL_ACQUIRED_EVENT } from '../../oauth-credentials/oauth-credentials.events';
 import { ThreadsDao } from '../dao/threads.dao';
+import { ThreadEntity } from '../entity/thread.entity';
 import type { ThreadWaitingEvent } from '../threads.types';
 import { THREAD_WAITING_EVENT, ThreadStatus } from '../threads.types';
 import { clearWaitMetadata } from '../threads.utils';
@@ -131,10 +132,14 @@ export class ThreadResumeService implements OnModuleInit, OnModuleDestroy {
    *
    * Multi-pod-safe: it ENQUEUES a zero-delay BullMQ resume keyed by the thread,
    * NOT an in-process `agent.run` — on EKS the pod that handles this event is
-   * usually NOT the thread's owner pod, and the queue routes the resume to
-   * whichever pod holds the graph. The actual run happens in `handleResume`,
-   * which re-pre-flights the credential (so a race where the token is already
-   * gone again re-pauses cleanly).
+   * usually NOT the pod holding the graph in memory. The queue name is SHARED
+   * across pods (it keys on the instance fingerprint, identical on every pod of
+   * a deployment), so any worker may pick the job up; `handleResume` reads the
+   * pod-LOCAL graph registry and THROWS when the graph isn't loaded there, which
+   * drives a BullMQ retry until a pod that holds it runs the resume (or, after
+   * the retries exhaust, `handleResumeFailed` stops the thread). It also
+   * re-pre-flights the credential, so a race where the token is already gone
+   * again re-pauses cleanly.
    */
   @OnEvent(CREDENTIAL_ACQUIRED_EVENT)
   async onCredentialAcquired(event: CredentialAcquiredEvent): Promise<void> {
@@ -280,9 +285,12 @@ export class ThreadResumeService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Periodic safety net: finds threads stuck in Waiting with an overdue
-   * scheduledResumeAt and no BullMQ job, then re-schedules the resume.
-   * Catches jobs lost during hot-reloads or other transient failures.
+   * Periodic safety net for Waiting threads with no live BullMQ job. Two cohorts:
+   * a TIMER wait (overdue `scheduledResumeAt`) is re-scheduled once past grace; a
+   * CREDENTIAL wait (no `scheduledResumeAt`, `waitReason === 'credential'`) is
+   * event-driven and handed to `recoverCredentialWait`, which re-enqueues it only
+   * once its provider's credential is valid. Catches resumes lost during
+   * hot-reloads, a missed `credential.acquired`, or other transient failures.
    */
   private async recoverOverdueThreads(): Promise<void> {
     try {
@@ -296,6 +304,17 @@ export class ThreadResumeService implements OnModuleInit, OnModuleDestroy {
         const metadata = thread.metadata as Record<string, unknown> | undefined;
         const scheduledAt = metadata?.scheduledResumeAt as string | undefined;
         if (!scheduledAt) {
+          // A credential wait is event-driven (no timer): its resume is fanned by
+          // `credential.acquired`, which resumes ONLY the event's own threadId. A
+          // thread can still be stranded Waiting — a co-pending thread on the same
+          // (project, provider) whose acquire carried a different threadId, or a
+          // proactive Connections connect that carried no threadId at all — so this
+          // watchdog re-checks every Waiting credential thread as the backstop.
+          // (A thread whose OWN resume retry-exhausts is Stopped by
+          // handleResumeFailed, not Waiting, so it is terminal — out of scope here.)
+          if (metadata?.waitReason === CREDENTIAL_WAIT_REASON) {
+            await this.recoverCredentialWait(thread);
+          }
           continue;
         }
 
@@ -337,6 +356,59 @@ export class ThreadResumeService implements OnModuleInit, OnModuleDestroy {
       this.logger.error(
         err instanceof Error ? err : new Error(String(err)),
         'Failed to check for overdue waiting threads',
+      );
+    }
+  }
+
+  /**
+   * Recover a credential-wait thread stranded in Waiting (its event-driven
+   * `credential.acquired` resume was missed). Re-enqueues the resume ONLY when
+   * the provider's credential is valid NOW — a still-missing credential is left
+   * untouched so the watchdog doesn't churn a 60s resume → re-pause → re-fan
+   * `auth_required` loop minting a fresh capability link each sweep. A thread
+   * that already has a pending job is skipped. Per-thread guarded so one failure
+   * cannot abort the whole sweep.
+   */
+  private async recoverCredentialWait(thread: ThreadEntity): Promise<void> {
+    try {
+      if (await this.queueService.hasJob(thread.id)) {
+        return;
+      }
+
+      const unauthenticated =
+        await this.oauthPreflight.collectUnauthenticatedProviders({
+          graphId: thread.graphId,
+          createdBy: thread.createdBy,
+        });
+      if (unauthenticated.length > 0) {
+        // Credential still missing — nothing to recover yet; wait for the next
+        // `credential.acquired` or the next sweep.
+        return;
+      }
+
+      const metadata = thread.metadata as Record<string, unknown> | undefined;
+      this.logger.warn(
+        'Recovering stranded credential-wait thread — credential now valid, re-scheduling resume',
+        { threadId: thread.id, graphId: thread.graphId },
+      );
+      await this.queueService.scheduleResume(
+        {
+          threadId: thread.id,
+          graphId: thread.graphId,
+          nodeId: (metadata?.waitNodeId as string) ?? '',
+          externalThreadId: thread.externalThreadId,
+          checkPrompt: (metadata?.waitCheckPrompt as string) ?? '',
+          reason: CREDENTIAL_WAIT_REASON,
+          scheduledAt: new Date().toISOString(),
+          createdBy: thread.createdBy,
+        },
+        0, // Fire immediately — the credential is already valid.
+      );
+    } catch (err) {
+      this.logger.error(
+        err instanceof Error ? err : new Error(String(err)),
+        'Failed to recover stranded credential-wait thread',
+        { threadId: thread.id, graphId: thread.graphId },
       );
     }
   }

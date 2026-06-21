@@ -62,12 +62,20 @@ export const RjsfOAuthAuthenticateField = (
 
   // Wrap onChange in a ref so the status-refresh callback can wire the secret
   // name into the field value without re-subscribing the cross-tab listeners.
+  // onChange, the field path, and the current formData are read through refs so
+  // refreshStatus depends ONLY on `provider`. Otherwise an unrelated form edit
+  // (formData changes, or rjsf hands a fresh `fieldPathId.path` array each
+  // render) would recreate refreshStatus, re-firing the status fetch AND
+  // re-subscribing the cross-tab listeners (a fresh BroadcastChannel) on every
+  // keystroke.
   const onChangeRef = useRef(props.onChange);
+  const fieldPathRef = useRef(props.fieldPathId.path);
+  const formDataRef = useRef(props.formData);
   useEffect(() => {
     onChangeRef.current = props.onChange;
+    fieldPathRef.current = props.fieldPathId.path;
+    formDataRef.current = props.formData;
   });
-  const fieldPath = props.fieldPathId.path;
-  const formData = props.formData;
 
   const refreshStatus = useCallback(async () => {
     if (!provider) {
@@ -89,16 +97,16 @@ export const RjsfOAuthAuthenticateField = (
       if (
         data.authenticated &&
         data.secretName &&
-        formData !== data.secretName
+        formDataRef.current !== data.secretName
       ) {
-        onChangeRef.current(data.secretName as unknown, fieldPath);
+        onChangeRef.current(data.secretName as unknown, fieldPathRef.current);
       }
     } catch (error) {
       console.warn('Failed to load OAuth status', error);
     } finally {
       setLoading(false);
     }
-  }, [provider, formData, fieldPath]);
+  }, [provider]);
 
   useEffect(() => {
     void refreshStatus();
