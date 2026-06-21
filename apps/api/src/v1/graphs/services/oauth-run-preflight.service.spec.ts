@@ -22,6 +22,7 @@ describe('OAuthRunPreflightService', () => {
   let threadsDao: {
     getOne: ReturnType<typeof vi.fn>;
     updateById: ReturnType<typeof vi.fn>;
+    insertIfNotExists: ReturnType<typeof vi.fn>;
   };
   let transitionService: { computeTransition: ReturnType<typeof vi.fn> };
   let logger: { warn: ReturnType<typeof vi.fn> };
@@ -69,6 +70,7 @@ describe('OAuthRunPreflightService', () => {
         metadata: {},
       })),
       updateById: vi.fn(async () => 1),
+      insertIfNotExists: vi.fn(async () => ({ id: 'thread-row-new' })),
     };
     transitionService = {
       computeTransition: vi.fn(() => ({
@@ -151,6 +153,53 @@ describe('OAuthRunPreflightService', () => {
         threadId: 'graph-1:thread-1',
         data: { provider: OAuthProvider.Linear, capabilityToken: 'cap-token' },
       }),
+    );
+  });
+
+  it('inserts a Waiting row when the thread row does not exist yet (new-thread first run)', async () => {
+    // Regression: a brand-new thread's row is created LATE (ensureThreadRow, after
+    // invokeAgent), so at pre-flight time getOne returns null. The pre-flight MUST
+    // insert the Waiting row up-front instead of no-opping — otherwise the run
+    // proceeds without the credential and strands the thread Running, unreachable
+    // by the credential-acquired resume + watchdog (both scoped to Waiting).
+    mockedCollect.mockReturnValue([{ nodeId: 'mcp-1', provider: 'linear' }]);
+    oauthCredentialsService.refreshIfNeeded.mockResolvedValue({
+      authenticated: false,
+    });
+    threadsDao.getOne.mockResolvedValue(null);
+    threadsDao.insertIfNotExists.mockResolvedValue({ id: 'thread-row-new' });
+
+    await expect(
+      service.checkAndPauseIfNeeded({ ...params, pendingMessageText: 'hi' }),
+    ).resolves.toBe(true);
+
+    // Inserted a fresh Waiting row (NOT a transition update) carrying the resume
+    // prompt + credential wait metadata, with no timer (runningStartedAt null).
+    expect(threadsDao.insertIfNotExists).toHaveBeenCalledWith(
+      expect.objectContaining({
+        graphId: 'graph-1',
+        projectId: 'proj-1',
+        createdBy: 'user-1',
+        externalThreadId: 'graph-1:thread-1',
+        status: ThreadStatus.Waiting,
+        runningStartedAt: null,
+        metadata: expect.objectContaining({
+          waitReason: CREDENTIAL_WAIT_REASON,
+          waitNodeId: 'agent-1',
+          waitCheckPrompt: 'hi',
+        }),
+      }),
+    );
+    expect(threadsDao.updateById).not.toHaveBeenCalled();
+    // Still fans auth_required + a ThreadUpdate(Waiting) so the UI suspends.
+    expect(notifications.emit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: NotificationEvent.ThreadUpdate,
+        data: expect.objectContaining({ status: ThreadStatus.Waiting }),
+      }),
+    );
+    expect(notifications.emit).toHaveBeenCalledWith(
+      expect.objectContaining({ type: NotificationEvent.AuthRequired }),
     );
   });
 

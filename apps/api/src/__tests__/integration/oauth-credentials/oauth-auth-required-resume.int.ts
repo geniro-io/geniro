@@ -210,6 +210,55 @@ describe('OAuth auth_required pause/resume (integration)', () => {
       ).toBeTruthy();
     });
 
+    it('CREATES a Waiting row when none exists yet (new-thread first run)', async () => {
+      // Regression for the production trigger ordering: a brand-new thread's row
+      // is created LATE (ThreadsService.ensureThreadRow, AFTER invokeAgent), so at
+      // pre-flight time there is NO row to transition. The pre-flight must INSERT
+      // the Waiting row itself. The sibling test above pre-seeds the row via
+      // seedThread() — mirroring the bug that masked this: with no row the old
+      // pauseThread merely warned "no thread row to pause" and the run proceeded
+      // without the credential, stranding the thread Running (never Waiting), so
+      // the credential-acquired resume + overdue watchdog could never recover it.
+      const graphId = await seedLinearGraph();
+      const externalThreadId = `${graphId}:new-thread`;
+      // Intentionally NO seedThread() — the row must not exist before pre-flight.
+      const emitSpy = vi.spyOn(notifications, 'emit');
+
+      const paused = await preflight.checkAndPauseIfNeeded({
+        graphId,
+        externalThreadId,
+        createdBy: TEST_USER_ID,
+        agentNodeId: 'agent-1',
+        pendingMessageText: 'list my issues',
+      });
+
+      expect(paused).toBe(true);
+
+      // The pre-flight INSERTED a fresh Waiting row (not just warned + no-opped).
+      const thread = await threadsDao.getOne({ graphId, externalThreadId });
+      expect(thread).toBeTruthy();
+      expect(thread?.status).toBe(ThreadStatus.Waiting);
+      expect(thread?.projectId).toBe(projectId);
+      expect(thread?.createdBy).toBe(TEST_USER_ID);
+      const meta = thread?.metadata as Record<string, unknown>;
+      expect(meta.waitReason).toBe('credential');
+      expect(meta.waitNodeId).toBe('agent-1');
+      expect(meta.waitCheckPrompt).toBe('list my issues');
+      // Pure credential wait — no timer, so the overdue watchdog won't churn it.
+      expect(meta.scheduledResumeAt).toBeUndefined();
+
+      const authReq = emitSpy.mock.calls
+        .map(([n]) => n)
+        .find((n) => n.type === NotificationEvent.AuthRequired);
+      expect(authReq).toBeDefined();
+      expect(authReq).toMatchObject({
+        projectId,
+        threadId: externalThreadId,
+        nodeId: 'linear-1',
+        data: { provider: OAuthProvider.Linear },
+      });
+    });
+
     it('proceeds (false) when a valid credential exists', async () => {
       const graphId = await seedLinearGraph();
       const externalThreadId = `${graphId}:t2`;

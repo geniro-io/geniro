@@ -83,6 +83,8 @@ export class OAuthRunPreflightService {
 
     await this.pauseThread(
       graphId,
+      projectId,
+      createdBy,
       externalThreadId,
       agentNodeId,
       params.pendingMessageText,
@@ -199,12 +201,52 @@ export class OAuthRunPreflightService {
 
   private async pauseThread(
     graphId: string,
+    projectId: string,
+    createdBy: string,
     externalThreadId: string,
     agentNodeId: string,
     pendingMessageText: string | undefined,
   ): Promise<void> {
     const thread = await this.threadsDao.getOne({ graphId, externalThreadId });
+
     if (!thread) {
+      // First run of a brand-new thread: its row is created LATE (ensureThreadRow,
+      // AFTER invokeAgent), so at pre-flight time there is nothing to transition.
+      // Without this, pauseThread would no-op and the run would proceed without
+      // the credential, then strand the thread `Running` — never `Waiting` — so
+      // the credential-acquired resume + overdue watchdog (both scoped to
+      // `Waiting`) could never recover it. Insert the `Waiting` row up-front
+      // (atomic onConflict-ignore); the later insert-only `ensureThreadRow` finds
+      // it and won't clobber it, and the resume re-runs it with the stashed prompt.
+      const waitCheckPrompt =
+        pendingMessageText && pendingMessageText.length > 0
+          ? pendingMessageText
+          : undefined;
+      const inserted = await this.threadsDao.insertIfNotExists({
+        graphId,
+        projectId,
+        createdBy,
+        externalThreadId,
+        status: ThreadStatus.Waiting,
+        runningStartedAt: null,
+        totalRunningMs: 0,
+        metadata: {
+          waitReason: CREDENTIAL_WAIT_REASON,
+          waitNodeId: agentNodeId,
+          waitCheckPrompt,
+        },
+      });
+      if (inserted) {
+        await this.emitWaitingUpdate(graphId, externalThreadId);
+        return;
+      }
+      // Lost the insert race to a concurrent path that created the row first —
+      // fall through to the transition path below by re-reading it.
+    }
+
+    const row =
+      thread ?? (await this.threadsDao.getOne({ graphId, externalThreadId }));
+    if (!row) {
       this.logger.warn('OAuth run-start pre-flight: no thread row to pause', {
         graphId,
         externalThreadId,
@@ -212,7 +254,7 @@ export class OAuthRunPreflightService {
       return;
     }
 
-    const prevMetadata = (thread.metadata ?? {}) as Record<string, unknown>;
+    const prevMetadata = (row.metadata ?? {}) as Record<string, unknown>;
     // Empty pending text (e.g. a multimodal trigger message whose content isn't a
     // string) must NOT overwrite a prior prompt — fall back to the stashed one so
     // a resume re-pause preserves the original message.
@@ -222,7 +264,7 @@ export class OAuthRunPreflightService {
         : (prevMetadata.waitCheckPrompt as string | undefined);
 
     const patch = this.transitionService.computeTransition(
-      thread,
+      row,
       ThreadStatus.Waiting,
     );
     // Start from a wait-metadata-CLEARED base so a thread that was waiting on a
@@ -230,16 +272,23 @@ export class OAuthRunPreflightService {
     // stale `scheduledResumeAt` — which the overdue watchdog would otherwise
     // treat as due and re-resume in a loop. A pure credential wait has no timer;
     // the resume is driven by the `credential.acquired` event, not a clock.
-    await this.threadsDao.updateById(thread.id, {
+    await this.threadsDao.updateById(row.id, {
       ...patch,
       metadata: {
-        ...(clearWaitMetadata(thread.metadata) ?? {}),
+        ...(clearWaitMetadata(row.metadata) ?? {}),
         waitReason: CREDENTIAL_WAIT_REASON,
         waitNodeId: agentNodeId,
         waitCheckPrompt,
       },
     });
 
+    await this.emitWaitingUpdate(graphId, externalThreadId);
+  }
+
+  private async emitWaitingUpdate(
+    graphId: string,
+    externalThreadId: string,
+  ): Promise<void> {
     await this.notifications.emit({
       type: NotificationEvent.ThreadUpdate,
       graphId,
