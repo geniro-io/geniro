@@ -11,6 +11,7 @@ import type { RunnableAgent } from '../../../agents/agents.types';
 import { BaseAgentConfigurable } from '../../../agents/agents.types';
 import { GraphNode, NodeKind } from '../../../graphs/graphs.types';
 import { GraphRegistry } from '../../../graphs/services/graph-registry';
+import { OAuthRunPreflightService } from '../../../graphs/services/oauth-run-preflight.service';
 import { RegisterTemplate } from '../../decorators/register-template.decorator';
 import { TriggerNodeBaseTemplate } from '../base-node.template';
 
@@ -60,6 +61,7 @@ export class ManualTriggerTemplate extends TriggerNodeBaseTemplate<
     private readonly moduleRef: ModuleRef,
     private readonly logger: DefaultLogger,
     private readonly graphRegistry: GraphRegistry,
+    private readonly oauthPreflight: OAuthRunPreflightService,
   ) {
     super();
   }
@@ -124,6 +126,33 @@ export class ManualTriggerTemplate extends TriggerNodeBaseTemplate<
                 llmRequestContext: metadata.llmRequestContext,
               },
             };
+
+            // Run-start OAuth pre-flight: if a connected OAuth-MCP node's
+            // credential is missing/expired (and not refreshable), PAUSE the run
+            // (thread -> Waiting) and fan `auth_required` instead of invoking the
+            // agent. A `credential.acquired` resume picks it back up. Covers
+            // both the foreground and `async` background paths (placed before
+            // the async fork below).
+            const paused = await this.oauthPreflight.checkAndPauseIfNeeded({
+              graphId: metadata.graphId,
+              externalThreadId: threadId,
+              createdBy:
+                runnableConfig.configurable?.thread_created_by ??
+                metadata.graph_created_by,
+              agentNodeId,
+              // Text-only: a paused run never reached the agent, so its message
+              // isn't checkpointed; we stash the text to replay on resume. Non-
+              // string (multimodal) content can't ride the wait-metadata prompt
+              // and is dropped — an empty result falls back to any prior prompt
+              // (see OAuthRunPreflightService.pauseThread).
+              pendingMessageText: messages
+                .map((m) => (typeof m.content === 'string' ? m.content : ''))
+                .filter(Boolean)
+                .join('\n\n'),
+            });
+            if (paused) {
+              return { messages: [], threadId, checkpointNs };
+            }
 
             const promise = agent.runOrAppend(
               threadId,

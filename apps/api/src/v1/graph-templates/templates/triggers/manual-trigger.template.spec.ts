@@ -14,6 +14,7 @@ import {
   NodeKind,
 } from '../../../graphs/graphs.types';
 import { GraphRegistry } from '../../../graphs/services/graph-registry';
+import { OAuthRunPreflightService } from '../../../graphs/services/oauth-run-preflight.service';
 import { ThreadsDao } from '../../../threads/dao/threads.dao';
 import {
   ManualTriggerTemplate,
@@ -49,8 +50,13 @@ describe('ManualTriggerTemplate', () => {
   let mockSimpleAgent: SimpleAgent;
   let mockGraphRegistry: GraphRegistry;
   let mockAgentNode: CompiledGraphNode<SimpleAgent>;
+  let mockOAuthPreflight: { checkAndPauseIfNeeded: ReturnType<typeof vi.fn> };
 
   beforeEach(async () => {
+    mockOAuthPreflight = {
+      checkAndPauseIfNeeded: vi.fn().mockResolvedValue(false),
+    };
+
     mockSimpleAgent = {
       runOrAppend: vi.fn(),
     } as unknown as SimpleAgent;
@@ -111,6 +117,10 @@ describe('ManualTriggerTemplate', () => {
             updateById: vi.fn(),
             deleteById: vi.fn(),
           },
+        },
+        {
+          provide: OAuthRunPreflightService,
+          useValue: mockOAuthPreflight,
         },
       ],
     }).compile();
@@ -244,6 +254,45 @@ describe('ManualTriggerTemplate', () => {
           }),
         }),
       );
+    });
+
+    it('pauses (does NOT invoke the agent) when the OAuth pre-flight returns true', async () => {
+      mockOAuthPreflight.checkAndPauseIfNeeded.mockResolvedValueOnce(true);
+
+      const outputNodeIds = new Set(['agent-1']);
+      const handle = await template.create();
+      const init: GraphNode<Record<string, never>> = {
+        config: {},
+        inputNodeIds: new Set(),
+        outputNodeIds,
+        metadata: mockMetadata,
+      };
+      const instance = await handle.provide(init);
+      await handle.configure(init, instance);
+
+      const invokeFn = vi.mocked(mockManualTrigger.setInvokeAgent).mock
+        .calls[0]![0] as (
+        messages: HumanMessage[],
+        config: unknown,
+      ) => Promise<{ messages: unknown[]; threadId: string }>;
+
+      const result = await invokeFn([new HumanMessage('do the thing')], {
+        configurable: { thread_id: 'manual-thread-id' },
+      } as never);
+
+      // The producer was consulted with the run's pause target...
+      expect(mockOAuthPreflight.checkAndPauseIfNeeded).toHaveBeenCalledWith(
+        expect.objectContaining({
+          graphId: 'graph-1',
+          externalThreadId: 'graph-1:manual-thread-id',
+          agentNodeId: 'agent-1',
+          pendingMessageText: 'do the thing',
+        }),
+      );
+      // ...and the agent was NOT run; an empty-message result is returned.
+      expect(mockSimpleAgent.runOrAppend).not.toHaveBeenCalled();
+      expect(result.messages).toEqual([]);
+      expect(result.threadId).toBe('graph-1:manual-thread-id');
     });
 
     it('should use default thread_id if not provided in config', async () => {

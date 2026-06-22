@@ -21,12 +21,13 @@ import {
   OAUTH_STATE_TTL_SECONDS,
   OAuthProvider,
 } from '../../../v1/oauth-credentials/oauth-credentials.types';
+import { OAuthCapabilityLinkService } from '../../../v1/oauth-credentials/services/oauth-capability-link.service';
 import { OAuthCredentialsService } from '../../../v1/oauth-credentials/services/oauth-credentials.service';
 import { OAuthExchangeService } from '../../../v1/oauth-credentials/services/oauth-exchange.service';
 import { SecretEntity } from '../../../v1/secrets/entity/secret.entity';
 import { SecretsStoreService } from '../../../v1/secrets-store/services/secrets-store.service';
 import { buildTestContext, createTestProject } from '../helpers/test-context';
-import { createTestModule } from '../setup';
+import { createTestModule, TEST_USER_ID } from '../setup';
 
 const OTHER_USER_ID = '00000000-0000-0000-0000-0000000000aa';
 
@@ -85,6 +86,7 @@ const startState = async (
 describe('OAuthCredentials (integration)', () => {
   let app: INestApplication;
   let service: OAuthCredentialsService;
+  let capabilityLink: OAuthCapabilityLinkService;
   let cache: CacheService;
   let notifications: NotificationsService;
   let projectId: string;
@@ -100,6 +102,7 @@ describe('OAuthCredentials (integration)', () => {
         .compile(),
     );
     service = app.get(OAuthCredentialsService);
+    capabilityLink = app.get(OAuthCapabilityLinkService);
     cache = app.get(CacheService);
     notifications = app.get(NotificationsService);
   });
@@ -589,5 +592,82 @@ describe('OAuthCredentials (integration)', () => {
     expect(
       await em.count(SecretEntity, { projectId, name: 'LINEAR_OAUTH_TOKEN' }),
     ).toBe(1);
+  });
+
+  describe('start() capability-link redemption gate', () => {
+    // The `?cap=` path re-opens a paused run's OAuth flow from ANY browser. The
+    // opaque single-use token is the capability, but start() additionally
+    // requires the authenticated user to match the run initiator (claims
+    // `createdBy`) and the route provider to match the claims — a leaked link
+    // can't be redeemed by a different logged-in user. NOTE: the wrong-PROVIDER
+    // half of that gate isn't independently reachable today — `OAuthProvider`
+    // has a single member (Linear) and `redeem()` re-validates the claim provider
+    // against the enum, so `claims.provider` always equals the only route. It
+    // becomes testable when a 2nd provider lands; the wrong-user half below is
+    // the security-load-bearing case and is fully exercised.
+
+    it('rejects a cap minted for another user, writing no pending-state', async () => {
+      // Mint a REAL cap (claims resolve to TEST_USER_ID), so the rejection is
+      // load-bearing: the gate rejects on the authenticated user, not on a
+      // missing/empty claim (api-testing.md exclusion-test rule).
+      const cap = await capabilityLink.mint({
+        projectId,
+        provider: OAuthProvider.Linear,
+        threadId: `${projectId}:thread-cap`,
+        createdBy: TEST_USER_ID,
+      });
+      const otherUserCtx = buildTestContext(OTHER_USER_ID, projectId);
+      const setSpy = vi.spyOn(cache, 'set');
+
+      await expect(
+        service.start(otherUserCtx, OAuthProvider.Linear, { cap }),
+      ).rejects.toThrow(/OAUTH_CAPABILITY_MISMATCH/);
+
+      // The gate throws BEFORE discovery/registration and BEFORE any pending-state
+      // write — a leaked link redeemed by the wrong user persists nothing.
+      expect(mockExchange.prepareAuthorization).not.toHaveBeenCalled();
+      expect(setSpy).not.toHaveBeenCalled();
+    });
+
+    it('redeems a cap for the right user and binds project + thread from the claims', async () => {
+      // The matching-user path recovers project + thread from the server-side
+      // claims (the notification link is opened outside the editor tab, which
+      // alone carries x-project-id). This is the contrast that makes the
+      // wrong-user "no pending-state" assertion above meaningful.
+      const threadId = `${projectId}:thread-cap`;
+      const cap = await capabilityLink.mint({
+        projectId,
+        provider: OAuthProvider.Linear,
+        threadId,
+        createdBy: TEST_USER_ID,
+      });
+
+      const { authorizeUrl } = await service.start(ctx, OAuthProvider.Linear, {
+        cap,
+      });
+      const state = new URL(authorizeUrl).searchParams.get('state') as string;
+
+      const cached = await cache.get(`${OAUTH_STATE_CACHE_PREFIX}${state}`);
+      expect(cached).toBeTruthy();
+      const pending = JSON.parse(cached as string);
+      expect(pending.projectId).toBe(projectId);
+      expect(pending.threadId).toBe(threadId);
+      expect(pending.createdBy).toBe(TEST_USER_ID);
+    });
+
+    it('rejects a replayed (single-use) cap', async () => {
+      // The cap is consumed on first redeem (getDel) — a second start() with the
+      // same token finds nothing.
+      const cap = await capabilityLink.mint({
+        projectId,
+        provider: OAuthProvider.Linear,
+        threadId: `${projectId}:thread-cap`,
+        createdBy: TEST_USER_ID,
+      });
+      await service.start(ctx, OAuthProvider.Linear, { cap });
+      await expect(
+        service.start(ctx, OAuthProvider.Linear, { cap }),
+      ).rejects.toThrow(/OAUTH_CAPABILITY_INVALID/);
+    });
   });
 });

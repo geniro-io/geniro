@@ -57,3 +57,9 @@ async findById(ctx: AppContextStorage, id: string): Promise<ItemDto> {
 - Use `ctx.checkProjectId()` (not `ctx.projectId`) to ensure the project header is present.
 - Rate-limit expensive endpoints with `@Throttle({ default: { ttl: 60000, limit: 10 } })`.
 - Use `EntityUUIDDto` from `utils/dto/misc.dto` for `:id` param validation.
+
+## Redact credential-bearing query params from request-URL logging
+
+Any log line that can include a request URL / query string MUST mask credential-bearing params — `cap`, `code`, `state`, `token`, `access_token`, `refresh_token` — to `[REDACTED]` before the log call. OAuth and capability-link flows carry live, single-use secrets on the query string (`GET /oauth/:provider/start?cap=…`, the `?code=&state=` callback), and a verbatim URL leaks a redeemable credential into Pino/Sentry, browser history, proxies, and the `Referer` header.
+
+The shared sink is the global Fastify `preHandler` request logger (`packages/http-server/src/setup.ts`), which already masks via `originalUrl.replace(/([?&](?:cap|code|state|token|access_token|refresh_token)=)[^&]*/gi, '$1[REDACTED]')`. Any NEW URL-logging path (a controller, interceptor, or error handler that echoes `originalUrl`) MUST apply the same masking. Prefer carrying one-shot secrets in a header or POST body over the query string where the endpoint design allows it (avoids the history/Referer leak entirely).

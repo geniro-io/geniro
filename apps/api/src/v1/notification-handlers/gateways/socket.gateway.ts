@@ -20,6 +20,7 @@ import type { UnknownRecord } from 'type-fest';
 
 import { environment } from '../../../environments';
 import { GraphDao } from '../../graphs/dao/graph.dao';
+import { ProjectsDao } from '../../projects/dao/projects.dao';
 import {
   IEnrichedNotification,
   NotificationScope,
@@ -58,6 +59,7 @@ export class SocketGateway
     private readonly eventsHandler: NotificationHandler,
     private readonly authContextDataBuilder: AuthContextDataBuilder,
     private readonly graphDao: GraphDao,
+    private readonly projectsDao: ProjectsDao,
     private readonly logger: DefaultLogger,
   ) {}
 
@@ -67,6 +69,10 @@ export class SocketGateway
 
   public getGraphRoomName(graphId: string): string {
     return `graph:${graphId}`;
+  }
+
+  public getProjectRoomName(projectId: string): string {
+    return `project:${projectId}`;
   }
 
   private emitError(err: Error, client: Socket, disconnect = false): void {
@@ -80,7 +86,7 @@ export class SocketGateway
     // Subscribe to events handler for enriched notifications
     this.eventsHandler.onEnrichedNotification(
       (event: IEnrichedNotification<unknown>) => {
-        const { graphId, ownerId, type, scope } = event;
+        const { graphId, projectId, ownerId, type, scope } = event;
 
         // Collect target rooms based on scope, then broadcast once.
         // Using a single .to(rooms) call ensures Socket.IO deduplicates
@@ -89,10 +95,19 @@ export class SocketGateway
         for (const scopeItem of scope) {
           switch (scopeItem) {
             case NotificationScope.Graph:
-              rooms.push(this.getGraphRoomName(graphId));
+              if (graphId) {
+                rooms.push(this.getGraphRoomName(graphId));
+              }
               break;
             case NotificationScope.User:
-              rooms.push(this.getUserRoomName(ownerId));
+              if (ownerId) {
+                rooms.push(this.getUserRoomName(ownerId));
+              }
+              break;
+            case NotificationScope.Project:
+              if (projectId) {
+                rooms.push(this.getProjectRoomName(projectId));
+              }
               break;
           }
         }
@@ -239,6 +254,74 @@ export class SocketGateway
       await client.leave(graphRoom);
     } catch (err) {
       this.logger.error(err as Error, 'Unsubscribe graph error');
+      this.emitError(err as Error, client);
+    }
+  }
+
+  @SubscribeMessage('subscribe_project')
+  async handleSubscribeProject(
+    client: Socket,
+    payload: { projectId: string },
+  ): Promise<{ success: boolean; error?: string }> {
+    try {
+      const userIdRaw = (client.data as Record<string, unknown>).userId;
+      const userId = typeof userIdRaw === 'string' ? userIdRaw : undefined;
+
+      if (!userId) {
+        throw new UnauthorizedException();
+      }
+
+      if (!payload?.projectId) {
+        throw new ValidationException(
+          'VALIDATION_ERROR',
+          'Project ID is required',
+        );
+      }
+
+      // Gate on project ownership (the project's `createdBy`), mirroring
+      // subscribe_graph's owner check — a user may only join a project room for
+      // a project they own.
+      const project = await this.projectsDao.getOne({
+        id: payload.projectId,
+        createdBy: userId,
+      });
+
+      if (!project) {
+        throw new NotFoundException('PROJECT_NOT_FOUND');
+      }
+
+      const projectRoom = this.getProjectRoomName(payload.projectId);
+      await client.join(projectRoom);
+
+      return { success: true };
+    } catch (err) {
+      if (err instanceof UnauthorizedException) {
+        this.logger.warn(
+          'Subscribe project rejected: userId not yet set (transient reconnect race)',
+        );
+      } else {
+        this.logger.error(err as Error, 'Subscribe project error');
+      }
+      this.emitError(err as Error, client);
+
+      return { success: false, error: (err as Error).message };
+    }
+  }
+
+  @SubscribeMessage('unsubscribe_project')
+  async handleUnsubscribeProject(
+    client: Socket,
+    payload: { projectId: string },
+  ): Promise<void> {
+    if (!payload?.projectId || typeof payload.projectId !== 'string') {
+      return;
+    }
+
+    try {
+      const projectRoom = this.getProjectRoomName(payload.projectId);
+      await client.leave(projectRoom);
+    } catch (err) {
+      this.logger.error(err as Error, 'Unsubscribe project error');
       this.emitError(err as Error, client);
     }
   }

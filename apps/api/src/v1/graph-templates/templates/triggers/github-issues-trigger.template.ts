@@ -21,6 +21,7 @@ import { GitHubWebhookSubscriptionService } from '../../../git-auth/services/web
 import { GitRepositoriesDao } from '../../../git-repositories/dao/git-repositories.dao';
 import { GraphNode, NodeKind } from '../../../graphs/graphs.types';
 import { GraphRegistry } from '../../../graphs/services/graph-registry';
+import { OAuthRunPreflightService } from '../../../graphs/services/oauth-run-preflight.service';
 import { RegisterTemplate } from '../../decorators/register-template.decorator';
 import { TriggerNodeBaseTemplate } from '../base-node.template';
 
@@ -76,6 +77,7 @@ export class GitHubIssuesTriggerTemplate extends TriggerNodeBaseTemplate<
     private readonly graphRegistry: GraphRegistry,
     private readonly gitRepositoriesDao: GitRepositoriesDao,
     private readonly registry: GitHubWebhookSubscriptionService,
+    private readonly oauthPreflight: OAuthRunPreflightService,
   ) {
     super();
   }
@@ -204,6 +206,26 @@ export class GitHubIssuesTriggerTemplate extends TriggerNodeBaseTemplate<
                 llmRequestContext: metadata.llmRequestContext,
               },
             };
+
+            // Run-start OAuth pre-flight: pause + fan `auth_required` instead of
+            // running when a connected OAuth-MCP credential is missing/expired
+            // (mirrors ManualTriggerTemplate). A `credential.acquired` resume
+            // picks it back up. Placed before the async fork below.
+            const paused = await this.oauthPreflight.checkAndPauseIfNeeded({
+              graphId: metadata.graphId,
+              externalThreadId: threadId,
+              createdBy:
+                runnableConfig.configurable?.thread_created_by ??
+                metadata.graph_created_by,
+              agentNodeId,
+              pendingMessageText: messages
+                .map((m) => (typeof m.content === 'string' ? m.content : ''))
+                .filter(Boolean)
+                .join('\n\n'),
+            });
+            if (paused) {
+              return { messages: [], threadId, checkpointNs };
+            }
 
             const promise = agent.runOrAppend(
               threadId,

@@ -300,6 +300,17 @@ export class ClaudeBootstrapService {
         `rm -f ${bridgeB64Path}`,
         'npm init -y >/dev/null 2>&1 || true',
         `npm install --no-fund --no-audit --omit=dev @anthropic-ai/claude-agent-sdk@${CLAUDE_AGENT_SDK_VERSION}`,
+        // The Claude Code CLI ships as a PER-PLATFORM OPTIONAL dependency
+        // (`@anthropic-ai/claude-agent-sdk-<platform>-<arch>[-musl]`). npm SILENTLY
+        // skips an optional dep whose fetch fails (cold registry mirror / flaky
+        // network), so `npm install` can exit 0 with the native binary absent —
+        // which then fails opaquely at the first `query()`: "Native CLI binary for
+        // <platform> not found". Verify the platform package actually landed and
+        // FAIL the chain BEFORE the marker, so a half-install is never recorded as
+        // good: the throw below surfaces it loudly and the next session re-runs the
+        // whole install (re-attempting the optional fetch) instead of being stuck
+        // on a cached-broken container.
+        `find node_modules/@anthropic-ai -maxdepth 4 -type d -name 'claude-agent-sdk-*' 2>/dev/null | grep -q . || { echo 'claude-agent-sdk native CLI binary (platform optional dep) missing after npm install — optional-dep fetch likely failed' >&2; exit 1; }`,
         `touch ${marker}`,
       ],
       timeoutMs: 600_000,

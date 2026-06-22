@@ -41,6 +41,7 @@ export enum NotificationEvent {
   GraphPreview = 'graph.preview',
   ThreadStoreUpdate = 'thread.store.update',
   CredentialAcquired = 'credential.acquired',
+  AuthRequired = 'auth.required',
 }
 
 // ---------------------------------------------------------------------------
@@ -344,9 +345,11 @@ export type IThreadStoreUpdateNotification = z.infer<
 // This is the AUTHORITATIVE completion signal (the editor's postMessage /
 // BroadcastChannel refresh is a browser-convenience layer on top). It is
 // project-scoped, so `graphId` is OPTIONAL here (unlike the graph-routed
-// envelope) — the editor flow carries it for routing; a future background /
-// trigger run (M3) carries `threadId` as the durable-resume target instead.
-// M2 only emits the event; a server-side resume subscriber is M3's to add.
+// envelope) — the editor flow carries it for routing; a background / trigger
+// run carries `threadId` as the durable-resume target instead. The server-side
+// resume subscriber is `ThreadResumeService.onCredentialAcquired`
+// (`@OnEvent(CREDENTIAL_ACQUIRED_EVENT)`), bridged from this NotificationsService
+// emit by the explicit EventEmitter2 emission in `OAuthCredentialsService.exchange`.
 // ---------------------------------------------------------------------------
 
 export const CredentialAcquiredDataSchema = z.object({
@@ -366,6 +369,33 @@ export type ICredentialAcquiredData = z.infer<
 >;
 export type ICredentialAcquiredNotification = z.infer<
   typeof CredentialAcquiredNotificationSchema
+>;
+
+// ---------------------------------------------------------------------------
+// auth.required — emitted server-side when a background / trigger / resume run
+// pauses (`ThreadStatus.Waiting`) awaiting a missing-or-expired OAuth
+// credential. Project-scoped (fanned out to the project room, NOT a graph room)
+// so it reaches the editor + any node-reauth surface wherever the user is —
+// the paused run has no one watching its thread page. `capabilityToken` is the
+// opaque single-use link that re-opens the flow from any browser; `nodeId` is
+// the OAuth-MCP node that needs auth; `threadId` (envelope) is the paused run.
+// ---------------------------------------------------------------------------
+
+export const AuthRequiredDataSchema = z.object({
+  provider: z.nativeEnum(OAuthProvider),
+  capabilityToken: z.string(),
+});
+export const AuthRequiredNotificationSchema = z.object({
+  type: z.literal(NotificationEvent.AuthRequired),
+  data: AuthRequiredDataSchema,
+  projectId: z.string(),
+  graphId: z.string().optional(),
+  nodeId: z.string().optional(),
+  threadId: z.string().optional(),
+});
+export type IAuthRequiredData = z.infer<typeof AuthRequiredDataSchema>;
+export type IAuthRequiredNotification = z.infer<
+  typeof AuthRequiredNotificationSchema
 >;
 
 // ---------------------------------------------------------------------------
@@ -390,6 +420,7 @@ export const NotificationSchema = z.discriminatedUnion('type', [
   GraphPreviewNotificationSchema,
   ThreadStoreUpdateNotificationSchema,
   CredentialAcquiredNotificationSchema,
+  AuthRequiredNotificationSchema,
 ]);
 
 export type Notification = z.infer<typeof NotificationSchema>;

@@ -10,6 +10,18 @@ export const OAuthProviderParamSchema = z.object({
 export const OAuthStartQuerySchema = z.object({
   graphId: z.string().optional(),
   nodeId: z.string().optional(),
+  threadId: z
+    .string()
+    .optional()
+    .describe(
+      'Resume target for a run that paused awaiting this credential; carried into the pending state so the `credential.acquired` signal can resume the exact thread.',
+    ),
+  cap: z
+    .string()
+    .optional()
+    .describe(
+      "Opaque single-use capability token from an `auth_required` notification. Re-opens a paused run's OAuth flow from any browser — the project + thread context is recovered server-side from the token, so the editor tab is not required.",
+    ),
 });
 
 export const OAuthStartResponseSchema = z.object({

@@ -7,6 +7,7 @@ import { mockDeep, MockProxy } from 'vitest-mock-extended';
 
 import { GraphDao } from '../../graphs/dao/graph.dao';
 import { GraphStatus } from '../../graphs/graphs.types';
+import { ProjectsDao } from '../../projects/dao/projects.dao';
 import {
   IEnrichedNotification,
   NotificationScope,
@@ -19,6 +20,7 @@ describe('SocketGateway', () => {
   let eventsHandler: MockProxy<NotificationHandler>;
   let authContextDataBuilder: MockProxy<AuthContextDataBuilder>;
   let graphDao: MockProxy<GraphDao>;
+  let projectsDao: MockProxy<ProjectsDao>;
   let logger: MockProxy<DefaultLogger>;
 
   const mockUserId = 'user-123';
@@ -30,6 +32,7 @@ describe('SocketGateway', () => {
     eventsHandler = mockDeep<NotificationHandler>();
     authContextDataBuilder = mockDeep<AuthContextDataBuilder>();
     graphDao = mockDeep<GraphDao>();
+    projectsDao = mockDeep<ProjectsDao>();
     logger = mockDeep<DefaultLogger>();
 
     const module: TestingModule = await Test.createTestingModule({
@@ -46,6 +49,10 @@ describe('SocketGateway', () => {
         {
           provide: GraphDao,
           useValue: graphDao,
+        },
+        {
+          provide: ProjectsDao,
+          useValue: projectsDao,
         },
         {
           provide: DefaultLogger,
@@ -229,6 +236,39 @@ describe('SocketGateway', () => {
       expect(mockServer.emit).toHaveBeenCalledWith(
         'graph.revision.create',
         mockDualScopeNotification,
+      );
+    });
+
+    it('routes a Project-scoped notification with no graphId to the project room only', () => {
+      const mockServer = {
+        emit: vi.fn(),
+        to: vi.fn().mockReturnThis(),
+      };
+      (gateway as unknown as { ws: unknown }).ws = mockServer;
+
+      gateway.afterInit();
+
+      // credential.acquired from a cap-link / Connections page carries no graph
+      // or owner context — it must still fan out to the project room (the
+      // graphId/ownerId room-push guards make this a no-op-free single room).
+      const projectScopedNoGraph: IEnrichedNotification<unknown> = {
+        type: 'credential.acquired' as any,
+        projectId: mockProjectId,
+        data: { provider: 'linear', accountLabel: 'Acme' },
+        scope: [NotificationScope.Project],
+      };
+
+      const eventHandlerCallback =
+        eventsHandler.onEnrichedNotification.mock.calls[0]![0];
+      eventHandlerCallback(projectScopedNoGraph);
+
+      // Exactly one room (the project room) — the undefined graphId/ownerId
+      // contribute NO stray rooms via the room-push guards.
+      expect(mockServer.to).toHaveBeenCalledTimes(1);
+      expect(mockServer.to).toHaveBeenCalledWith([`project:${mockProjectId}`]);
+      expect(mockServer.emit).toHaveBeenCalledWith(
+        'credential.acquired',
+        projectScopedNoGraph,
       );
     });
   });
@@ -454,6 +494,73 @@ describe('SocketGateway', () => {
       expect(mockClient.emit).toHaveBeenCalledWith('server_error', {
         message: '[GRAPH_NOT_FOUND] An exception has occurred',
       });
+    });
+
+    it('subscribe_project joins the project room when the user owns the project', async () => {
+      projectsDao.getOne.mockResolvedValue({
+        id: mockProjectId,
+        createdBy: mockUserId,
+      } as never);
+
+      const result = await gateway.handleSubscribeProject(mockClient, {
+        projectId: mockProjectId,
+      });
+
+      expect(projectsDao.getOne).toHaveBeenCalledWith({
+        id: mockProjectId,
+        createdBy: mockUserId,
+      });
+      expect(mockClient.join).toHaveBeenCalledWith(`project:${mockProjectId}`);
+      expect(result).toEqual({ success: true });
+    });
+
+    it('subscribe_project REJECTS a non-owner and does NOT join the room', async () => {
+      // Non-owner: the ownership filter ({id, createdBy}) finds no row.
+      projectsDao.getOne.mockResolvedValue(null);
+
+      const result = await gateway.handleSubscribeProject(mockClient, {
+        projectId: mockProjectId,
+      });
+
+      expect(result).toEqual({
+        success: false,
+        error: '[PROJECT_NOT_FOUND] An exception has occurred',
+      });
+      expect(mockClient.join).not.toHaveBeenCalled();
+      expect(mockClient.emit).toHaveBeenCalledWith('server_error', {
+        message: '[PROJECT_NOT_FOUND] An exception has occurred',
+      });
+    });
+
+    it('routes a Project-scoped notification (auth_required) to the project room', () => {
+      const mockServer = {
+        emit: vi.fn(),
+        to: vi.fn().mockReturnThis(),
+      };
+      (gateway as unknown as { ws: unknown }).ws = mockServer;
+      gateway.afterInit();
+
+      const authRequired: IEnrichedNotification<unknown> = {
+        type: 'auth.required' as any,
+        graphId: mockGraphId,
+        projectId: mockProjectId,
+        ownerId: mockUserId,
+        data: { provider: 'linear', capabilityToken: 'tok' },
+        nodeId: 'mcp-1',
+        threadId: 'thread-1',
+        scope: [NotificationScope.Project],
+      };
+
+      const eventHandlerCallback =
+        eventsHandler.onEnrichedNotification.mock.calls[0]![0];
+      eventHandlerCallback(authRequired);
+
+      // Project-scoped → routed ONLY to the project room (not a graph room).
+      expect(mockServer.to).toHaveBeenCalledWith([`project:${mockProjectId}`]);
+      expect(mockServer.emit).toHaveBeenCalledWith(
+        'auth.required',
+        authRequired,
+      );
     });
 
     it('should handle thread state updates through graph room', () => {

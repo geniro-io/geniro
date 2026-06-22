@@ -1,6 +1,12 @@
 import { EntityManager } from '@mikro-orm/postgresql';
 import { Injectable } from '@nestjs/common';
-import { BadRequestException, InternalException } from '@packages/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
+import {
+  BadRequestException,
+  DefaultLogger,
+  InternalException,
+  NotFoundException,
+} from '@packages/common';
 
 import { AppContextStorage } from '../../../auth/app-context-storage';
 import { environment } from '../../../environments';
@@ -18,6 +24,10 @@ import {
 } from '../dto/oauth-credentials.dto';
 import { OAuthCredentialEntity } from '../entity/oauth-credential.entity';
 import {
+  CREDENTIAL_ACQUIRED_EVENT,
+  CredentialAcquiredEvent,
+} from '../oauth-credentials.events';
+import {
   OAUTH_STATE_CACHE_PREFIX,
   OAUTH_STATE_TTL_SECONDS,
   OAuthPendingState,
@@ -28,6 +38,7 @@ import {
   generateOAuthState,
   generatePkcePair,
 } from '../oauth-credentials.utils';
+import { OAuthCapabilityLinkService } from './oauth-capability-link.service';
 import { OAuthExchangeService } from './oauth-exchange.service';
 
 /**
@@ -45,6 +56,9 @@ export class OAuthCredentialsService {
     private readonly secretsStore: SecretsStoreService,
     private readonly cache: CacheService,
     private readonly notifications: NotificationsService,
+    private readonly capabilityLink: OAuthCapabilityLinkService,
+    private readonly eventEmitter: EventEmitter2,
+    private readonly logger: DefaultLogger,
     private readonly em: EntityManager,
   ) {}
 
@@ -66,8 +80,29 @@ export class OAuthCredentialsService {
     provider: OAuthProvider,
     query: OAuthStartQueryDto,
   ): Promise<OAuthStartResponse> {
-    const projectId = ctx.checkProjectId();
     const userId = ctx.checkSub();
+
+    // A capability token (`?cap=`) re-opens a paused run's flow from any browser:
+    // the project + thread context is recovered from the server-side claims, not
+    // the `x-project-id` header (the notification link is opened outside the
+    // editor tab, which alone carries it). The opaque single-use token is the
+    // capability, but require the authenticated user to match the run initiator
+    // (a leaked link can't be redeemed by a different logged-in user) and the
+    // route provider to match the claims. Absent `cap`, this is the in-editor
+    // flow: project from the header, optional `threadId` from the query.
+    let projectId: string;
+    let threadId: string | undefined;
+    if (query.cap) {
+      const claims = await this.capabilityLink.redeem(query.cap);
+      if (claims.createdBy !== userId || claims.provider !== provider) {
+        throw new BadRequestException('OAUTH_CAPABILITY_MISMATCH');
+      }
+      projectId = claims.projectId;
+      threadId = claims.threadId;
+    } else {
+      projectId = ctx.checkProjectId();
+      threadId = query.threadId;
+    }
 
     const { codeVerifier, codeChallenge } = generatePkcePair();
     const state = generateOAuthState();
@@ -94,6 +129,7 @@ export class OAuthCredentialsService {
       clientSecret: client.clientSecret,
       graphId: query.graphId,
       nodeId: query.nodeId,
+      threadId,
     };
     await this.cache.set(
       `${OAUTH_STATE_CACHE_PREFIX}${state}`,
@@ -115,6 +151,90 @@ export class OAuthCredentialsService {
       { orderBy: { updatedAt: 'desc' } },
     );
     return this.buildStatus(provider, credential);
+  }
+
+  /**
+   * List every stored OAuth credential for the current project, each mapped
+   * through the same `buildStatus` projection as `status()` — so a
+   * stored-but-expired token reports `authenticated: false` and the Connections
+   * page can prompt re-auth rather than show a stale "connected" state.
+   * Soft-deleted (disconnected) credentials are excluded by the entity filter.
+   */
+  async listCredentials(
+    ctx: AppContextStorage,
+  ): Promise<OAuthStatusResponse[]> {
+    const projectId = ctx.checkProjectId();
+    const credentials = await this.dao.getAll(
+      { projectId },
+      { orderBy: { provider: 'asc' } },
+    );
+    return credentials.map((credential) =>
+      this.buildStatus(credential.provider, credential),
+    );
+  }
+
+  /**
+   * Disconnect a provider for the current project: soft-delete the credential
+   * row AND its selectable `secrets` row (in one transaction), then remove all
+   * three OpenBao sibling keys (access token + refresh token + DCR
+   * client_secret). The DB rows go FIRST, then the store — mirroring
+   * `secrets.service.delete` order so a store error can never leave a live
+   * selectable secret pointing at a deleted value (the dangling secret this
+   * ordering forbids). A later re-auth via `exchange()` resurrects both rows
+   * (the upserts clear `deletedAt`). Throws when no credential exists for the
+   * (project, provider).
+   */
+  async disconnect(
+    ctx: AppContextStorage,
+    provider: OAuthProvider,
+  ): Promise<void> {
+    const projectId = ctx.checkProjectId();
+    const credential = await this.dao.getOne({ projectId, provider });
+    if (!credential) {
+      throw new NotFoundException('OAUTH_CREDENTIAL_NOT_FOUND');
+    }
+    const secretName = this.secretName(provider);
+
+    // Soft-delete the credential row and the selectable `secrets` row that
+    // pointed at the token together, in one transaction — so a failure between
+    // the two writes can't leave a credential gone but its selectable secret
+    // still offered in the picker (the inverse dangling-secret state). The
+    // `secrets` UNIQUE(project_id, name) is not partial on `deleted_at`, so
+    // there is exactly one row to stamp.
+    await this.em.transactional(async (em) => {
+      await this.dao.deleteById(credential.id, em);
+      await em.nativeUpdate(
+        SecretEntity,
+        { projectId, name: secretName },
+        { deletedAt: new Date() },
+      );
+    });
+
+    // Remove all three OpenBao sibling keys best-effort. A non-rotating
+    // provider / public client never wrote the refresh / client_secret key
+    // (OpenBao metadata DELETE is idempotent — 204 on an absent key). The
+    // deletes are INDEPENDENT: a transient failure on one key must not strand
+    // the others with live token material now that the rows are gone, so each
+    // failure is logged (key name only — never the value) and never propagated.
+    // Skipped entirely when the store is unavailable (nothing reachable to
+    // purge; a later re-auth or disconnect retry supersedes any residue).
+    if (this.secretsStore.isAvailable()) {
+      const keys = [
+        secretName,
+        this.refreshSecretName(provider),
+        this.clientSecretName(provider),
+      ];
+      await Promise.all(
+        keys.map((name) =>
+          this.secretsStore.deleteSecret(projectId, name).catch((error) => {
+            this.logger.warn(
+              `OAuth disconnect: failed to delete secret "${name}" for project ${projectId}`,
+              { error: error instanceof Error ? error.message : String(error) },
+            );
+          }),
+        ),
+      );
+    }
   }
 
   /**
@@ -291,13 +411,15 @@ export class OAuthCredentialsService {
     }
 
     const cacheKey = `${OAUTH_STATE_CACHE_PREFIX}${state}`;
+    // loadPendingState consumes the state ATOMICALLY (GETDEL), so two concurrent
+    // exchanges presenting the same `state` can't both observe it — only one
+    // proceeds, the other gets OAUTH_STATE_INVALID. (A non-atomic get-then-del
+    // would let both pass the load and double-exchange.)
     const pending = await this.loadPendingState(cacheKey);
     if (pending.createdBy !== userId || pending.provider !== provider) {
       throw new BadRequestException('OAUTH_STATE_MISMATCH');
     }
     const projectId = pending.projectId;
-    // Single-use: consume the state before exchanging so a replay cannot reuse it.
-    await this.cache.del(cacheKey);
 
     const result = await this.exchangeService.exchangeAuthorizationCode(
       provider,
@@ -370,7 +492,8 @@ export class OAuthCredentialsService {
       throw error;
     }
 
-    // Authoritative server-side completion signal (forward-compat seam for M3).
+    // Authoritative server-side completion signal, on the NotificationsService
+    // subscriber bus → WebSocket fan-out.
     await this.notifications.emit({
       type: NotificationEvent.CredentialAcquired,
       data: { provider, accountLabel },
@@ -380,11 +503,22 @@ export class OAuthCredentialsService {
       threadId: pending.threadId,
     });
 
+    // EventEmitter2 bridge — the NotificationsService bus above is DISJOINT from
+    // the EventEmitter2 bus that `@OnEvent` listens on, so a paused-run resume
+    // handler (`ThreadResumeService.@OnEvent(CREDENTIAL_ACQUIRED_EVENT)`) only
+    // fires because of this explicit emit. Load-bearing for M3.3.
+    this.eventEmitter.emit(CREDENTIAL_ACQUIRED_EVENT, {
+      projectId,
+      provider,
+      threadId: pending.threadId,
+    } satisfies CredentialAcquiredEvent);
+
     return { provider, accountLabel, secretName };
   }
 
   private async loadPendingState(cacheKey: string): Promise<OAuthPendingState> {
-    const raw = await this.cache.get(cacheKey);
+    // Atomic get-and-delete: single-use consumption with no get-then-del race.
+    const raw = await this.cache.getDel(cacheKey);
     if (!raw) {
       throw new BadRequestException('OAUTH_STATE_INVALID');
     }

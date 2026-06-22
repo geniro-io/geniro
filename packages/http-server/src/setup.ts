@@ -266,7 +266,16 @@ export const setupMiddlewares = (
       originalUrl: string;
     };
 
-    logger.log(`Request ${method}: ${originalUrl}`);
+    // Redact credential-bearing query params before logging the URL. OAuth
+    // flows carry single-use secrets on the query string (`?cap=`, `?code=`,
+    // `?state=`, `?token=`); logging them verbatim would leak a live, redeemable
+    // credential into Pino/Sentry and browser history. Only the VALUE is masked.
+    const safeUrl = originalUrl.replace(
+      /([?&](?:cap|code|state|token|access_token|refresh_token)=)[^&]*/gi,
+      '$1[REDACTED]',
+    );
+
+    logger.log(`Request ${method}: ${safeUrl}`);
   });
 };
 

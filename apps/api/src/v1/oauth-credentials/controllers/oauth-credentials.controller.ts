@@ -1,5 +1,19 @@
-import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
-import { ApiBearerAuth, ApiOkResponse, ApiTags } from '@nestjs/swagger';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  HttpCode,
+  Param,
+  Post,
+  Query,
+} from '@nestjs/common';
+import {
+  ApiBearerAuth,
+  ApiOkResponse,
+  ApiOperation,
+  ApiTags,
+} from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { CtxStorage, OnlyForAuthorized } from '@packages/http-server';
 
@@ -45,6 +59,19 @@ export class OAuthCredentialsController {
     return await this.service.status(ctx, params.provider);
   }
 
+  // Static `credentials` segment — no collision with `:provider/start|status`
+  // (those are two segments deep; Fastify prioritises the static route anyway).
+  @Get('credentials')
+  // Unique operationId — the default factory uses only the method name, which
+  // collides with litellm's `listCredentials` and breaks `generate:api`.
+  @ApiOperation({ operationId: 'listOAuthCredentials' })
+  @ApiOkResponse({ type: OAuthStatusResponseDto, isArray: true })
+  async listCredentials(
+    @CtxStorage() ctx: AppContextStorage,
+  ): Promise<OAuthStatusResponseDto[]> {
+    return await this.service.listCredentials(ctx);
+  }
+
   @Throttle({ default: { ttl: 60000, limit: 10 } })
   @Post('credentials/exchange')
   @ApiOkResponse({ type: OAuthExchangeResponseDto })
@@ -59,5 +86,18 @@ export class OAuthCredentialsController {
       accountLabel: result.accountLabel,
       secretName: result.secretName,
     };
+  }
+
+  // Disconnect a provider for the current project: deletes the credential row
+  // and its OpenBao token siblings (see service). Project ownership follows the
+  // `x-project-id` header convention, same as the rest of the module.
+  @Delete(':provider/credentials')
+  @ApiOperation({ operationId: 'disconnectOAuthCredential' })
+  @HttpCode(204)
+  async disconnect(
+    @Param() params: OAuthProviderParamDto,
+    @CtxStorage() ctx: AppContextStorage,
+  ): Promise<void> {
+    return await this.service.disconnect(ctx, params.provider);
   }
 }

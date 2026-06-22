@@ -25,6 +25,12 @@ interface UseWebSocketOptions {
   graphId?: string;
 
   /**
+   * Project ID to subscribe to automatically (project-room events, e.g.
+   * `auth.required` for a paused background/trigger run).
+   */
+  projectId?: string;
+
+  /**
    * Event handlers for specific event types
    */
   handlers?: {
@@ -47,6 +53,16 @@ interface UseWebSocketReturn {
    * Unsubscribe from a specific graph
    */
   unsubscribeFromGraph: (graphId: string) => void;
+
+  /**
+   * Subscribe to a project room (project-scoped events)
+   */
+  subscribeToProject: (projectId: string) => void;
+
+  /**
+   * Unsubscribe from a project room
+   */
+  unsubscribeFromProject: (projectId: string) => void;
 
   /**
    * Register an event handler
@@ -77,7 +93,7 @@ interface UseWebSocketReturn {
 export const useWebSocket = (
   options: UseWebSocketOptions = {},
 ): UseWebSocketReturn => {
-  const { autoConnect = true, graphId, handlers } = options;
+  const { autoConnect = true, graphId, projectId, handlers } = options;
   const { token } = useAuth();
   const handlersRef = useRef(handlers);
   const unsubscribeFnsRef = useRef<(() => void)[]>([]);
@@ -132,6 +148,24 @@ export const useWebSocket = (
     };
   }, [graphId]);
 
+  // Subscribe to project room
+  useEffect(() => {
+    if (!projectId) {
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      if (webSocketService.isConnected()) {
+        webSocketService.subscribeToProject(projectId);
+      }
+    }, 100);
+
+    return () => {
+      clearTimeout(timer);
+      webSocketService.unsubscribeFromProject(projectId);
+    };
+  }, [projectId]);
+
   // Register stable forwarding handlers — only re-run if the set of event
   // types changes, not when handler implementations change. The forwarding
   // functions delegate to `handlersRef.current` so they always invoke the
@@ -170,6 +204,14 @@ export const useWebSocket = (
     webSocketService.unsubscribeFromGraph(graphId);
   }, []);
 
+  const subscribeToProject = useCallback((projectId: string) => {
+    webSocketService.subscribeToProject(projectId);
+  }, []);
+
+  const unsubscribeFromProject = useCallback((projectId: string) => {
+    webSocketService.unsubscribeFromProject(projectId);
+  }, []);
+
   const on = useCallback((eventType: string, handler: SocketEventHandler) => {
     return webSocketService.on(eventType, handler);
   }, []);
@@ -182,6 +224,8 @@ export const useWebSocket = (
     isConnected: webSocketService.isConnected(),
     subscribeToGraph,
     unsubscribeFromGraph,
+    subscribeToProject,
+    unsubscribeFromProject,
     on,
     off,
   };

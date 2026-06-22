@@ -46,7 +46,7 @@ export class CacheService implements OnModuleDestroy {
    * Get a string value by key
    */
   async get(key: string): Promise<string | null> {
-    return this.redis.get(key);
+    return await this.redis.get(key);
   }
 
   /**
@@ -69,6 +69,16 @@ export class CacheService implements OnModuleDestroy {
   }
 
   /**
+   * Atomically get a key's value AND delete it in a single round-trip (Redis
+   * `GETDEL`, 6.2+). Use for single-use tokens where a separate get-then-del
+   * would let two concurrent readers both observe the value before either
+   * deletes it. Returns the prior value, or `null` if the key was absent.
+   */
+  async getDel(key: string): Promise<string | null> {
+    return await this.redis.getdel(key);
+  }
+
+  /**
    * Check if a key exists
    */
   async exists(key: string): Promise<boolean> {
@@ -87,14 +97,14 @@ export class CacheService implements OnModuleDestroy {
    * Get a hash field
    */
   async hget(key: string, field: string): Promise<string | null> {
-    return this.redis.hget(key, field);
+    return await this.redis.hget(key, field);
   }
 
   /**
    * Get all hash fields
    */
   async hgetall(key: string): Promise<Record<string, string>> {
-    return this.redis.hgetall(key);
+    return await this.redis.hgetall(key);
   }
 
   /**

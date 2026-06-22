@@ -88,3 +88,30 @@ export interface OAuthPendingState {
   nodeId?: string;
   threadId?: string;
 }
+
+/** Redis key namespace for a capability link that re-opens a paused OAuth flow from any browser. */
+export const OAUTH_CAPLINK_CACHE_PREFIX = 'oauth:caplink:';
+
+/**
+ * TTL (seconds) for a capability link. A paused background/trigger run waits
+ * indefinitely, but the link is the convenience cross-browser resume path — if
+ * it lapses the editor node's Authenticate button regenerates a fresh
+ * in-context flow, so a bounded TTL caps the replay window without stranding the
+ * user. 24h.
+ */
+export const OAUTH_CAPLINK_TTL_SECONDS = 86_400;
+
+/**
+ * Server-side claims for a capability link, stored in Redis under the opaque
+ * random token. The token itself is the only value that travels (embedded in
+ * the `auth_required` notification); the claims NEVER reach the wire. Single-use
+ * — redeemed (deleted) on the first `GET /oauth/:provider/start` that presents
+ * the token — and scoped to one paused run's resume target so a leaked link
+ * cannot be repurposed.
+ */
+export interface OAuthCapabilityClaims {
+  projectId: string;
+  provider: OAuthProvider;
+  threadId: string;
+  createdBy: string;
+}
