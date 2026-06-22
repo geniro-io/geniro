@@ -608,6 +608,19 @@ describe('ClaudeBootstrapService', () => {
       expect(cmd).toContain('git_protocol https');
     });
 
+    it('uses the connected resource identity (name/email) when provided', async () => {
+      markerAbsent();
+      await service.configureGitAuth(runtime, {
+        name: 'Jane Dev',
+        email: 'jane@example.com',
+      });
+
+      const cmd = String(setupCall()![0].cmd);
+      expect(cmd).toContain('user.name "Jane Dev"');
+      expect(cmd).toContain('user.email "jane@example.com"');
+      expect(cmd).not.toContain('Geniro Bot');
+    });
+
     it('references GH_TOKEN lazily and never bakes a token into the command', async () => {
       markerAbsent();
       await service.configureGitAuth(runtime);

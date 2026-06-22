@@ -169,9 +169,10 @@ function App({ authModule }: { authModule: AuthModule }) {
               path="/projects/:projectId/knowledge"
               element={<KnowledgeListPage />}
             />
+            {/* Connections moved into Settings; redirect the legacy route. */}
             <Route
               path="/projects/:projectId/connections"
-              element={<ConnectionsPage />}
+              element={<Navigate to="/settings/connections" replace />}
             />
             {/* Legacy route redirects */}
             <Route
@@ -197,6 +198,7 @@ function App({ authModule }: { authModule: AuthModule }) {
             <Route path="/settings" element={<SettingsLayout />}>
               <Route index element={<Navigate to="integrations" replace />} />
               <Route path="integrations" element={<IntegrationsPage />} />
+              <Route path="connections" element={<ConnectionsPage />} />
               <Route path="models" element={<ModelsPage />} />
               <Route path="llm-models" element={<LiteLlmAdminPage />} />
               <Route path="secrets" element={<SecretsPage />} />

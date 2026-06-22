@@ -13,7 +13,7 @@ import { DefaultLogger, InternalException } from '@packages/common';
 import { v4 } from 'uuid';
 
 import type { BuiltAgentTool } from '../../../agent-tools/tools/base-tool';
-import { GitTokenResolverService } from '../../../git-auth/services/git-token-resolver.service';
+import type { ResourceResolveContext } from '../../../graph-resources/graph-resources.types';
 import { MessageRole } from '../../../graphs/graphs.types';
 import { RequestTokenUsage } from '../../../litellm/litellm.types';
 import { LiteLlmClient } from '../../../litellm/services/litellm.client';
@@ -40,6 +40,7 @@ import {
   ClaudePluginSource,
   ClaudeQuestionRequest,
   ClaudeThreadMetadata,
+  ConnectedGithubResource,
   ConnectedMcpServer,
 } from '../claude/claude-session.types';
 import {
@@ -157,6 +158,7 @@ export class ClaudeAgent
   private currentConfig?: ClaudeAgentSchemaType;
   private runtimeProvider?: RuntimeThreadProvider;
   private externalMcpNodes: ConnectedMcpServer[] = [];
+  private githubResource?: ConnectedGithubResource;
   private activeRuns = new Map<string, ClaudeActiveRun>();
 
   constructor(
@@ -167,7 +169,6 @@ export class ClaudeAgent
     private readonly liteLlmClient: LiteLlmClient,
     private readonly threadsDao: ThreadsDao,
     private readonly messagesDao: MessagesDao,
-    private readonly gitTokenResolver: GitTokenResolverService,
     private readonly secretsService: SecretsService,
     private readonly secretsStore: SecretsStoreService,
   ) {
@@ -199,6 +200,18 @@ export class ClaudeAgent
    */
   public setExternalMcpServers(servers: ConnectedMcpServer[]): void {
     this.externalMcpNodes = servers;
+  }
+
+  /**
+   * The connected GitHub-resource node (if any) collected by the template's
+   * `configure()` walk. It is the ONLY source of native GitHub auth for this
+   * agent: at run() its `resolveEnv` yields the GH_TOKEN and its `name`/`email`
+   * set the git commit identity. Undefined = no connected resource = no native
+   * GitHub token (the agent never self-resolves an owner token). Replaced
+   * wholesale on each (re)configure.
+   */
+  public setGithubResource(resource?: ConnectedGithubResource): void {
+    this.githubResource = resource;
   }
 
   public async run(
@@ -369,11 +382,17 @@ export class ClaudeAgent
       // native gh/git scoped to a single org, with the rest still reachable via
       // the proxied gh_* tools. When neither owner resolves a token, native
       // GitHub access is left unauthenticated and gh_* remains the only path.
-      const ownerUserId =
-        configurable.thread_created_by ?? configurable.graph_created_by;
-      const githubToken = ownerUserId
-        ? (await this.gitTokenResolver.resolveDefaultToken(ownerUserId))?.token
-        : undefined;
+      // Native GitHub auth comes ONLY from a connected GitHub-resource node —
+      // the agent never self-resolves an owner token. The resource's resolveEnv
+      // mints the GH_TOKEN via the GitHub App installation; with no resource
+      // connected there is no token and native git/gh stay unauthenticated (the
+      // proxied gh_* tools remain the path).
+      const githubEnv = this.githubResource
+        ? await this.githubResource.resolveEnv(
+            mergedConfig as ResourceResolveContext,
+          )
+        : {};
+      const githubToken = githubEnv.GH_TOKEN;
       // A Daytona runtime runs on a separate host that cannot reach the
       // cluster-internal LiteLLM URL — its session points ANTHROPIC_BASE_URL at
       // the public LiteLLM URL instead (fail-closed if unset).
@@ -390,7 +409,10 @@ export class ClaudeAgent
       // proxied gh_* tools stay forwarded as the authoritative path until this
       // is verified end-to-end (native-github-auth plan, staged Phase 3).
       if (githubToken) {
-        await this.bootstrap.configureGitAuth(runtime);
+        await this.bootstrap.configureGitAuth(runtime, {
+          name: this.githubResource?.name,
+          email: this.githubResource?.email,
+        });
       }
 
       // Resume-or-replay: resume when the container still has the session

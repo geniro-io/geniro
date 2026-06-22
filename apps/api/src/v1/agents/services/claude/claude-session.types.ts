@@ -1,6 +1,7 @@
 import type { BridgeQuestion } from '@packages/claude-bridge';
 
 import type { BaseMcp } from '../../../agent-mcp/services/base-mcp';
+import type { ResourceResolveContext } from '../../../graph-resources/graph-resources.types';
 
 export const CLAUDE_INSTALL_DIR = '/opt/geniro-claude';
 export const CLAUDE_PLUGINS_DIR = `${CLAUDE_INSTALL_DIR}/plugins`;
@@ -111,6 +112,20 @@ export type ConnectedMcpServer = {
   instance: BaseMcp;
   config: unknown;
   nodeId: string;
+};
+
+/**
+ * A GitHub resource node connected to a Claude Agent node's output. Collected
+ * at compile time. At run() the Claude agent calls `resolveEnv` to obtain the
+ * GH_TOKEN — the resource self-resolves it via the GitHub App installation —
+ * and applies `name`/`email` as the git commit identity. This connected
+ * resource is the ONLY source of native GitHub auth for a Claude agent: there
+ * is no implicit owner-token self-resolution. No connected resource → no token.
+ */
+export type ConnectedGithubResource = {
+  resolveEnv: (ctx?: ResourceResolveContext) => Promise<Record<string, string>>;
+  name?: string;
+  email?: string;
 };
 
 /**

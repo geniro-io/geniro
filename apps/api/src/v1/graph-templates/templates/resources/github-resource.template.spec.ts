@@ -67,6 +67,14 @@ describe('GithubResourceTemplate', () => {
     it('should have correct schema', () => {
       expect(template.schema).toBe(GithubResourceTemplateSchema);
     });
+
+    it('accepts both SimpleAgent and ClaudeAgent as consumers', () => {
+      const kinds = template.inputs
+        .filter((i) => i.type === 'kind')
+        .map((i) => i.value);
+      expect(kinds).toContain(NodeKind.SimpleAgent);
+      expect(kinds).toContain(NodeKind.ClaudeAgent);
+    });
   });
 
   describe('schema validation', () => {

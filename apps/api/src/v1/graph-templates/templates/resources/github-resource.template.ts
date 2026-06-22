@@ -55,6 +55,14 @@ export class GithubResourceTemplate extends ResourceNodeBaseTemplate<
       value: NodeKind.SimpleAgent,
       multiple: true,
     },
+    // Claude Agent nodes consume this resource for their native git/gh auth:
+    // the agent calls resolveEnv per run for the GH_TOKEN and applies name/email
+    // as the commit identity (claude-agent.template.ts configure()).
+    {
+      type: 'kind',
+      value: NodeKind.ClaudeAgent,
+      multiple: true,
+    },
   ] as const;
 
   constructor(private readonly moduleRef: ModuleRef) {

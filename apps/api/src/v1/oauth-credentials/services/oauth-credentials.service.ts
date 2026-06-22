@@ -464,13 +464,16 @@ export class OAuthCredentialsService {
     );
 
     const token = assertHeaderSafeToken(result.accessToken, 'OAuth token');
-    // Account-label single source of truth: the provider name. The former
-    // `api.linear.app/graphql { viewer }` identity probe was removed — an
-    // MCP-scoped DCR token does not authenticate it, so there is nothing to
-    // reconcile against. `result.accountLabel` is always null today (no
-    // provider's exchangeCode parses an identity field), so the `?? provider`
-    // fallback is the sole producer; a future provider that surfaces a real
-    // label populates it in its own exchangeCode and it flows through here.
+    // Account label: a provider's `exchangeCode` MAY resolve a human-readable
+    // label against its OWN MCP resource with the just-issued token (Linear's
+    // `probeAccountLabel` calls the server's `get_user("me")` tool — the token
+    // is RFC 8707 audience-bound to that MCP endpoint, so it authenticates there
+    // even though a general provider API would reject the MCP-scoped token). The
+    // probe is best-effort and fail-soft: when it returns null (probe failed, or
+    // a provider with no override), `?? provider` supplies the provider-name
+    // fallback. A label set at exchange time is preserved across token refreshes
+    // (refresh keeps `credential.accountLabel`), so the probe runs once per
+    // connect/reconnect, never on every refresh.
     const accountLabel = result.accountLabel ?? provider;
     const secretName = this.secretName(provider);
 

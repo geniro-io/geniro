@@ -4,7 +4,6 @@ import type { DefaultLogger } from '@packages/common';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mockDeep } from 'vitest-mock-extended';
 
-import type { GitTokenResolverService } from '../../../git-auth/services/git-token-resolver.service';
 import { MessageRole } from '../../../graphs/graphs.types';
 import { RequestTokenUsage } from '../../../litellm/litellm.types';
 import type { LiteLlmClient } from '../../../litellm/services/litellm.client';
@@ -71,7 +70,6 @@ describe('ClaudeAgent', () => {
     getAll: ReturnType<typeof vi.fn>;
   };
   let runtimeProvider: RuntimeThreadProvider;
-  let gitTokenResolver: { resolveDefaultToken: ReturnType<typeof vi.fn> };
   let secretsService: { resolveSecretValue: ReturnType<typeof vi.fn> };
   let secretsStore: { isAvailable: ReturnType<typeof vi.fn> };
 
@@ -127,9 +125,6 @@ describe('ClaudeAgent', () => {
       createToucher: vi.fn().mockReturnValue(vi.fn()),
     } as unknown as ClaudeKeepaliveService;
 
-    gitTokenResolver = {
-      resolveDefaultToken: vi.fn().mockResolvedValue(null),
-    };
     secretsService = {
       resolveSecretValue: vi.fn().mockResolvedValue('sk-ant-api03-testkey'),
     };
@@ -145,7 +140,6 @@ describe('ClaudeAgent', () => {
       liteLlmClient as unknown as LiteLlmClient,
       threadsDao as unknown as ThreadsDao,
       messagesDao as unknown as MessagesDao,
-      gitTokenResolver as unknown as GitTokenResolverService,
       secretsService as unknown as SecretsService,
       secretsStore as unknown as SecretsStoreService,
     );
@@ -963,64 +957,37 @@ describe('ClaudeAgent', () => {
   });
 
   /**
-   * Native gh/git auth wiring in run(): resolve the owner's GitHub App token,
-   * inject it as GH_TOKEN into the session env, and configure git auth only
-   * when a token resolved. The whole branch is dead unless a created_by id is
-   * present, so these pin the production-reachable shape (graph-compiler /
-   * graphs.service populate the owner) that the other tests leave undriven.
+   * Native gh/git auth wiring in run(): the GH_TOKEN + git identity come ONLY
+   * from a connected GitHub-resource node (set via setGithubResource by the
+   * template). The agent NEVER self-resolves an owner token — no connected
+   * resource means no token and no git-auth config. The resource's resolveEnv
+   * mints the per-run token; its name/email become the commit identity.
    */
-  describe('native gh/git auth wiring', () => {
+  describe('native gh/git auth wiring (resource-driven)', () => {
     const startEnv = () =>
       (startSpy.mock.calls[0]![0] as { env: Record<string, string> }).env;
 
-    it('injects the resolved owner token as GH_TOKEN and configures git auth', async () => {
-      gitTokenResolver.resolveDefaultToken.mockResolvedValue({
-        token: 'ghs_x',
+    it('injects the GH_TOKEN from the connected resource and configures git auth with its identity', async () => {
+      agent.setGithubResource({
+        resolveEnv: vi.fn().mockResolvedValue({ GH_TOKEN: 'ghs_x' }),
+        name: 'Jane Dev',
+        email: 'jane@example.com',
       });
 
-      const { runPromise } = await startRunAndOpenBridge(undefined, {
-        thread: 'user-thread',
-      });
-      capturedHandlers!.onDone('sess-1');
-      await runPromise;
-
-      expect(gitTokenResolver.resolveDefaultToken).toHaveBeenCalledWith(
-        'user-thread',
-      );
-      expect(bootstrap.configureGitAuth).toHaveBeenCalledTimes(1);
-      expect(startEnv().GH_TOKEN).toBe('ghs_x');
-    });
-
-    it('skips git-auth config and GH_TOKEN when the owner resolves no token', async () => {
-      // resolveDefaultToken default → null.
-      const { runPromise } = await startRunAndOpenBridge(undefined, {
-        thread: 'user-thread',
-      });
-      capturedHandlers!.onDone('sess-1');
-      await runPromise;
-
-      expect(gitTokenResolver.resolveDefaultToken).toHaveBeenCalledWith(
-        'user-thread',
-      );
-      expect(bootstrap.configureGitAuth).not.toHaveBeenCalled();
-      expect(startEnv().GH_TOKEN).toBeUndefined();
-    });
-
-    it('never resolves a token when neither owner id is present', async () => {
       const { runPromise } = await startRunAndOpenBridge();
       capturedHandlers!.onDone('sess-1');
       await runPromise;
 
-      expect(gitTokenResolver.resolveDefaultToken).not.toHaveBeenCalled();
-      expect(bootstrap.configureGitAuth).not.toHaveBeenCalled();
-      expect(startEnv().GH_TOKEN).toBeUndefined();
+      expect(startEnv().GH_TOKEN).toBe('ghs_x');
+      expect(bootstrap.configureGitAuth).toHaveBeenCalledTimes(1);
+      expect(bootstrap.configureGitAuth).toHaveBeenCalledWith(
+        expect.anything(),
+        { name: 'Jane Dev', email: 'jane@example.com' },
+      );
     });
 
-    it('prefers the thread owner over the graph owner', async () => {
-      gitTokenResolver.resolveDefaultToken.mockResolvedValue({
-        token: 'ghs_thread',
-      });
-
+    it('leaves GH_TOKEN unset and skips git-auth config when NO resource is connected', async () => {
+      // No setGithubResource → the agent must not self-resolve any token.
       const { runPromise } = await startRunAndOpenBridge(undefined, {
         thread: 'user-thread',
         graph: 'user-graph',
@@ -1028,11 +995,23 @@ describe('ClaudeAgent', () => {
       capturedHandlers!.onDone('sess-1');
       await runPromise;
 
-      expect(gitTokenResolver.resolveDefaultToken).toHaveBeenCalledTimes(1);
-      expect(gitTokenResolver.resolveDefaultToken).toHaveBeenCalledWith(
-        'user-thread',
-      );
-      expect(startEnv().GH_TOKEN).toBe('ghs_thread');
+      expect(startEnv().GH_TOKEN).toBeUndefined();
+      expect(bootstrap.configureGitAuth).not.toHaveBeenCalled();
+    });
+
+    it('leaves GH_TOKEN unset and skips git-auth config when the resource resolves no token', async () => {
+      agent.setGithubResource({
+        resolveEnv: vi.fn().mockResolvedValue({}),
+        name: 'Jane Dev',
+        email: 'jane@example.com',
+      });
+
+      const { runPromise } = await startRunAndOpenBridge();
+      capturedHandlers!.onDone('sess-1');
+      await runPromise;
+
+      expect(startEnv().GH_TOKEN).toBeUndefined();
+      expect(bootstrap.configureGitAuth).not.toHaveBeenCalled();
     });
   });
 

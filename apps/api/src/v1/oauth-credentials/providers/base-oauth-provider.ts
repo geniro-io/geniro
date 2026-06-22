@@ -144,9 +144,11 @@ export abstract class BaseOAuthProvider {
 
   /**
    * Exchange an authorization `code` (+ PKCE verifier) for an access token at
-   * the discovered token endpoint. `accountLabel` is always `null` here — an
-   * MCP-scoped token does not authenticate a provider identity probe, so the
-   * orchestration service supplies the provider-name fallback.
+   * the discovered token endpoint. `accountLabel` defaults to `null`; a provider
+   * MAY override {@link probeAccountLabel} to resolve a human-readable label
+   * against its own MCP resource with the just-issued token (Linear does, via
+   * `get_user("me")`). The probe is best-effort — on any failure it returns
+   * `null` and the orchestration service supplies the provider-name fallback.
    */
   async exchangeCode(
     server: DiscoveredOAuthServer,
@@ -207,7 +209,32 @@ export abstract class BaseOAuthProvider {
     // refresh is possible and the credential falls to re-auth at expiry.
     const refreshToken = this.asString(data.refresh_token);
 
-    return { accessToken, scopes, expiresAt, refreshToken, accountLabel: null };
+    // Best-effort human-readable label. A failed probe MUST NOT break
+    // acquisition — fall back to null (-> provider-name fallback upstream).
+    const accountLabel = await this.probeAccountLabel(accessToken).catch(
+      () => null,
+    );
+
+    return { accessToken, scopes, expiresAt, refreshToken, accountLabel };
+  }
+
+  /**
+   * Resolve a human-readable account label for the freshly issued token. The
+   * base implementation returns `null` (no probe); a provider overrides this to
+   * query its OWN MCP resource — the token is RFC 8707 audience-bound to that
+   * resource, so the server's own identity tool authenticates with it even
+   * though a general provider API would reject the MCP-scoped token.
+   *
+   * Contract: this MUST NOT throw and MUST be side-effect-free beyond the read.
+   * The label is cosmetic — every failure path (network, non-OK, malformed or
+   * crafted response) returns `null` so acquisition is never blocked. The
+   * response is untrusted external JSON: validate structurally before any
+   * dereference and never log its body (it can carry the access token / PII).
+   */
+  protected async probeAccountLabel(
+    _accessToken: string,
+  ): Promise<string | null> {
+    return null;
   }
 
   /**
@@ -445,7 +472,7 @@ export abstract class BaseOAuthProvider {
   }
 
   /** Narrow an unknown parsed JSON value to a non-null object. */
-  private isObject(value: unknown): value is Record<string, unknown> {
+  protected isObject(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null;
   }
 
@@ -457,7 +484,7 @@ export abstract class BaseOAuthProvider {
     }
   }
 
-  private asString(value: unknown): string | null {
+  protected asString(value: unknown): string | null {
     return typeof value === 'string' && value.length > 0 ? value : null;
   }
 

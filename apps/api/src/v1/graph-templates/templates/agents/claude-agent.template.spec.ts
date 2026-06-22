@@ -54,6 +54,7 @@ describe('ClaudeAgentTemplate', () => {
       resetTools: vi.fn(),
       addTool: vi.fn(),
       setExternalMcpServers: vi.fn(),
+      setGithubResource: vi.fn(),
       setConfig: vi.fn(),
       stop: vi.fn(),
       failActiveRunsForRedeploy: vi.fn().mockResolvedValue(undefined),
@@ -90,7 +91,7 @@ describe('ClaudeAgentTemplate', () => {
       expect(template.kind).toBe(NodeKind.ClaudeAgent);
     });
 
-    it('requires a Runtime output and accepts Tool + Mcp outputs', () => {
+    it('requires a Runtime output and accepts Tool + Mcp + a single GitHub Resource output', () => {
       expect(template.outputs).toEqual([
         {
           type: 'kind',
@@ -100,6 +101,8 @@ describe('ClaudeAgentTemplate', () => {
         },
         { type: 'kind', value: NodeKind.Tool, multiple: true },
         { type: 'kind', value: NodeKind.Mcp, multiple: true },
+        // At most one GitHub resource — the sole source of the agent's git/gh auth.
+        { type: 'kind', value: NodeKind.Resource, multiple: false },
       ]);
     });
   });
@@ -356,6 +359,51 @@ describe('ClaudeAgentTemplate', () => {
       await handle.configure(init, instance);
 
       expect(mockClaudeAgent.setExternalMcpServers).toHaveBeenCalledWith([]);
+    });
+
+    it('collects a connected GitHub resource and hands its token resolver + identity to the agent', async () => {
+      const resolveEnv = vi.fn().mockResolvedValue({ GH_TOKEN: 'ghs_x' });
+      const resourceNode = buildCompiledNode({
+        id: 'gh-resource-node',
+        type: NodeKind.Resource,
+        template: 'github-resource',
+        instance: { kind: 'Shell', information: '', data: { resolveEnv } },
+        config: { name: 'Jane Dev', email: 'jane@example.com' },
+      });
+
+      vi.mocked(mockGraphRegistry.getNode).mockImplementation((_gid, id) => {
+        if (id === 'runtime-node') {
+          return runtimeNode;
+        }
+        if (id === 'gh-resource-node') {
+          return resourceNode;
+        }
+        return undefined;
+      });
+
+      const handle = await template.create();
+      const init = makeInit(new Set(['runtime-node', 'gh-resource-node']));
+      const instance = await handle.provide(init);
+      await handle.configure(init, instance);
+
+      expect(mockClaudeAgent.setGithubResource).toHaveBeenCalledWith({
+        resolveEnv,
+        name: 'Jane Dev',
+        email: 'jane@example.com',
+      });
+    });
+
+    it('hands the agent no GitHub resource when none is connected', async () => {
+      vi.mocked(mockGraphRegistry.getNode).mockImplementation((_gid, id) =>
+        id === 'runtime-node' ? runtimeNode : undefined,
+      );
+
+      const handle = await template.create();
+      const init = makeInit(new Set(['runtime-node']));
+      const instance = await handle.provide(init);
+      await handle.configure(init, instance);
+
+      expect(mockClaudeAgent.setGithubResource).toHaveBeenCalledWith(undefined);
     });
   });
 });

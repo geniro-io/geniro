@@ -120,8 +120,9 @@ const DisconnectConfirmationDialog = ({
 // --- ConnectionsPage ---
 
 export const ConnectionsPage = () => {
-  // Reading the current project here keeps the `x-project-id` header in sync for
-  // the list/disconnect calls when the page is the entry route.
+  // Settings has no `:projectId` in the URL, so this resolves the current
+  // project from context/localStorage and keeps the `x-project-id` header in
+  // sync for the list/disconnect calls (incl. a direct load / refresh here).
   useCurrentProject();
 
   const [credentials, setCredentials] = useState<OAuthStatusResponseDto[]>([]);
@@ -218,7 +219,7 @@ export const ConnectionsPage = () => {
   }, []);
 
   return (
-    <div className="space-y-6 p-6">
+    <div className="space-y-6">
       <div>
         <h2 className="text-base font-semibold">Connections</h2>
         <p className="text-muted-foreground mt-1 text-sm">

@@ -10,7 +10,6 @@ import {
   LogOut,
   MessageSquare,
   Network,
-  Plug,
   Settings,
 } from 'lucide-react';
 import { useMemo } from 'react';
@@ -81,9 +80,6 @@ function resolvePageTitle(
   if (projectId && pathname.startsWith(`/projects/${projectId}/knowledge`)) {
     return { label: 'Knowledge' };
   }
-  if (projectId && pathname.startsWith(`/projects/${projectId}/connections`)) {
-    return { label: 'Connections' };
-  }
   if (pathname.startsWith('/storybook')) {
     return { label: 'Storybook' };
   }
@@ -138,11 +134,6 @@ export function Layout({ children }: { children?: React.ReactNode }) {
           icon: BookOpen,
           label: 'Knowledge',
         },
-        {
-          path: `/projects/${projectId}/connections`,
-          icon: Plug,
-          label: 'Connections',
-        },
       );
     }
 
@@ -172,7 +163,7 @@ export function Layout({ children }: { children?: React.ReactNode }) {
 
   const handleProjectSwitch = (targetProjectId: string) => {
     const sectionMatch = location.pathname.match(
-      /\/projects\/[^/]+\/(graphs|chats|knowledge|repositories|connections)(.*)/,
+      /\/projects\/[^/]+\/(graphs|chats|knowledge|repositories)(.*)/,
     );
     const section = sectionMatch
       ? `${sectionMatch[1]}${sectionMatch[2]}`

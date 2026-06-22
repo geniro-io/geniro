@@ -6,9 +6,16 @@ import { z } from 'zod';
 import type { BaseMcp } from '../../../agent-mcp/services/base-mcp';
 import type { BuiltAgentTool } from '../../../agent-tools/tools/base-tool';
 import { ClaudeAgent } from '../../../agents/services/agents/claude-agent';
-import type { ConnectedMcpServer } from '../../../agents/services/claude/claude-session.types';
+import type {
+  ConnectedGithubResource,
+  ConnectedMcpServer,
+} from '../../../agents/services/claude/claude-session.types';
 import { ClaudeAuthMode } from '../../../agents/services/claude/claude-session.types';
 import { isToolForwardableToClaude } from '../../../agents/services/claude/claude-session.utils';
+import type {
+  GithubResourceConfig,
+  IGithubResourceOutput,
+} from '../../../graph-resources/services/github-resource';
 import type { GraphNode } from '../../../graphs/graphs.types';
 import { NodeKind } from '../../../graphs/graphs.types';
 import { GraphRegistry } from '../../../graphs/services/graph-registry';
@@ -187,6 +194,14 @@ export class ClaudeAgentTemplate extends ClaudeAgentNodeBaseTemplate<
       value: NodeKind.Mcp,
       multiple: true,
     },
+    // A GitHub resource node supplies this agent's native git/gh auth: its
+    // GH_TOKEN (resolved per run via the GitHub App) + git commit identity. At
+    // most one — it is the sole source of GitHub auth for the agent.
+    {
+      type: 'kind',
+      value: NodeKind.Resource,
+      multiple: false,
+    },
   ] as const;
 
   constructor(
@@ -288,6 +303,29 @@ export class ClaudeAgentTemplate extends ClaudeAgentNodeBaseTemplate<
           });
         }
         instance.setExternalMcpServers(externalMcpServers);
+
+        // Connected GitHub resource node (at most one): its `resolveEnv` mints
+        // the per-run GH_TOKEN via the GitHub App and its `name`/`email` set the
+        // git commit identity. This is the ONLY source of native GitHub auth for
+        // the agent — without it there is no token (no implicit owner token).
+        let githubResource: ConnectedGithubResource | undefined;
+        for (const nodeId of params.outputNodeIds) {
+          const node = this.graphRegistry.getNode<IGithubResourceOutput>(
+            graphId,
+            nodeId,
+          );
+          if (!node || node.type !== NodeKind.Resource) {
+            continue;
+          }
+          const resourceConfig = (node.config ?? {}) as GithubResourceConfig;
+          githubResource = {
+            resolveEnv: node.instance.data.resolveEnv,
+            name: resourceConfig.name,
+            email: resourceConfig.email,
+          };
+          break;
+        }
+        instance.setGithubResource(githubResource);
 
         instance.setConfig(params.config);
       },

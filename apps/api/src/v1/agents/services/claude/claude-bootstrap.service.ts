@@ -208,8 +208,16 @@ export class ClaudeBootstrapService {
    * ensureBridgeInstalled's `test -f` marker. Bump the version suffix if the
    * configured commands below change so existing containers reconfigure.
    */
-  async configureGitAuth(runtime: BaseRuntime): Promise<void> {
-    const marker = `${CLAUDE_INSTALL_DIR}/.git-auth-configured-v1`;
+  async configureGitAuth(
+    runtime: BaseRuntime,
+    identity?: { name?: string; email?: string },
+  ): Promise<void> {
+    // Identity comes from the connected GitHub-resource node (its `name`/`email`
+    // config), mirroring that resource's own init script; the bot is only the
+    // fallback when the resource leaves them blank.
+    const authorName = identity?.name || 'Geniro Bot';
+    const authorEmail = identity?.email || 'bot@geniro.io';
+    const marker = `${CLAUDE_INSTALL_DIR}/.git-auth-configured-v2`;
     const markerCheck = await runtime.exec({ cmd: `test -f ${marker}` });
     if (markerCheck.exitCode === 0) {
       return;
@@ -220,8 +228,8 @@ export class ClaudeBootstrapService {
         GIT_CREDENTIAL_HELPER_CONFIG,
         'gh config set git_protocol https',
         'git config --global pull.rebase false',
-        'git config --global user.name "Geniro Bot"',
-        'git config --global user.email "bot@geniro.io"',
+        `git config --global user.name "${authorName}"`,
+        `git config --global user.email "${authorEmail}"`,
         // Touch the marker LAST: the `&&` chain stops on the first failure, so
         // the marker only lands when every config command above succeeded.
         `touch ${marker}`,
