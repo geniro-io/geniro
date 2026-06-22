@@ -445,7 +445,12 @@ export const GraphsListPage = () => {
     }
     setTogglingId(graph.id);
     try {
-      if (graph.status === GraphPreviewDtoStatusEnum.Running) {
+      // 'compiling' is active in the backend registry — run() would reject with
+      // GRAPH_ALREADY_RUNNING, so treat it like 'running' and cancel via destroy.
+      const isActive =
+        graph.status === GraphPreviewDtoStatusEnum.Running ||
+        graph.status === GraphPreviewDtoStatusEnum.Compiling;
+      if (isActive) {
         await graphsApi.destroyGraph(graph.id);
         toast.success('Graph stopped');
       } else {
@@ -609,6 +614,7 @@ export const GraphsListPage = () => {
                 runningThreads={graph.runningThreads ?? 0}
                 totalThreads={graph.totalThreads ?? 0}
                 updatedAt={graph.updatedAt ?? graph.createdAt}
+                isToggling={togglingId === graph.id}
                 onClick={() => handleEditGraph(graph.id)}
                 onToggleRun={() => void handleToggleRun(graph)}
                 onEdit={() => openEditModal(graph)}

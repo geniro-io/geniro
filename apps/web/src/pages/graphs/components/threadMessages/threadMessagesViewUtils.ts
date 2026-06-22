@@ -448,3 +448,142 @@ export const deriveSdkToolTitle = (
     ? `${label.slice(0, SDK_TOOL_TITLE_MAX_LEN - 1)}…`
     : label;
 };
+
+// ────────────────────────────────────────────
+// Working-block action summary (Claude-Code style)
+// ────────────────────────────────────────────
+
+/** Minimal shape needed to summarize a working block's actions. */
+export interface WorkSummaryItem {
+  type: 'reasoning' | 'tool' | 'chat' | 'system' | 'subagent' | 'communication';
+  name?: string;
+  toolKind?: 'generic' | 'shell';
+}
+
+const pluralizeCount = (n: number, singular: string, plural?: string): string =>
+  `${n} ${n === 1 ? singular : (plural ?? `${singular}s`)}`;
+
+interface ToolActionCategory {
+  key: string;
+  label: (count: number) => string;
+}
+
+/** Maps a tool name to a human-readable action category. Returns a stable
+ *  `key` (used to group + count repeated calls) and a `label` builder that
+ *  renders the final phrase once the count is known. */
+const categorizeToolAction = (
+  name: string,
+  toolKind?: 'generic' | 'shell',
+): ToolActionCategory => {
+  const n = name.toLowerCase();
+
+  const mcp = /^mcp__(.+?)__/.exec(n);
+  if (mcp) {
+    const server = mcp[1];
+    const pretty = `${server.charAt(0).toUpperCase()}${server.slice(1)}`;
+    return {
+      key: `mcp:${server}`,
+      label: (c) => `Called ${pretty} ${pluralizeCount(c, 'time')}`,
+    };
+  }
+  if (
+    toolKind === 'shell' ||
+    /(^|_)(bash|shell|terminal)(_|$)|(^|_)run(_|$)|exec/.test(n)
+  ) {
+    return {
+      key: 'shell',
+      label: (c) => `Ran ${pluralizeCount(c, 'command')}`,
+    };
+  }
+  if (/(^|_)(write|create)(_|$)|save_?file/.test(n)) {
+    return { key: 'write', label: (c) => `Wrote ${pluralizeCount(c, 'file')}` };
+  }
+  if (/edit|str_replace|apply_patch|(^|_)(update|replace)(_|$)/.test(n)) {
+    return { key: 'edit', label: (c) => `Edited ${pluralizeCount(c, 'file')}` };
+  }
+  if (/(^|_)(read|cat|view|open)(_|$)/.test(n)) {
+    return { key: 'read', label: (c) => `Read ${pluralizeCount(c, 'file')}` };
+  }
+  if (/(^|_)(ls|list|glob|find)(_|$)|list_?dir/.test(n)) {
+    return {
+      key: 'list',
+      label: (c) => (c === 1 ? 'Listed files' : `Listed files ${c} times`),
+    };
+  }
+  if (/web_?search|web_?fetch|browse|fetch_?url/.test(n)) {
+    return {
+      key: 'web',
+      label: (c) => `Searched the web ${pluralizeCount(c, 'time')}`,
+    };
+  }
+  if (/knowledge/.test(n)) {
+    return {
+      key: 'knowledge',
+      label: (c) => `Searched knowledge ${pluralizeCount(c, 'time')}`,
+    };
+  }
+  if (/grep|codebase_?search|search_?code|code_?search/.test(n)) {
+    return {
+      key: 'code',
+      label: (c) => `Searched the codebase ${pluralizeCount(c, 'time')}`,
+    };
+  }
+  if (/github|^gh_|pull_request|(^|_)issue/.test(n)) {
+    return {
+      key: 'github',
+      label: (c) => `Used GitHub ${pluralizeCount(c, 'time')}`,
+    };
+  }
+  const pretty = name.replace(/_/g, ' ');
+  return {
+    key: `tool:${n}`,
+    label: (c) => `Used ${pretty} ${pluralizeCount(c, 'time')}`,
+  };
+};
+
+/** Builds a concise, Claude-Code-style summary of the actions in a working
+ *  block, e.g. "Wrote 2 files · Called Linear 3 times". Categories appear in
+ *  first-seen order. A reasoning-only block summarizes as a thinking line; an
+ *  empty or still-running block falls back to a neutral working label. */
+export const summarizeWorkItems = (
+  items: WorkSummaryItem[],
+  opts?: { isRunning?: boolean },
+): string => {
+  const isRunning = opts?.isRunning ?? false;
+  const order: string[] = [];
+  const groups = new Map<
+    string,
+    { count: number; label: (c: number) => string }
+  >();
+
+  for (const it of items) {
+    if (it.type !== 'tool' || !it.name) {
+      continue;
+    }
+    const cat = categorizeToolAction(it.name, it.toolKind);
+    const existing = groups.get(cat.key);
+    if (existing) {
+      existing.count += 1;
+    } else {
+      groups.set(cat.key, { count: 1, label: cat.label });
+      order.push(cat.key);
+    }
+  }
+
+  if (order.length === 0) {
+    if (isRunning) {
+      return 'Working…';
+    }
+    return items.some((it) => it.type === 'reasoning')
+      ? 'Thought for a moment'
+      : 'Working…';
+  }
+
+  return order
+    .map((key) => {
+      const g = groups.get(key);
+      return g ? g.label(g.count) : '';
+    })
+    .filter(Boolean)
+    .join(' · ');
+};

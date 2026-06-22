@@ -62,6 +62,18 @@ export class ClaudeStreamMapper {
   private readonly collected: BaseMessage[] = [];
   private readonly pendingToolNames = new Map<string, string>();
   private answeredToolCallNames: string[] = [];
+  /**
+   * SDK assistant `message.id`s whose `usage` has already been stamped +
+   * accumulated. A single assistant message can surface as multiple `assistant`
+   * frames — e.g. a text block, then a tool_use block — that each carry the
+   * SAME cumulative `usage`. Without this guard both frames are persisted as
+   * separate AI rows BOTH carrying the full turn `__requestUsage`, so the
+   * thread rollup (`Σ requestTokenUsage`) and `usageTotals` double-count the
+   * turn. Counting a given id's usage once keeps the documented invariant
+   * `Σ messages.requestTokenUsage == billed turn totals`; if the first frame
+   * was only partial, the result-frame residual reconcile settles the gap.
+   */
+  private readonly usageStampedMessageIds = new Set<string>();
   private usageTotals = {
     inputTokens: 0,
     cachedInputTokens: 0,
@@ -247,17 +259,26 @@ export class ClaudeStreamMapper {
     let aiMessage: AIMessage | null = null;
     if (text || toolCalls.length > 0) {
       const usage = this.toRequestTokenUsage(message.message.usage, model);
+      // Count a given SDK message id's usage exactly once — see
+      // `usageStampedMessageIds`. A repeat frame of the same id (text→tool_use
+      // split) must NOT re-stamp `__requestUsage` or re-accumulate, or the turn
+      // is billed twice. Frames without an id can't be deduped — stamp as before.
+      const messageId = message.message.id;
+      const usageAlreadyCounted =
+        !!messageId && this.usageStampedMessageIds.has(messageId);
+      const usageToStamp = usage && !usageAlreadyCounted ? usage : undefined;
+
       aiMessage = new AIMessage({
         content: text,
         ...(toolCalls.length > 0 && { tool_calls: toolCalls }),
       });
-      if (message.message.id) {
-        aiMessage.id = message.message.id;
+      if (messageId) {
+        aiMessage.id = messageId;
       }
       aiMessage.additional_kwargs = {
         ...this.subagentKwargs(message.parent_tool_use_id),
         __model: model,
-        ...(usage && { __requestUsage: usage }),
+        ...(usageToStamp && { __requestUsage: usageToStamp }),
         ...(this.answeredToolCallNames.length > 0 && {
           __answeredToolCallNames: [...this.answeredToolCallNames],
         }),
@@ -265,8 +286,11 @@ export class ClaudeStreamMapper {
       this.answeredToolCallNames = [];
       built.push(aiMessage);
 
-      if (usage) {
-        this.accumulateUsage(usage);
+      if (usageToStamp) {
+        this.accumulateUsage(usageToStamp);
+        if (messageId) {
+          this.usageStampedMessageIds.add(messageId);
+        }
       }
     }
 

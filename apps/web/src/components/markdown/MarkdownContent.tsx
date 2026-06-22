@@ -269,7 +269,7 @@ const markdownComponents: Components = {
     </table>
   ),
   thead: ({ children }: MarkdownElementProps<HTMLTableSectionElement>) => (
-    <thead style={{ background: '#f5f5f5' }}>{children}</thead>
+    <thead style={{ background: 'var(--muted)' }}>{children}</thead>
   ),
   tbody: ({ children }: MarkdownElementProps<HTMLTableSectionElement>) => (
     <tbody>{children}</tbody>
@@ -277,7 +277,7 @@ const markdownComponents: Components = {
   th: ({ children }: MarkdownElementProps<HTMLTableCellElement>) => (
     <th
       style={{
-        border: '1px solid #d9d9d9',
+        border: '1px solid var(--border)',
         padding: '4px 8px',
         textAlign: 'left',
         fontWeight: 600,
@@ -288,7 +288,7 @@ const markdownComponents: Components = {
   td: ({ children }: MarkdownElementProps<HTMLTableCellElement>) => (
     <td
       style={{
-        border: '1px solid #d9d9d9',
+        border: '1px solid var(--border)',
         padding: '4px 8px',
         verticalAlign: 'top',
       }}>

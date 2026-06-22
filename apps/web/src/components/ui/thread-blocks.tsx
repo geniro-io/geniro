@@ -7,6 +7,7 @@ import {
   Bot,
   CheckCircle2,
   ChevronDown,
+  ChevronRight,
   ChevronUp,
   Copy,
   Loader2,
@@ -39,6 +40,64 @@ import {
 } from './token-display';
 export type { TokenInfo } from './token-display';
 export { fmtK, StatRow, TokenBadge } from './token-display';
+
+/** Prettifies an MCP tool identifier (`mcp__<server>__<tool>`) into a readable
+ *  label like "Linear: Get issue". Non-MCP tool names are returned unchanged so
+ *  recognizable built-in identifiers (e.g. `gh_clone`, `finish`) stay verbatim. */
+export function formatToolName(toolName: string): string {
+  const mcpMatch = /^mcp__(.+?)__(.+)$/.exec(toolName);
+  if (!mcpMatch) {
+    return toolName;
+  }
+  const [, server, tool] = mcpMatch;
+  const capitalize = (s: string): string =>
+    s.length > 0 ? `${s.charAt(0).toUpperCase()}${s.slice(1)}` : s;
+  return `${capitalize(server)}: ${capitalize(tool.replace(/_/g, ' '))}`;
+}
+
+// ─── WorkingBlock ───────────────────────────────────────────────────────────────
+
+export interface WorkingBlockProps {
+  /** Claude-Code-style action summary, e.g. "Wrote 2 files · Called Linear 3 times". */
+  summary: string;
+  /** Show a spinner and keep the live label when the turn is still in flight. */
+  isRunning?: boolean;
+  /** Collapsed by default; the tool-call chips live behind the summary header. */
+  defaultOpen?: boolean;
+  children: React.ReactNode;
+}
+
+/** Collapsible container for a working block's tool calls. The summary header is
+ *  always visible (and clickable to expand); the individual tool-call rows are
+ *  hidden by default to keep the transcript skimmable. Communication / subagent
+ *  blocks are NOT routed through here — they render as their own rows so their
+ *  sub-threads stay expanded. */
+export function WorkingBlock({
+  summary,
+  isRunning = false,
+  defaultOpen = false,
+  children,
+}: WorkingBlockProps) {
+  const [open, setOpen] = useState(defaultOpen);
+
+  return (
+    <div className="flex flex-col gap-1.5 w-full">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground text-left hover:text-foreground transition-colors">
+        <ChevronRight
+          className={`w-3.5 h-3.5 flex-shrink-0 transition-transform ${open ? 'rotate-90' : ''}`}
+        />
+        <span className="truncate">{summary}</span>
+        {isRunning && (
+          <Loader2 className="w-3 h-3 flex-shrink-0 animate-spin text-blue-500" />
+        )}
+      </button>
+      {open && <div className="flex flex-col gap-1.5">{children}</div>}
+    </div>
+  );
+}
 
 /** Builds a TokenInfo for the StatFooter from a block's accumulated statistics.
  *  Returns undefined when no statistics are available so the footer is hidden;
@@ -749,7 +808,7 @@ export function ToolBlock(props: ToolBlockProps) {
     const base =
       titleText ??
       (toolOptions?.purpose
-        ? `${toolName} | ${String(toolOptions.purpose)}`
+        ? `${formatToolName(toolName)} | ${String(toolOptions.purpose)}`
         : undefined);
 
     if (base) {
@@ -794,7 +853,7 @@ export function ToolBlock(props: ToolBlockProps) {
               ? 'text-red-700 font-semibold'
               : 'text-foreground'
         }`}>
-        {displayTitle ?? toolName}
+        {displayTitle ?? formatToolName(toolName)}
       </span>
       {statusText && !displayTitle && (
         <span
@@ -829,7 +888,7 @@ export function ToolBlock(props: ToolBlockProps) {
       <PopoverTrigger asChild>{effectiveTrigger}</PopoverTrigger>
       <PopoverContent className="w-[420px] p-0 overflow-hidden" align="start">
         <ToolPopoverPanel
-          toolLabel={toolName}
+          toolLabel={formatToolName(toolName)}
           status={resolvedStatus}
           args={resolvedArgs}
           resultContent={isConsumerMode ? resultContent : undefined}

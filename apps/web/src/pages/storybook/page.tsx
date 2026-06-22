@@ -111,6 +111,7 @@ import {
   StreamingReasoningBlock,
   SubagentBlock,
   ToolBlock,
+  WorkingBlock,
 } from '@/components/ui/thread-blocks';
 import {
   type RawTokenUsage,
@@ -1828,7 +1829,7 @@ function ChatMessageSection() {
           />
         </div>
       </Row>
-      <Row label="Working block" code="isWorking + customBody">
+      <Row label="Working block" code="isWorking + WorkingBlock (collapsed)">
         <div className="w-full max-w-2xl">
           <ChatBubble
             sender="JK"
@@ -1837,20 +1838,71 @@ function ChatMessageSection() {
             isWorking
             content=""
             customBody={
-              <div className="flex flex-col gap-1.5 w-full">
-                <span className="text-xs font-semibold text-muted-foreground text-left">
-                  Working...
-                </span>
-                <div className="flex flex-col gap-1.5">
-                  <span className="text-xs text-muted-foreground">
-                    Reviewing migration files...
-                  </span>
-                  <span className="text-xs text-muted-foreground">
-                    Checking index definitions...
-                  </span>
-                </div>
-              </div>
+              <WorkingBlock summary="Read 2 files · Ran 1 command">
+                <ToolBlock
+                  toolName="read_file"
+                  status="done"
+                  rawStatus="executed"
+                  toolOptions={{ path: 'src/auth/jwt.ts' }}
+                  align="left"
+                />
+                <ToolBlock
+                  toolName="read_file"
+                  status="done"
+                  rawStatus="executed"
+                  toolOptions={{ path: 'src/auth/session.ts' }}
+                  align="left"
+                />
+                <ShellBlock
+                  command="npm test"
+                  stdout="All tests passed."
+                  exitCode={0}
+                  status="executed"
+                />
+              </WorkingBlock>
             }
+          />
+        </div>
+      </Row>
+      <Row label="Working block — running" code="isRunning">
+        <div className="w-full max-w-2xl">
+          <ChatBubble
+            sender="Manager"
+            role="ai"
+            color="bg-green-500"
+            isWorking
+            content=""
+            customBody={
+              <WorkingBlock summary="Called Linear 1 time" isRunning>
+                <ToolBlock
+                  toolName="mcp__linear__get_issue"
+                  status="running"
+                  rawStatus="calling"
+                  toolOptions={{ issueId: 'CI-319' }}
+                  align="left"
+                />
+              </WorkingBlock>
+            }
+          />
+        </div>
+      </Row>
+      <Row label="Markdown table" code="content with a | table |">
+        <div className="w-full max-w-2xl">
+          <ChatBubble
+            sender="Manager"
+            role="ai"
+            agentRole="Engineering Manager"
+            content={
+              "Here's the issue metadata:\n\n" +
+              '| Field | Value |\n' +
+              '| --- | --- |\n' +
+              '| Status | Todo (moved from Backlog) |\n' +
+              '| Priority | Medium |\n' +
+              '| Assignee | Sergei Razumovskii |\n' +
+              '| Team / Project | Caseload Intelligence / Case Radar |\n'
+            }
+            timestamp="3:30 PM"
+            color="bg-green-500"
           />
         </div>
       </Row>
@@ -2101,6 +2153,18 @@ function ThreadBlocksSection() {
             status="done"
             rawStatus="calling"
             toolOptions={{ query: 'deployment guide' }}
+            align="left"
+          />
+        </div>
+      </Row>
+      <Row label="Tool — MCP name (prettified)">
+        <div className="w-full max-w-2xl">
+          <ToolBlock
+            toolName="mcp__linear__get_issue"
+            status="done"
+            rawStatus="executed"
+            resultContent={{ id: 'CI-319', title: 'Web case-health page' }}
+            toolOptions={{ issueId: 'CI-319' }}
             align="left"
           />
         </div>
@@ -3239,6 +3303,17 @@ const SB_GRAPHS = [
     status: 'draft',
     updatedAt: new Date(Date.now() - 600000).toISOString(),
   },
+  {
+    id: 'compiling',
+    name: 'Developers Automation',
+    version: 'v1.0.7',
+    description: 'Compiling — the toggle shows a spinner + "Stop" to cancel',
+    nodeCount: 6,
+    runningThreads: 0,
+    totalThreads: 5,
+    status: 'compiling',
+    updatedAt: new Date(Date.now() - 120000).toISOString(),
+  },
 ];
 
 function GraphCardSection() {
@@ -3265,6 +3340,38 @@ function GraphCardSection() {
               onDelete={() => {}}
             />
           ))}
+        </div>
+      </Row>
+      <Row label="Toggling (run/stop in flight)">
+        <div className="space-y-3 w-full">
+          <GraphCard
+            name="Starting up…"
+            status="stopped"
+            version="v1.0.0"
+            description="Run was clicked — compiling and provisioning the sandbox."
+            nodeCount={6}
+            runningThreads={0}
+            totalThreads={4}
+            updatedAt="2026-06-22T07:00:00.000Z"
+            isToggling
+            onToggleRun={() => {}}
+            onEdit={() => {}}
+            onDelete={() => {}}
+          />
+          <GraphCard
+            name="Shutting down…"
+            status="running"
+            version="v1.0.0"
+            description="Stop was clicked — tearing down the running graph."
+            nodeCount={6}
+            runningThreads={2}
+            totalThreads={4}
+            updatedAt="2026-06-22T07:00:00.000Z"
+            isToggling
+            onToggleRun={() => {}}
+            onEdit={() => {}}
+            onDelete={() => {}}
+          />
         </div>
       </Row>
     </Section>

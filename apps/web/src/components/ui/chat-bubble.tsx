@@ -106,13 +106,11 @@ export const ChatBubble: React.FC<ChatBubbleProps> = React.memo(
         ? 'bg-red-50 text-red-900 border border-red-200'
         : isReport
           ? 'bg-blue-50 text-blue-900 border border-blue-200'
-          : isHuman
-            ? 'bg-primary/10 border border-primary/20'
-            : 'bg-muted/40 border border-border';
-
-    const bubbleStyle: React.CSSProperties | undefined = isWorking
-      ? { background: '#fff', border: '1px solid #e5e5e5' }
-      : undefined;
+          : isWorking
+            ? 'bg-card border border-border'
+            : isHuman
+              ? 'bg-primary/10 border border-primary/20'
+              : 'bg-muted/40 border border-border';
 
     const containerStyle: React.CSSProperties | undefined = isPending
       ? { opacity: 0.6 }
@@ -145,8 +143,7 @@ export const ChatBubble: React.FC<ChatBubbleProps> = React.memo(
         <div
           className={`max-w-[76%] flex flex-col ${isHuman ? 'items-end' : 'items-start'}`}>
           <div
-            className={`rounded-xl px-4 py-3 text-sm leading-relaxed ${bubbleClass}`}
-            style={bubbleStyle}>
+            className={`rounded-xl px-4 py-3 text-sm leading-relaxed ${bubbleClass}`}>
             {body}
             {images && images.length > 0 && (
               <div className="flex gap-2 flex-wrap mt-2">

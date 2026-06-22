@@ -1,5 +1,6 @@
 import { formatDistanceToNow } from 'date-fns';
 import {
+  Loader2,
   MessageCircle,
   Network,
   Pencil,
@@ -23,6 +24,7 @@ export interface GraphCardProps {
   totalThreads?: number;
   draftsCount?: number;
   updatedAt?: string | null;
+  isToggling?: boolean;
   onClick?: () => void;
   onEdit?: () => void;
   onDelete?: () => void;
@@ -39,6 +41,7 @@ export function GraphCard({
   totalThreads = 0,
   draftsCount = 0,
   updatedAt,
+  isToggling = false,
   onClick,
   onEdit,
   onDelete,
@@ -46,6 +49,11 @@ export function GraphCard({
 }: GraphCardProps) {
   const key = status.toLowerCase();
   const isRunning = key === 'running';
+  // 'compiling' is an ACTIVE state in the backend registry: run() rejects with
+  // GRAPH_ALREADY_RUNNING, but destroy() can cancel it. So the toggle must offer
+  // "Stop" (cancel), never a "Run" that errors. A spinner signals it's busy.
+  const isCompiling = key === 'compiling';
+  const isActive = isRunning || isCompiling;
 
   return (
     <Card
@@ -70,26 +78,26 @@ export function GraphCard({
           {description && (
             <p className="text-sm text-muted-foreground mb-3">{description}</p>
           )}
-          <div className="flex items-center gap-4 text-sm text-muted-foreground">
-            <span className="inline-flex items-center gap-1.5">
-              <Network className="w-3.5 h-3.5" />
+          <div className="flex items-center gap-3 text-sm text-muted-foreground">
+            <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+              <Network className="w-3.5 h-3.5 shrink-0" />
               {nodeCount} nodes
             </span>
             <span>&bull;</span>
-            <span className="inline-flex items-center gap-1.5">
-              <MessageCircle className="w-3.5 h-3.5" />
+            <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+              <MessageCircle className="w-3.5 h-3.5 shrink-0" />
               {totalThreads} threads
             </span>
             <span>&bull;</span>
-            <span className="inline-flex items-center gap-1.5">
-              <MessageCircle className="w-3.5 h-3.5 text-blue-500" />
+            <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+              <MessageCircle className="w-3.5 h-3.5 shrink-0 text-blue-500" />
               {runningThreads} running
             </span>
             {draftsCount > 0 && (
               <>
                 <span>&bull;</span>
-                <span className="inline-flex items-center gap-1">
-                  <span className="w-2 h-2 rounded-full bg-amber-400" />
+                <span className="inline-flex items-center gap-1 whitespace-nowrap">
+                  <span className="w-2 h-2 rounded-full bg-amber-400 shrink-0" />
                   {draftsCount} drafts
                 </span>
               </>
@@ -113,18 +121,16 @@ export function GraphCard({
                 variant="outline"
                 size="sm"
                 className="gap-2"
+                disabled={isToggling}
                 onClick={onToggleRun}>
-                {isRunning ? (
-                  <>
-                    <Square className="w-4 h-4" />
-                    Stop
-                  </>
+                {isToggling || isCompiling ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : isActive ? (
+                  <Square className="w-4 h-4" />
                 ) : (
-                  <>
-                    <Play className="w-4 h-4" />
-                    Run
-                  </>
+                  <Play className="w-4 h-4" />
                 )}
+                {isActive ? 'Stop' : 'Run'}
               </Button>
             )}
             {onEdit && (

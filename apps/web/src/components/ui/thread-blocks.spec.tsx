@@ -49,9 +49,12 @@ import React from 'react';
 
 import {
   CommunicationBlock,
+  formatToolName,
   ReasoningBlock,
   StatFooter,
   SubagentBlock,
+  ToolBlock,
+  WorkingBlock,
 } from './thread-blocks';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -279,5 +282,65 @@ describe('SubagentBlock — footer tokens source', () => {
 
     const badge = container.querySelector('[class*="cursor-pointer"]');
     expect(badge).toBeNull();
+  });
+});
+
+describe('formatToolName', () => {
+  it('prettifies an MCP tool identifier into "Server: Tool name"', () => {
+    expect(formatToolName('mcp__linear__get_issue')).toBe('Linear: Get issue');
+  });
+
+  it('handles multi-word tool segments', () => {
+    expect(formatToolName('mcp__google_drive__search_files')).toBe(
+      'Google_drive: Search files',
+    );
+  });
+
+  it('returns non-MCP tool names unchanged', () => {
+    expect(formatToolName('read_file')).toBe('read_file');
+    expect(formatToolName('finish')).toBe('finish');
+    expect(formatToolName('gh_clone')).toBe('gh_clone');
+  });
+});
+
+describe('ToolBlock — MCP name rendering', () => {
+  it('shows the prettified MCP name, not the raw identifier', () => {
+    render(<ToolBlock toolName="mcp__linear__get_issue" status="done" />);
+    expect(screen.getByText('Linear: Get issue')).toBeInTheDocument();
+    expect(
+      screen.queryByText('mcp__linear__get_issue'),
+    ).not.toBeInTheDocument();
+  });
+});
+
+describe('WorkingBlock', () => {
+  it('shows the summary and hides children by default (collapsed)', () => {
+    render(
+      <WorkingBlock summary="Read 2 files">
+        <div>tool-chip</div>
+      </WorkingBlock>,
+    );
+    expect(screen.getByText('Read 2 files')).toBeInTheDocument();
+    expect(screen.queryByText('tool-chip')).not.toBeInTheDocument();
+  });
+
+  it('reveals children when the summary header is clicked', async () => {
+    const user = userEvent.setup();
+    render(
+      <WorkingBlock summary="Read 2 files">
+        <div>tool-chip</div>
+      </WorkingBlock>,
+    );
+    await user.click(screen.getByRole('button', { name: /read 2 files/i }));
+    expect(screen.getByText('tool-chip')).toBeInTheDocument();
+  });
+
+  it('respects defaultOpen', () => {
+    render(
+      <WorkingBlock summary="Read 2 files" defaultOpen>
+        <div>tool-chip</div>
+      </WorkingBlock>,
+    );
+    expect(screen.getByText('tool-chip')).toBeInTheDocument();
   });
 });

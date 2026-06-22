@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest';
 import {
   deriveSdkToolTitle,
   formatDurationMs,
+  summarizeWorkItems,
+  type WorkSummaryItem,
 } from './threadMessagesViewUtils';
 
 describe('formatDurationMs', () => {
@@ -87,5 +89,69 @@ describe('deriveSdkToolTitle', () => {
     expect(title).toBeDefined();
     expect(title!.length).toBeLessThanOrEqual(120);
     expect(title!.endsWith('…')).toBe(true);
+  });
+});
+
+describe('summarizeWorkItems', () => {
+  const tool = (
+    name: string,
+    toolKind?: 'generic' | 'shell',
+  ): WorkSummaryItem => ({
+    type: 'tool',
+    name,
+    toolKind,
+  });
+
+  it('counts and pluralizes file writes', () => {
+    expect(summarizeWorkItems([tool('write_file'), tool('write_file')])).toBe(
+      'Wrote 2 files',
+    );
+    expect(summarizeWorkItems([tool('write_file')])).toBe('Wrote 1 file');
+  });
+
+  it('groups MCP calls by server with a friendly name', () => {
+    expect(
+      summarizeWorkItems([
+        tool('mcp__linear__get_issue'),
+        tool('mcp__linear__list_issues'),
+        tool('mcp__linear__create_comment'),
+      ]),
+    ).toBe('Called Linear 3 times');
+  });
+
+  it('joins distinct categories in first-seen order with a middot', () => {
+    expect(
+      summarizeWorkItems([
+        tool('write_file'),
+        tool('write_file'),
+        tool('mcp__linear__get_issue'),
+      ]),
+    ).toBe('Wrote 2 files · Called Linear 1 time');
+  });
+
+  it('treats shell tools (by kind or name) as commands', () => {
+    expect(summarizeWorkItems([tool('exec', 'shell')])).toBe('Ran 1 command');
+    expect(summarizeWorkItems([tool('run_terminal_cmd'), tool('bash')])).toBe(
+      'Ran 2 commands',
+    );
+  });
+
+  it('summarizes a reasoning-only block as a thinking line', () => {
+    expect(summarizeWorkItems([{ type: 'reasoning' }])).toBe(
+      'Thought for a moment',
+    );
+  });
+
+  it('falls back to a neutral label while running with no tools yet', () => {
+    expect(
+      summarizeWorkItems([{ type: 'reasoning' }], { isRunning: true }),
+    ).toBe('Working…');
+    expect(summarizeWorkItems([])).toBe('Working…');
+  });
+
+  it('ignores reasoning when tools are present', () => {
+    expect(summarizeWorkItems([{ type: 'reasoning' }, tool('read_file')])).toBe(
+      'Read 1 file',
+    );
   });
 });

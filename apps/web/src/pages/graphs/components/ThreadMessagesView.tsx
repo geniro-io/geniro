@@ -41,6 +41,7 @@ import {
   SubagentBlock,
   ToolBlock,
   ToolPopoverPanel,
+  WorkingBlock,
 } from '../../../components/ui/thread-blocks';
 import {
   type RawTokenUsage,
@@ -74,6 +75,7 @@ import {
   isToolLikeRole,
   messageBlockStyle,
   scrollContainerStyle,
+  summarizeWorkItems,
 } from './threadMessages/threadMessagesViewUtils';
 
 const MARKDOWN_COMPACT_STYLE: React.CSSProperties = {
@@ -1199,6 +1201,27 @@ const ThreadMessagesView: React.FC<ThreadMessagesViewProps> = React.memo(
             )
           : undefined;
 
+        const isWorkingRunning = items.some((it) => {
+          if (it.type === 'tool') {
+            return it.status === 'calling';
+          }
+          if (it.type === 'reasoning') {
+            const kwargs = (it.message.message?.additionalKwargs ??
+              {}) as Record<string, unknown>;
+            return Boolean(kwargs[STREAMING_REASONING_FLAG]);
+          }
+          return false;
+        });
+
+        const workingSummary = summarizeWorkItems(
+          items.map((it) => ({
+            type: it.type,
+            name: it.type === 'tool' ? it.name : undefined,
+            toolKind: it.type === 'tool' ? it.toolKind : undefined,
+          })),
+          { isRunning: isWorkingRunning },
+        );
+
         return (
           <ChatBubble
             sender={workingAgentName}
@@ -1210,14 +1233,12 @@ const ThreadMessagesView: React.FC<ThreadMessagesViewProps> = React.memo(
             timestamp={workingTimestamp}
             tokens={workingTokenInfo}
             customBody={
-              <div className="flex flex-col gap-1.5 w-full">
-                <span className="text-xs font-semibold text-muted-foreground text-left">
-                  Working...
-                </span>
-                <div className="flex flex-col gap-1.5">
-                  {items.map((it, idx) => renderWorkingItem(it, idx))}
-                </div>
-              </div>
+              <WorkingBlock
+                summary={workingSummary}
+                isRunning={isWorkingRunning}
+                defaultOpen={isWorkingRunning}>
+                {items.map((it, idx) => renderWorkingItem(it, idx))}
+              </WorkingBlock>
             }
           />
         );

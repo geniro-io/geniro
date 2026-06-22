@@ -320,6 +320,65 @@ describe('ClaudeStreamMapper', () => {
     });
   });
 
+  it('counts a turn once when one assistant message arrives as text+tool_use frames sharing an id (no double-count)', () => {
+    // Production shape (Opus 4.8 via bridge): a single assistant message is
+    // streamed as two `assistant` frames — a text block, then a tool_use block
+    // — that BOTH carry the same cumulative non-zero `usage`. Before the
+    // dedup-by-message-id guard, each frame was persisted as its own AI row
+    // BOTH stamped with the full turn usage, so the thread rollup billed the
+    // turn twice (the user saw the same price on both messages).
+    createMapper(() => 0.25);
+
+    mapper.onSdkMessage(
+      assistant({
+        id: 'msg-dup',
+        content: [{ type: 'text', text: "I'll pull up that issue." }],
+        usage: { input_tokens: 1000, output_tokens: 100 },
+      }),
+    );
+    mapper.onSdkMessage(
+      assistant({
+        id: 'msg-dup',
+        content: [
+          {
+            type: 'tool_use',
+            id: 'tu-1',
+            name: 'mcp__linear__get_issue',
+            input: { id: 'CI-319' },
+          },
+        ],
+        usage: { input_tokens: 1000, output_tokens: 100 },
+      }),
+    );
+    mapper.flush();
+
+    const aiMsgs = messageEvents()
+      .flatMap((e) => e.data.messages)
+      .filter((m): m is AIMessage => m instanceof AIMessage);
+
+    // Two persisted AI rows that share the SDK message id.
+    expect(aiMsgs).toHaveLength(2);
+    expect(aiMsgs.every((m) => m.id === 'msg-dup')).toBe(true);
+
+    // Exactly ONE row carries usage; the repeat frame carries none.
+    const withUsage = aiMsgs.filter((m) => m.additional_kwargs.__requestUsage);
+    expect(withUsage).toHaveLength(1);
+
+    // Σ requestTokenUsage across the rows equals one turn, not two.
+    const sumPrice = aiMsgs.reduce(
+      (acc, m) =>
+        acc +
+        ((m.additional_kwargs.__requestUsage as { totalPrice?: number })
+          ?.totalPrice ?? 0),
+      0,
+    );
+    expect(sumPrice).toBeCloseTo(0.25);
+
+    // Run-scoped aggregate (folded into the caller's state) is single-counted.
+    expect(mapper.getTotalPriceUsd()).toBeCloseTo(0.25);
+    expect(mapper.getTotalUsage().totalTokens).toBe(1100);
+  });
+
   it('stamps currentContext as the full input (regular + cache create + read) onto the parent message', () => {
     // Cache-heavy turn: the live context is regular input + cache-creation +
     // cache-read, even though only `input_tokens` is "new". currentContext must
