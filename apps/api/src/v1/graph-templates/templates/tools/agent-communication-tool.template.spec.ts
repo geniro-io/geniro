@@ -696,5 +696,88 @@ describe('AgentCommunicationToolTemplate', () => {
         totalPrice: 0.05,
       });
     });
+
+    it('scopes the callee thread by a slugified session label and maps startedNewThread', async () => {
+      vi.mocked(mockAgent.runOrAppend).mockResolvedValue({
+        messages: [new AIMessage('planned')],
+        threadId: 'callee-thread',
+        startedNewSession: true,
+      } as never);
+
+      const handle = await template.create();
+      const init: GraphNode<Record<string, never>> = {
+        config: {},
+        inputNodeIds: new Set(),
+        outputNodeIds: new Set(['agent-1']),
+        metadata: {
+          graphId: 'graph-1',
+          nodeId: 'tool-node',
+          version: '1',
+          graph_created_by: 'user-1',
+          graph_project_id: '11111111-1111-1111-1111-111111111111',
+        },
+      };
+      const instance = await handle.provide(init);
+      await handle.configure(init, instance);
+      const buildConfig = vi.mocked(mockCommunicationToolGroup.buildTools).mock
+        .calls[0]![0] as any;
+      const agentInfo = buildConfig.agents[0];
+
+      const result = await agentInfo.invokeAgent(['Plan it'], {
+        configurable: {
+          thread_id: 'parent-thread',
+          __communicationSession: 'Plan A!',
+        },
+      } as any);
+
+      const runArgs = vi.mocked(mockAgent.runOrAppend).mock.calls[0]!;
+      // The label is slugified ("Plan A!" → "plan-a") and appended to the
+      // effective callee thread id, scoping it to an independent sub-thread.
+      expect(runArgs[0]).toBe('parent-thread__tool-node__Agent One__plan-a');
+      const runConfig = runArgs[3] as any;
+      expect(runConfig.configurable.thread_id).toBe(
+        'parent-thread__tool-node__Agent One__plan-a',
+      );
+      // The NORMALIZED slug travels downstream so the callee's session key
+      // matches the thread id on repeat calls.
+      expect(runConfig.configurable.__communicationSession).toBe('plan-a');
+      expect(result.startedNewThread).toBe(true);
+    });
+
+    it('omits the session suffix and startedNewThread for a punctuation-only / absent label', async () => {
+      const handle = await template.create();
+      const init: GraphNode<Record<string, never>> = {
+        config: {},
+        inputNodeIds: new Set(),
+        outputNodeIds: new Set(['agent-1']),
+        metadata: {
+          graphId: 'graph-1',
+          nodeId: 'tool-node',
+          version: '1',
+          graph_created_by: 'user-1',
+          graph_project_id: '11111111-1111-1111-1111-111111111111',
+        },
+      };
+      const instance = await handle.provide(init);
+      await handle.configure(init, instance);
+      const buildConfig = vi.mocked(mockCommunicationToolGroup.buildTools).mock
+        .calls[0]![0] as any;
+      const agentInfo = buildConfig.agents[0];
+
+      const result = await agentInfo.invokeAgent(['Hello'], {
+        configurable: {
+          thread_id: 'parent-thread',
+          __communicationSession: '!!!',
+        },
+      } as any);
+
+      const runArgs = vi.mocked(mockAgent.runOrAppend).mock.calls[0]!;
+      // Empty slug → legacy single-conversation thread id (back-compat).
+      expect(runArgs[0]).toBe('parent-thread__tool-node__Agent One');
+      const runConfig = runArgs[3] as any;
+      expect(runConfig.configurable.__communicationSession).toBeUndefined();
+      // Default mock reports no startedNewSession → field omitted from result.
+      expect(result.startedNewThread).toBeUndefined();
+    });
   });
 });

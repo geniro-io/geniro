@@ -169,6 +169,15 @@ export type BaseAgentConfigurable = {
    * `null` / `undefined` = no limit.
    */
   effective_cost_limit_usd?: number | null;
+  /**
+   * Optional conversation label for inter-agent communication. When set, the
+   * callee runs in an INDEPENDENT sub-conversation scoped to this label — a new
+   * label starts a fresh thread (no shared history); the same label resumes it.
+   * Set by the communication tool and threaded into both the callee thread id
+   * and the bridge agent's per-conversation SDK-session key. Absent = the
+   * single rolling conversation per (root thread, node, agent) — the default.
+   */
+  __communicationSession?: string;
   llmRequestContext?: LLMRequestContext;
   // SECURITY: This index signature is required by LangGraph's RunnableConfig
   // constraint. Never spread HTTP request body fields into this type — always

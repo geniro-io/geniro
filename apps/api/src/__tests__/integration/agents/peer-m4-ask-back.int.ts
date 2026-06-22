@@ -652,4 +652,115 @@ describe('Peer M4 ask-back (caller answers a peer in-session, peer resumes)', ()
       }
     },
   );
+
+  it(
+    'runs the same peer as independent conversations when delegated under different session labels',
+    { timeout: 300_000 },
+    async () => {
+      // Two communication_exec calls to the SAME peer node, each with a distinct
+      // `session` label ("plan" then "implement"). Each label scopes an
+      // independent callee conversation (distinct effective thread id →
+      // distinct checkpoint), so the implement turn must NOT carry the plan
+      // turn's history. Pre-session behavior (one rolling conversation per node)
+      // would resume the plan checkpoint and leak TASK_ALPHA into the implement
+      // turn — this proves the separation end-to-end through real persistence.
+      const mockLlm = getMockLlm(app);
+
+      /**
+       * FIFO (single-threaded graph execution order):
+       *  Q0 CALLER — tool_search (load deferred communication_exec)
+       *  Q1 CALLER — communication_exec(peer, TASK_ALPHA, session:'plan')
+       *  Q2 PEER[plan]      — finish(needsMoreInfo=false)
+       *  Q3 CALLER — communication_exec(peer, TASK_BETA, session:'implement')
+       *  Q4 PEER[implement] — finish(needsMoreInfo=false)
+       *  Q5 CALLER — finish(done)
+       */
+      mockLlm.queueChat({
+        kind: 'toolCall',
+        toolName: 'tool_search',
+        args: { query: 'communication' },
+      });
+      mockLlm.queueChat({
+        kind: 'toolCall',
+        toolName: 'communication_exec',
+        args: {
+          agent: PEER_AGENT_NAME,
+          message: 'TASK_ALPHA_TOKEN: draft the plan for the auth refactor.',
+          purpose: 'delegate planning',
+          session: 'plan',
+        },
+      });
+      mockLlm.queueChat({
+        kind: 'toolCall',
+        toolName: 'finish',
+        args: {
+          needsMoreInfo: false,
+          message: 'Plan drafted.',
+          purpose: 'planning complete',
+        },
+      });
+      mockLlm.queueChat({
+        kind: 'toolCall',
+        toolName: 'communication_exec',
+        args: {
+          agent: PEER_AGENT_NAME,
+          message: 'TASK_BETA_TOKEN: implement the approved plan.',
+          purpose: 'delegate implementation',
+          session: 'implement',
+        },
+      });
+      mockLlm.queueChat({
+        kind: 'toolCall',
+        toolName: 'finish',
+        args: {
+          needsMoreInfo: false,
+          message: 'Implemented.',
+          purpose: 'implementation complete',
+        },
+      });
+      mockLlm.queueChat({
+        kind: 'toolCall',
+        toolName: 'finish',
+        args: {
+          needsMoreInfo: false,
+          message: 'Plan and implementation both complete.',
+          purpose: 'done',
+        },
+      });
+
+      await ensureGraphRunning(graphId);
+
+      const execution = await graphsService.executeTrigger(
+        contextDataStorage,
+        graphId,
+        TRIGGER_NODE_ID,
+        {
+          messages: [
+            'Plan then implement via the Config Specialist, using a separate thread for each phase.',
+          ],
+          async: false,
+          threadSubId: uniqueThreadSubId('peer-sessions'),
+        },
+      );
+
+      const thread = await waitForThreadCompletion(execution.externalThreadId);
+      expect(thread.status).toBe(ThreadStatus.Done);
+
+      const peerRequests = mockLlm
+        .getRequests()
+        .filter((r) => (r.systemMessage ?? '').includes(PEER_SENTINEL));
+      // One LLM request per peer turn (each turn is a single finish call): the
+      // plan turn first, the implement turn last.
+      expect(peerRequests.length).toBeGreaterThanOrEqual(2);
+
+      const planTurn = JSON.stringify(peerRequests[0]?.messages ?? []);
+      const implementTurn = JSON.stringify(peerRequests.at(-1)?.messages ?? []);
+      expect(planTurn).toContain('TASK_ALPHA_TOKEN');
+      expect(implementTurn).toContain('TASK_BETA_TOKEN');
+      // The independence proof: the implement conversation never saw the plan
+      // task. If the two labels shared one conversation, the implement turn would
+      // resume the plan checkpoint and TASK_ALPHA would appear here.
+      expect(implementTurn).not.toContain('TASK_ALPHA_TOKEN');
+    },
+  );
 });

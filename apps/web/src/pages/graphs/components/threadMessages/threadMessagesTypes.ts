@@ -142,6 +142,13 @@ export type PreparedMessage =
       targetNodeId?: string;
       /** Target agent display name from the communication_exec args. */
       targetAgentName?: string;
+      /** Conversation label from the communication_exec `session` arg (when the
+       *  caller scoped this delegation to a named sub-thread). Shown as a chip. */
+      sessionLabel?: string;
+      /** True when this delegation opened a NEW callee conversation, false when
+       *  it continued/resumed an existing one. Undefined when the callee did not
+       *  report it (e.g. SimpleAgent). Drives the new-thread vs continued badge. */
+      isNewThread?: boolean;
       /** The parent AI message that triggered the communication_exec tool call.
        *  Its text content is rendered as the first item inside the block. */
       parentMessage?: ThreadMessageDto;

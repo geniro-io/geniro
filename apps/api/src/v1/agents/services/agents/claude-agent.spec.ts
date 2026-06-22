@@ -677,6 +677,152 @@ describe('ClaudeAgent', () => {
     expect(sentStartFrame().options.resume).toBeUndefined();
   });
 
+  describe('communication session labels (independent sub-conversations)', () => {
+    const sessionConfig = (
+      session: string,
+    ): RunnableConfig<BaseAgentConfigurable> => ({
+      configurable: {
+        thread_id: THREAD_ID,
+        graph_id: 'g-1',
+        node_id: 'claude-1',
+        __communicationSession: session,
+      } as BaseAgentConfigurable,
+    });
+
+    const runWithConfig = async (
+      cfg: RunnableConfig<BaseAgentConfigurable>,
+    ): Promise<{ runPromise: ReturnType<ClaudeAgent['run']> }> => {
+      const runPromise = agent.run(
+        THREAD_ID,
+        [new HumanMessage('hi')],
+        undefined,
+        cfg,
+      );
+      await vi.waitFor(() => expect(startSpy).toHaveBeenCalled());
+      releaseTransportStart();
+      await vi.waitFor(() => expect(fakeTransport.send).toHaveBeenCalled());
+      return { runPromise };
+    };
+
+    it('opens a NEW conversation under the composite key for a fresh label', async () => {
+      threadsDao.getOne.mockResolvedValue({
+        id: 'thread-int-1',
+        metadata: {},
+      });
+
+      const { runPromise } = await runWithConfig(sessionConfig('plan'));
+      capturedHandlers!.onDone('sess-plan-1');
+      const output = await runPromise;
+
+      expect(output.startedNewSession).toBe(true);
+      // Fresh label → nothing to resume; isSessionResumable is never consulted.
+      expect(bootstrap.isSessionResumable).not.toHaveBeenCalled();
+      expect(sentStartFrame().options.resume).toBeUndefined();
+      // Persisted under `${nodeId}::${label}`, leaving other labels untouched.
+      expect(threadsDao.mergeMetadataKey).toHaveBeenCalledWith(
+        'thread-int-1',
+        'claudeSessions',
+        { 'claude-1::plan': 'sess-plan-1' },
+      );
+    });
+
+    it('resumes the per-label session when one is already persisted', async () => {
+      threadsDao.getOne.mockResolvedValue({
+        id: 'thread-int-1',
+        metadata: { claudeSessions: { 'claude-1::plan': 'sess-plan-old' } },
+      });
+      bootstrap.isSessionResumable.mockResolvedValue(true);
+
+      const { runPromise } = await runWithConfig(sessionConfig('plan'));
+      capturedHandlers!.onDone('sess-plan-old');
+      const output = await runPromise;
+
+      expect(output.startedNewSession).toBe(false);
+      expect(bootstrap.isSessionResumable).toHaveBeenCalledWith(
+        expect.anything(),
+        'sess-plan-old',
+      );
+      expect(sentStartFrame().options.resume).toBe('sess-plan-old');
+    });
+
+    it('does NOT resume a sibling label — two labels stay independent', async () => {
+      // Only the "plan" conversation is persisted; an "implement" delegation to
+      // the SAME node must start fresh, not resume plan's session. The old
+      // node-id-only key would have resumed it — this pins the composite key.
+      threadsDao.getOne.mockResolvedValue({
+        id: 'thread-int-1',
+        metadata: { claudeSessions: { 'claude-1::plan': 'sess-plan-old' } },
+      });
+      bootstrap.isSessionResumable.mockResolvedValue(true);
+
+      const { runPromise } = await runWithConfig(sessionConfig('implement'));
+      capturedHandlers!.onDone('sess-impl-1');
+      const output = await runPromise;
+
+      expect(output.startedNewSession).toBe(true);
+      expect(bootstrap.isSessionResumable).not.toHaveBeenCalled();
+      expect(sentStartFrame().options.resume).toBeUndefined();
+      // Persisted under the implement key; the plan session is left intact.
+      expect(threadsDao.mergeMetadataKey).toHaveBeenCalledWith(
+        'thread-int-1',
+        'claudeSessions',
+        { 'claude-1::implement': 'sess-impl-1' },
+      );
+    });
+
+    it('scopes replay to THIS sub-thread (externalThreadId), not just the node', async () => {
+      // Persisted but non-resumable → replay path. The replay query must filter
+      // by externalThreadId (the effective sub-thread id) so a sibling label's
+      // rows on the same node/root thread cannot be spliced in.
+      threadsDao.getOne.mockResolvedValue({
+        id: 'thread-int-1',
+        metadata: { claudeSessions: { 'claude-1::implement': 'sess-gone' } },
+      });
+      bootstrap.isSessionResumable.mockResolvedValue(false);
+      messagesDao.getAll.mockResolvedValue([
+        { role: MessageRole.Human, message: { content: 'impl question' } },
+      ]);
+
+      const { runPromise } = await runWithConfig(sessionConfig('implement'));
+      capturedHandlers!.onDone('sess-impl-new');
+      const output = await runPromise;
+
+      // A non-resumable persisted session is a continuation (replayed), not new.
+      expect(output.startedNewSession).toBe(false);
+      expect(messagesDao.getAll).toHaveBeenCalledWith(
+        expect.objectContaining({
+          externalThreadId: THREAD_ID,
+          nodeId: 'claude-1',
+        }),
+        expect.anything(),
+      );
+    });
+
+    it('keeps the legacy node-id key when NO label is supplied (back-compat)', async () => {
+      threadsDao.getOne.mockResolvedValue({
+        id: 'thread-int-1',
+        metadata: {},
+      });
+
+      const { runPromise } = await runWithConfig({
+        configurable: {
+          thread_id: THREAD_ID,
+          graph_id: 'g-1',
+          node_id: 'claude-1',
+        } as BaseAgentConfigurable,
+      });
+      capturedHandlers!.onDone('sess-legacy');
+      const output = await runPromise;
+
+      expect(output.startedNewSession).toBe(true);
+      expect(threadsDao.mergeMetadataKey).toHaveBeenCalledWith(
+        'thread-int-1',
+        'claudeSessions',
+        { 'claude-1': 'sess-legacy' },
+      );
+    });
+  });
+
   it('rejects concurrent run() calls on the same thread', async () => {
     const runPromise = agent.run(
       THREAD_ID,

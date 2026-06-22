@@ -19,6 +19,13 @@ export interface CommunicationAgentResult {
   threadId: string;
   checkpointNs?: string;
   calleeUsage?: RequestTokenUsage;
+  /**
+   * True when this invocation started a NEW callee conversation (fresh session)
+   * rather than resuming/replaying an existing one — surfaced to the model and
+   * the UI as a new-thread vs continued indicator. `undefined` for callees that
+   * do not report it (e.g. SimpleAgent today).
+   */
+  startedNewThread?: boolean;
 }
 
 export interface AgentInfo {

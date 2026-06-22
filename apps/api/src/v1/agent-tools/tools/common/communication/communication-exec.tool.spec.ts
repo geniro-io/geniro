@@ -74,6 +74,28 @@ describe('CommunicationExecTool', () => {
 
       expect(() => tool.validate(invalidData)).toThrow();
     });
+
+    it('should accept an optional session label', () => {
+      expect(() =>
+        tool.validate({
+          message: 'Plan it',
+          purpose: 'Planning',
+          agent: 'engineer',
+          session: 'plan',
+        }),
+      ).not.toThrow();
+    });
+
+    it('should reject a session label longer than 64 chars', () => {
+      expect(() =>
+        tool.validate({
+          message: 'Plan it',
+          purpose: 'Planning',
+          agent: 'engineer',
+          session: 'x'.repeat(65),
+        }),
+      ).toThrow();
+    });
   });
 
   describe('invoke', () => {
@@ -231,6 +253,47 @@ describe('CommunicationExecTool', () => {
       );
       expect(output.actionRequired).toContain('needsMoreInfo');
       expect(output.actionRequired).toMatch(/resumes from exactly where it/i);
+    });
+
+    it('threads the session label into the callee config and surfaces startedNewThread (output + metadata)', async () => {
+      const invokeAgent = vi.fn().mockResolvedValue({
+        message: 'Plan written.',
+        needsMoreInfo: false,
+        threadId: 'callee-thread__plan',
+        startedNewThread: true,
+      });
+      const agents: AgentInfo[] = [
+        { name: 'engineer', description: 'Builds things', invokeAgent },
+      ];
+
+      const result = await tool.invoke(
+        {
+          message: 'Plan it',
+          purpose: 'Planning',
+          agent: 'engineer',
+          session: 'plan',
+        },
+        { agents },
+        { configurable: { thread_id: 'parent-thread', node_id: 'mgr' } },
+      );
+
+      // The label rides on the callee configurable so the template can scope a
+      // fresh sub-thread for this delegation.
+      expect(invokeAgent).toHaveBeenCalledWith(
+        ['Plan it'],
+        expect.objectContaining({
+          configurable: expect.objectContaining({
+            __communicationSession: 'plan',
+          }),
+        }),
+      );
+      // Visible to the model (so the manager knows it opened a new thread)...
+      expect(result.output).toMatchObject({ startedNewThread: true });
+      // ...and recorded on the tool message so the UI can badge it.
+      expect(result.messageMetadata).toMatchObject({
+        __communicationSession: 'plan',
+        __communicationNewThread: true,
+      });
     });
 
     it('should throw error when no agents are configured', async () => {

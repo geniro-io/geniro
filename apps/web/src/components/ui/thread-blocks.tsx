@@ -1617,10 +1617,14 @@ export function BlockHeader({
   left,
   label,
   status,
+  badge,
 }: {
   left?: React.ReactNode;
   label: string;
   status: 'running' | 'done' | 'error';
+  /** Optional inline tag rendered between the label and the status (e.g. the
+   *  new-thread / continued conversation indicator on a communication block). */
+  badge?: React.ReactNode;
 }) {
   return (
     <div className="flex items-center gap-2 px-4 py-2.5 bg-muted/30 border-b border-border">
@@ -1628,6 +1632,7 @@ export function BlockHeader({
       <span className="text-xs font-medium text-foreground flex-1 min-w-0 truncate">
         {label}
       </span>
+      {badge && badge}
       {status === 'running' && (
         <Loader2 className="w-3.5 h-3.5 text-blue-500 animate-spin flex-shrink-0" />
       )}
@@ -1694,6 +1699,11 @@ export interface CommunicationBlockProps {
   errorText?: string;
   resultText?: string;
   resultLabel?: string;
+  /** Conversation label from the communication `session` arg (named sub-thread). */
+  sessionLabel?: string;
+  /** True = this delegation opened a NEW callee conversation; false = continued
+   *  an existing one; undefined = not reported (no badge). */
+  isNewThread?: boolean;
   /** When true, renders the result area with amber "Need more information" styling. */
   needsMoreInfo?: boolean;
   statistics?: {
@@ -1723,6 +1733,8 @@ export function CommunicationBlock(props: CommunicationBlockProps) {
     errorText,
     resultText,
     resultLabel,
+    sessionLabel,
+    isNewThread,
     needsMoreInfo,
     statistics,
     model,
@@ -1783,11 +1795,28 @@ export function CommunicationBlock(props: CommunicationBlockProps) {
         ? `Communication: ${cleanTarget}`
         : 'Agent Communication';
 
+    // New-thread / continued indicator. Render when the call either opened/
+    // resumed a named conversation (`sessionLabel`) or reported new-vs-continued
+    // (`isNewThread`); a bare label with no boolean shows just the chip.
+    const sessionBadge =
+      isNewThread !== undefined || sessionLabel ? (
+        <Badge
+          variant={isNewThread ? 'secondary' : 'outline'}
+          className="text-[10px] px-1.5 py-0 h-4 font-normal flex-shrink-0 whitespace-nowrap">
+          {isNewThread === true
+            ? `new thread${sessionLabel ? ` · ${sessionLabel}` : ''}`
+            : isNewThread === false
+              ? `continued${sessionLabel ? ` · ${sessionLabel}` : ''}`
+              : sessionLabel}
+        </Badge>
+      ) : undefined;
+
     const header = (
       <BlockHeader
         left={headerLeft}
         label={headerLabelText}
         status={displayStatus}
+        badge={sessionBadge}
       />
     );
 

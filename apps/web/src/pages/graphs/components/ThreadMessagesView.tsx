@@ -1089,6 +1089,8 @@ const ThreadMessagesView: React.FC<ThreadMessagesViewProps> = React.memo(
               sourceAgentName={commSourceName}
               sourceColor={commSourceColor}
               targetColor={commTargetColor}
+              sessionLabel={it.sessionLabel}
+              isNewThread={it.isNewThread}
               parentContent={
                 parentContent ? (
                   <MarkdownContent content={parentContent} />
@@ -1402,6 +1404,8 @@ const ThreadMessagesView: React.FC<ThreadMessagesViewProps> = React.memo(
               sourceAgentName={topCommSourceName}
               sourceColor={topCommSourceColor}
               targetColor={topCommTargetColor}
+              sessionLabel={item.sessionLabel}
+              isNewThread={item.isNewThread}
               parentContent={
                 parentContent ? (
                   <MarkdownContent content={parentContent} />

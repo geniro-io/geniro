@@ -32,6 +32,13 @@ export const CommunicationExecSchema = z.object({
     .describe(
       'The name of the target agent. Must match one of the connected agents listed in the instructions.',
     ),
+  session: z
+    .string()
+    .max(64)
+    .optional()
+    .describe(
+      'Optional conversation label. Omit to continue your single rolling conversation with this agent (the default — prior context is preserved). Provide a short label (e.g. "plan", "implement", "review") to run the agent in an INDEPENDENT thread scoped to that label: a NEW label starts a fresh conversation with no shared history; reusing a label RESUMES that conversation. Use distinct labels when the same agent must do unrelated pieces of work that must not share context — e.g. planning a task vs implementing it.',
+    ),
 });
 
 export type CommunicationExecSchemaType = z.infer<
@@ -131,6 +138,13 @@ export class CommunicationExecTool extends BaseTool<
       - Getting a second opinion or review from another agent
       - Executing tasks that another agent is better suited for
       - Breaking down complex work across multiple agents
+
+      ### Conversations vs new threads (\`session\`)
+      By default every message you send to a given agent continues ONE rolling conversation — the agent remembers everything from your previous messages to it. Pass the optional \`session\` label to control this:
+      - **Omit \`session\`** → continue the default conversation (use this for follow-ups, answering a \`needsMoreInfo\` question, or iterating on the same piece of work).
+      - **A NEW \`session\` label** → start a fresh, independent conversation with the agent — no shared history. Use this when the same agent must do unrelated work that should not bleed context between tasks (e.g. \`session: "plan"\` for planning, then a separate \`session: "implement"\` for implementation).
+      - **Reuse an existing label** → resume that specific conversation exactly where it left off.
+      Keep labels short and stable (e.g. \`"plan"\`, \`"implement"\`, \`"review"\`). The response reports \`startedNewThread: true\` when a fresh conversation was opened.
 
       ### When NOT to Use
       - You can handle the task yourself → work directly
@@ -280,6 +294,7 @@ export class CommunicationExecTool extends BaseTool<
           ...(runnableConfig.configurable ?? {}),
           __interAgentCommunication: true,
           __sourceAgentNodeId: runnableConfig.configurable?.node_id,
+          ...(args.session ? { __communicationSession: args.session } : {}),
         },
       };
 
@@ -326,6 +341,14 @@ export class CommunicationExecTool extends BaseTool<
           __title: title,
           __interAgentCommunication: true,
           __sourceAgentNodeId: runnableConfig.configurable?.node_id,
+          // Surface the conversation label + whether this call opened a new
+          // callee thread so the UI can badge the communication block as a new
+          // thread vs a continuation (see ThreadMessagesView communication
+          // rendering). The label is the caller-supplied (human-readable) value.
+          ...(args.session ? { __communicationSession: args.session } : {}),
+          ...(typeof output.startedNewThread === 'boolean'
+            ? { __communicationNewThread: output.startedNewThread }
+            : {}),
         },
       };
     } catch (error: unknown) {
@@ -351,6 +374,7 @@ export class CommunicationExecTool extends BaseTool<
             __title: title,
             __interAgentCommunication: true,
             __sourceAgentNodeId: runnableConfig.configurable?.node_id,
+            ...(args.session ? { __communicationSession: args.session } : {}),
           },
         };
       }

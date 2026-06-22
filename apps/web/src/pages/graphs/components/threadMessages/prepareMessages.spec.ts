@@ -998,3 +998,113 @@ describe('split-turn preamble folds into the working block', () => {
     expect(finalAnswer!.isToolCallContent).toBeFalsy();
   });
 });
+
+// ── Communication block: session label + new-thread indicator ────────────────
+
+describe('communication block — session label and new-thread indicator', () => {
+  const commCallMsg = (
+    aiRowId: string,
+    toolCallId: string,
+    session?: string,
+  ): ThreadMessageDto => ({
+    id: aiRowId,
+    threadId: 'thread-1',
+    nodeId: 'node-1',
+    externalThreadId: '',
+    createdAt: '2024-01-01T00:00:00.000Z',
+    updatedAt: '2024-01-01T00:00:00.000Z',
+    message: {
+      id: aiRowId,
+      role: 'ai',
+      content: 'Delegating to the engineer.',
+      toolCalls: [
+        {
+          id: toolCallId,
+          name: 'communication_exec',
+          args: {
+            agent: 'Engineer',
+            message: 'Plan the task',
+            purpose: 'Planning',
+            ...(session ? { session } : {}),
+          },
+        },
+      ],
+    } as unknown as ThreadMessageDto['message'],
+  });
+
+  const commResultMsg = (
+    toolRowId: string,
+    toolCallId: string,
+    startedNewThread?: boolean,
+  ): ThreadMessageDto => ({
+    id: toolRowId,
+    threadId: 'thread-1',
+    nodeId: 'node-1',
+    externalThreadId: '',
+    createdAt: '2024-01-01T00:01:00.000Z',
+    updatedAt: '2024-01-01T00:01:00.000Z',
+    message: {
+      id: toolRowId,
+      role: 'tool',
+      name: 'communication_exec',
+      toolCallId,
+      content: JSON.stringify({
+        message: 'Plan written to .geniro/planning/spec.md',
+        needsMoreInfo: false,
+        threadId: 'parent__tool__Engineer__plan',
+        ...(startedNewThread !== undefined ? { startedNewThread } : {}),
+      }),
+    } as unknown as ThreadMessageDto['message'],
+  });
+
+  const findCommunication = (
+    items: PreparedMessage[],
+    toolCallId: string,
+  ): (PreparedMessage & { type: 'communication' }) | undefined =>
+    collectItems(
+      items,
+      (it) => it.type === 'communication' && it.toolCallId === toolCallId,
+    )[0] as (PreparedMessage & { type: 'communication' }) | undefined;
+
+  it('carries the session label and new-thread flag onto the communication block', () => {
+    const prepared = prepareReadyMessages(
+      [
+        commCallMsg('ai-c1', 'tc-c1', 'plan'),
+        commResultMsg('tool-c1', 'tc-c1', true),
+      ],
+      defaultOptions,
+    );
+
+    const block = findCommunication(prepared, 'tc-c1');
+    expect(block).toBeDefined();
+    expect(block!.sessionLabel).toBe('plan');
+    expect(block!.isNewThread).toBe(true);
+  });
+
+  it('marks a resumed delegation as continued (isNewThread false) keeping the label', () => {
+    const prepared = prepareReadyMessages(
+      [
+        commCallMsg('ai-c2', 'tc-c2', 'plan'),
+        commResultMsg('tool-c2', 'tc-c2', false),
+      ],
+      defaultOptions,
+    );
+
+    const block = findCommunication(prepared, 'tc-c2');
+    expect(block).toBeDefined();
+    expect(block!.sessionLabel).toBe('plan');
+    expect(block!.isNewThread).toBe(false);
+  });
+
+  it('leaves both undefined for a label-less call that reports no new-thread flag', () => {
+    const prepared = prepareReadyMessages(
+      [commCallMsg('ai-c3', 'tc-c3'), commResultMsg('tool-c3', 'tc-c3')],
+      defaultOptions,
+    );
+
+    const block = findCommunication(prepared, 'tc-c3');
+    expect(block).toBeDefined();
+    expect(block!.sessionLabel).toBeUndefined();
+    expect(block!.isNewThread).toBeUndefined();
+  });
+});

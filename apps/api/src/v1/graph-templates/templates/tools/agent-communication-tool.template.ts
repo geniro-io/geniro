@@ -143,7 +143,24 @@ export class AgentCommunicationToolTemplate extends ToolNodeBaseTemplate<
               runnableConfig.configurable?.thread_id ||
               `inter-agent-${Date.now()}`;
 
-            const effectiveThreadId = `${rootParentThreadId}__${metadata.nodeId}__${agentConfig.name}`;
+            // Optional caller-supplied conversation label. A label scopes the
+            // callee into an INDEPENDENT sub-thread (distinct effective thread id
+            // + distinct SDK-session key): a new label = a fresh conversation,
+            // the same label = resume. No label preserves the legacy single
+            // rolling conversation per (root thread, node, agent). The slug is
+            // deterministic so repeat calls with the same label resolve the same
+            // sub-thread; an empty slug (e.g. punctuation-only) falls back to no
+            // session, keeping the legacy key.
+            const rawSession =
+              runnableConfig.configurable?.__communicationSession;
+            const sessionSlug =
+              typeof rawSession === 'string'
+                ? this.slugifySession(rawSession)
+                : '';
+
+            const effectiveThreadId = `${rootParentThreadId}__${metadata.nodeId}__${agentConfig.name}${
+              sessionSlug ? `__${sessionSlug}` : ''
+            }`;
 
             const preparedMessages = messages.map(
               (msg) =>
@@ -169,6 +186,13 @@ export class AgentCommunicationToolTemplate extends ToolNodeBaseTemplate<
                 node_id: agentNodeId,
                 parent_thread_id: rootParentThreadId,
                 checkpoint_ns: checkpointNs,
+                // Carry the NORMALIZED slug downstream so the callee's
+                // per-conversation session key matches the effective thread id
+                // (and repeat calls with the same label resolve the same key).
+                // ALWAYS overwrite (slug or undefined) so a raw label whose slug
+                // is empty (e.g. punctuation-only) cannot leak past the spread
+                // above into the callee's session key.
+                __communicationSession: sessionSlug || undefined,
                 graph_created_by:
                   runnableConfig.configurable?.graph_created_by ??
                   metadata.graph_created_by,
@@ -223,6 +247,9 @@ export class AgentCommunicationToolTemplate extends ToolNodeBaseTemplate<
               threadId: response.threadId,
               checkpointNs: response.checkpointNs,
               ...(calleeUsage ? { calleeUsage } : {}),
+              ...(typeof response.startedNewSession === 'boolean'
+                ? { startedNewThread: response.startedNewSession }
+                : {}),
             };
           };
 
@@ -245,6 +272,20 @@ export class AgentCommunicationToolTemplate extends ToolNodeBaseTemplate<
         instance.tools.length = 0;
       },
     };
+  }
+
+  /**
+   * Normalize a caller-supplied session label into a deterministic, thread-id-
+   * safe slug. Returns '' for empty/punctuation-only input so the caller falls
+   * back to the legacy no-session conversation key.
+   */
+  private slugifySession(label: string): string {
+    return label
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 48);
   }
 
   private findLastNonSystemMessage(

@@ -919,6 +919,20 @@ export const prepareReadyMessages = (
 
           const commModel = extractSubagentModel(innerRawMessages);
 
+          // Conversation label (from the `session` arg) + whether this call
+          // opened a NEW callee conversation (`startedNewThread`, carried in the
+          // model-visible result). Together they drive the "new thread · label"
+          // vs "continued · label" badge on the communication block.
+          const sessionLabel =
+            typeof parsedArgs?.session === 'string' &&
+            parsedArgs.session.trim().length > 0
+              ? (parsedArgs.session as string)
+              : undefined;
+          const isNewThread =
+            typeof commResultObj?.startedNewThread === 'boolean'
+              ? (commResultObj.startedNewThread as boolean)
+              : undefined;
+
           // Pass the parent AI message so its text content can be shown
           // as the first item inside the communication block.
           const parentHasContent = !isBlankContent(m.message?.content);
@@ -953,6 +967,8 @@ export const prepareReadyMessages = (
             toolCallId: tc.id!,
             targetNodeId,
             targetAgentName,
+            sessionLabel,
+            isNewThread,
             parentMessage: parentHasContent ? m : undefined,
             instructionMessage: instructionMsg,
             innerMessages: innerPrepared,

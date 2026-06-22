@@ -396,12 +396,25 @@ export class ClaudeAgent
       // Resume-or-replay: resume when the container still has the session
       // transcript; otherwise replay prior history into a fresh session.
       // Sessions are keyed by node id — several Claude agents can share one
-      // root thread, and each must continue ITS OWN conversation only.
+      // root thread, and each must continue ITS OWN conversation only. When the
+      // caller delegates with a communication `session` label, the SAME node can
+      // hold several independent conversations: the label is folded into the
+      // session key so each resolves its own SDK session (and the legacy
+      // node-id-only key is preserved when no label is present).
       const agentNodeId = (configurable.node_id as string | undefined) ?? '';
-      const persistedSessionId = agentNodeId
+      const communicationSession =
+        configurable.__communicationSession || undefined;
+      const sessionKey =
+        agentNodeId && communicationSession
+          ? `${agentNodeId}::${communicationSession}`
+          : agentNodeId;
+      const persistedSessionId = sessionKey
         ? (threadRow?.metadata as ClaudeThreadMetadata | undefined)
-            ?.claudeSessions?.[agentNodeId]
+            ?.claudeSessions?.[sessionKey]
         : undefined;
+      // New thread = first run under this session key (nothing persisted yet).
+      // A resumed-or-replayed run (persisted session present) is a continuation.
+      const startedNewSession = !persistedSessionId;
       let resume: string | undefined;
       let replayPrefix = '';
       if (persistedSessionId) {
@@ -410,9 +423,13 @@ export class ClaudeAgent
         ) {
           resume = persistedSessionId;
         } else if (threadRow) {
+          // Scope replay to THIS sub-thread (effective thread id = `threadId`),
+          // not just the node — two session labels share one node id, so a
+          // node-only filter would splice the other conversation's history in.
           replayPrefix = await this.buildReplayPrefix(
             threadRow.id,
             agentNodeId,
+            threadId,
           );
         }
       }
@@ -579,11 +596,11 @@ export class ClaudeAgent
       mapper.flush();
 
       const sessionId = mapper.sessionId ?? this.outcomeSessionId(outcome);
-      if (sessionId && agentNodeId) {
+      if (sessionId && sessionKey) {
         await this.persistSessionId(
           rootThreadId,
           threadRow?.id,
-          agentNodeId,
+          sessionKey,
           sessionId,
         );
       }
@@ -598,6 +615,7 @@ export class ClaudeAgent
         threadId,
         needsMoreInfo: false,
         statistics: { usage: mapper.getTotalUsage() },
+        startedNewSession,
       };
 
       if (outcome.kind === 'fatal') {
@@ -940,6 +958,9 @@ export class ClaudeAgent
       threadId: runEntry.threadId,
       needsMoreInfo: true,
       ...(output.statistics && { statistics: output.statistics }),
+      ...(output.startedNewSession !== undefined && {
+        startedNewSession: output.startedNewSession,
+      }),
     };
     this.emit({
       type: 'run',
@@ -1229,13 +1250,19 @@ export class ClaudeAgent
   private async buildReplayPrefix(
     internalThreadId: string,
     agentNodeId: string,
+    effectiveThreadId: string,
   ): Promise<string> {
     // Exact node-id match: replay only THIS agent's exchange — other agents'
     // rows (and `::sub::` surrogates) on a shared root thread are not part of
-    // this node's conversation.
+    // this node's conversation. The `externalThreadId` filter further scopes to
+    // THIS sub-thread: a node addressed under several communication `session`
+    // labels persists each conversation under a distinct effective thread id
+    // (the message rows' `externalThreadId`), so a node-only filter would
+    // splice a sibling session's history into this replay.
     const rows = await this.messagesDao.getAll(
       {
         threadId: internalThreadId,
+        externalThreadId: effectiveThreadId,
         nodeId: agentNodeId,
         role: { $in: [MessageRole.Human, MessageRole.AI] },
       },
@@ -1279,7 +1306,7 @@ export class ClaudeAgent
   private async persistSessionId(
     rootThreadId: string,
     loadedThreadRowId: string | undefined,
-    agentNodeId: string,
+    sessionKey: string,
     sessionId: string,
   ): Promise<void> {
     try {
@@ -1299,7 +1326,7 @@ export class ClaudeAgent
         return;
       }
       await this.threadsDao.mergeMetadataKey(threadRowId, 'claudeSessions', {
-        [agentNodeId]: sessionId,
+        [sessionKey]: sessionId,
       });
     } catch (error) {
       this.logger.warn(

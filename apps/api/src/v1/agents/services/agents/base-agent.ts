@@ -32,6 +32,14 @@ export type AgentOutput = {
    * history on repeat invocations.
    */
   statistics?: { usage: RequestTokenUsage };
+  /**
+   * True when this run started a brand-new callee conversation (no prior
+   * persisted session for the resolved session key) rather than resuming or
+   * replaying an existing one. Surfaced through the communication tool so the
+   * UI can mark a delegation as a new thread vs a continuation. Only the
+   * bridge (Claude) agent reports it today; `undefined` elsewhere.
+   */
+  startedNewSession?: boolean;
   waiting?: boolean;
   waitMetadata?: {
     durationSeconds: number;

@@ -344,3 +344,42 @@ describe('WorkingBlock', () => {
     expect(screen.getByText('tool-chip')).toBeInTheDocument();
   });
 });
+
+// ── CommunicationBlock — new-thread / continued session badge ──────────────────
+
+describe('CommunicationBlock — session badge', () => {
+  it('renders a "new thread · <label>" badge for a fresh sub-thread', () => {
+    render(
+      <CommunicationBlock
+        status="done"
+        targetAgentName="Engineer"
+        sessionLabel="plan"
+        isNewThread>
+        <div />
+      </CommunicationBlock>,
+    );
+    expect(screen.getByText(/new thread · plan/)).toBeInTheDocument();
+  });
+
+  it('renders a "continued · <label>" badge for a resumed sub-thread', () => {
+    render(
+      <CommunicationBlock
+        status="done"
+        targetAgentName="Engineer"
+        sessionLabel="implement"
+        isNewThread={false}>
+        <div />
+      </CommunicationBlock>,
+    );
+    expect(screen.getByText(/continued · implement/)).toBeInTheDocument();
+  });
+
+  it('renders no session badge when neither label nor new-thread flag is set', () => {
+    render(
+      <CommunicationBlock status="done" targetAgentName="Engineer">
+        <div />
+      </CommunicationBlock>,
+    );
+    expect(screen.queryByText(/new thread|continued/)).toBeNull();
+  });
+});
