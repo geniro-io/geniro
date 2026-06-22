@@ -72,6 +72,9 @@ export class ClaudeStreamMapper {
    * turn. Counting a given id's usage once keeps the documented invariant
    * `Σ messages.requestTokenUsage == billed turn totals`; if the first frame
    * was only partial, the result-frame residual reconcile settles the gap.
+   * For a text→tool_use split, `relocateSplitUsageToToolFrame` moves the count
+   * onto the tool-call frame (the working block) so the cost renders where the
+   * work happens, not on the preamble text.
    */
   private readonly usageStampedMessageIds = new Set<string>();
   private usageTotals = {
@@ -190,8 +193,10 @@ export class ClaudeStreamMapper {
         return;
       }
       case 'assistant': {
+        const assistantMessage = message as SdkAssistantMessage;
+        this.relocateSplitUsageToToolFrame(assistantMessage);
         this.flush();
-        this.onAssistant(message as SdkAssistantMessage);
+        this.onAssistant(assistantMessage);
         return;
       }
       case 'user': {
@@ -578,6 +583,62 @@ export class ClaudeStreamMapper {
     this.usageTotals.outputTokens += usage.outputTokens;
     this.usageTotals.totalTokens += usage.totalTokens;
     this.usageTotals.totalPrice += usage.totalPrice ?? 0;
+  }
+
+  private subtractFromTotals(usage: RequestTokenUsage): void {
+    this.usageTotals.inputTokens -= usage.inputTokens;
+    this.usageTotals.cachedInputTokens -= usage.cachedInputTokens ?? 0;
+    this.usageTotals.outputTokens -= usage.outputTokens;
+    this.usageTotals.totalTokens -= usage.totalTokens;
+    this.usageTotals.totalPrice -= usage.totalPrice ?? 0;
+  }
+
+  /**
+   * Text→tool_use split: the SDK can stream one assistant message as a text
+   * frame followed by a same-id tool_use frame, both carrying the message's
+   * usage. The `usageStampedMessageIds` guard keeps the count on the FIRST
+   * frame (the text part), but the tool-call frame is what renders as the
+   * working block — the natural home for the turn's cost. When the incoming
+   * frame is the tool part of the still-buffered text frame, strip the usage
+   * off the (about-to-flush) text frame so `onAssistant` re-stamps it on the
+   * tool frame. Net effect: counted exactly once, attributed to the working
+   * block. If the tool frame itself carries no per-frame usage, the result
+   * reconcile lands the residual on it instead (it is the last buffered
+   * message), so the cost still renders on the working block.
+   */
+  private relocateSplitUsageToToolFrame(incoming: SdkAssistantMessage): void {
+    const buffered = this.pendingAssistant?.aiMessage;
+    const incomingId = incoming.message.id;
+    if (!buffered || !incomingId || buffered.id !== incomingId) {
+      return;
+    }
+    // Only move FROM a text frame (no tool calls) TO a tool frame.
+    if (Array.isArray(buffered.tool_calls) && buffered.tool_calls.length > 0) {
+      return;
+    }
+    const rawBlocks = incoming.message.content;
+    const incomingHasToolUse =
+      Array.isArray(rawBlocks) &&
+      rawBlocks.some(
+        (block): block is SdkContentBlock =>
+          typeof block === 'object' &&
+          block !== null &&
+          (block as { type?: unknown }).type === 'tool_use',
+      );
+    if (!incomingHasToolUse) {
+      return;
+    }
+    const existing = buffered.additional_kwargs.__requestUsage as
+      | RequestTokenUsage
+      | undefined;
+    if (!existing) {
+      return;
+    }
+    this.subtractFromTotals(existing);
+    this.usageStampedMessageIds.delete(incomingId);
+    const kwargs = { ...buffered.additional_kwargs };
+    delete kwargs.__requestUsage;
+    buffered.additional_kwargs = kwargs;
   }
 
   private subagentKwargs(

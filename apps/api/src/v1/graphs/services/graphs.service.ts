@@ -49,6 +49,8 @@ import {
   extractAgentsFromSchema,
   extractNodeDisplayNamesFromMetadata,
   extractTriggerNodesFromSchema,
+  GRAPH_COMPILE_TIMEOUT_MS,
+  withTimeout,
 } from '../graphs.utils';
 import { CostLimitResolverService } from './cost-limit-resolver.service';
 import { GraphCompiler } from './graph-compiler';
@@ -519,12 +521,25 @@ export class GraphsService {
       // agent run()-entry pre-flight in M3.3, not this interactive-deploy gate.
       await this.assertOAuthCredentialsValid(ctx, schema.nodes);
 
-      // Compile the graph (it will be registered automatically during compilation)
-      await this.graphCompiler.compile(graph, {
-        graphId: graph.id,
-        name: graph.name,
-        version: graph.version,
-      });
+      // Compile the graph (it will be registered automatically during
+      // compilation). Bounded by a timeout: a node provision (runtime/MCP) can
+      // hang forever, which would strand the graph in `compiling`. On timeout
+      // the throw flows into the catch below — destroy() tears down the
+      // partially-compiled graph + runtime, and the status transitions to Error
+      // so the user can retry. (The hung compile promise is abandoned; killing
+      // its runtime in destroy() makes its in-flight provision reject shortly,
+      // which clears the registry's in-flight-compile entry.)
+      await withTimeout(
+        this.graphCompiler.compile(graph, {
+          graphId: graph.id,
+          name: graph.name,
+          version: graph.version,
+        }),
+        GRAPH_COMPILE_TIMEOUT_MS,
+        `Graph compilation timed out after ${Math.round(
+          GRAPH_COMPILE_TIMEOUT_MS / 1000,
+        )}s — a node (runtime or MCP) did not become ready. Check the node's credentials and configuration, then try again.`,
+      );
 
       await this.graphDao.updateById(id, {
         status: GraphStatus.Running,
@@ -640,7 +655,17 @@ export class GraphsService {
           ctx,
           provider,
         );
-        authenticated = status.authenticated;
+        // `status.authenticated` reflects only the credential ROW (exists + not
+        // expired). A row can be "authenticated" while the stored token VALUE is
+        // empty/blank — which would inject an empty `Authorization: Bearer `
+        // header and HANG the MCP at compile. Require a usable, header-safe
+        // token VALUE so the user gets OAUTH_CREDENTIAL_REQUIRED here instead.
+        authenticated =
+          status.authenticated &&
+          (await this.oauthCredentialsService.getValidatedAccessToken(
+            ctx,
+            provider,
+          )) !== null;
       } catch (err) {
         this.logger.warn(
           'OAuth pre-flight refresh failed; treating provider as unauthenticated',

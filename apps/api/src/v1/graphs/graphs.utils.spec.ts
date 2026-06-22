@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { TemplateRegistry } from '../graph-templates/services/template-registry';
 import { type GraphSchemaType, NodeKind } from './graphs.types';
@@ -6,6 +6,7 @@ import {
   extractAgentsFromSchema,
   extractNodeDisplayNamesFromMetadata,
   extractTriggerNodesFromSchema,
+  withTimeout,
 } from './graphs.utils';
 
 const createMockTemplateRegistry = (
@@ -341,5 +342,39 @@ describe('extractNodeDisplayNamesFromMetadata', () => {
     expect(names).toEqual({
       'node-1': 'Trimmed',
     });
+  });
+});
+
+describe('withTimeout', () => {
+  it('resolves with the value when the promise settles before the timeout', async () => {
+    await expect(
+      withTimeout(Promise.resolve('ok'), 1_000, 'too slow'),
+    ).resolves.toBe('ok');
+  });
+
+  it('rejects with the timeout message when the promise does not settle in time', async () => {
+    vi.useFakeTimers();
+    try {
+      const pending = new Promise<string>(() => {});
+      const raced = withTimeout(pending, 5_000, 'compilation timed out');
+      const settled = expect(raced).rejects.toThrow('compilation timed out');
+      await vi.advanceTimersByTimeAsync(5_000);
+      await settled;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('clears the timer when the promise wins (no late rejection past the deadline)', async () => {
+    vi.useFakeTimers();
+    try {
+      await expect(
+        withTimeout(Promise.resolve('done'), 5_000, 'too slow'),
+      ).resolves.toBe('done');
+      // Advancing past the deadline must NOT surface a late/unhandled rejection.
+      await vi.advanceTimersByTimeAsync(10_000);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

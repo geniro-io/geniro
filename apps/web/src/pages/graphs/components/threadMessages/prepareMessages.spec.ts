@@ -922,3 +922,79 @@ describe('SubagentBlock — stopped status surfaces synthetic errorText', () => 
     expect(block!.errorText).toBeUndefined();
   });
 });
+
+// ── Bridge-split turn: preamble text folds into the working block ─────────────
+
+describe('split-turn preamble folds into the working block', () => {
+  // The Claude bridge persists ONE assistant turn (leading text + tool_use) as
+  // TWO rows that share a single SDK message id. The text-only row must be
+  // marked isToolCallContent so the view folds it INTO the following working
+  // block (the turn's cost lives on the tool row) instead of rendering it as a
+  // standalone, cost-less bubble above its own turn's block.
+  const splitPreamble = (rowId: string, sdkId: string): ThreadMessageDto => ({
+    id: rowId,
+    threadId: 'thread-1',
+    nodeId: 'node-1',
+    externalThreadId: '',
+    createdAt: '2024-01-01T00:00:00.000Z',
+    updatedAt: '2024-01-01T00:00:00.000Z',
+    message: {
+      id: sdkId,
+      role: 'ai',
+      content: "I'll pull up that Linear issue for you.",
+    } as ThreadMessageDto['message'],
+  });
+
+  const splitToolCall = (
+    rowId: string,
+    sdkId: string,
+    toolCallId: string,
+  ): ThreadMessageDto => ({
+    id: rowId,
+    threadId: 'thread-1',
+    nodeId: 'node-1',
+    externalThreadId: '',
+    createdAt: '2024-01-01T00:00:01.000Z',
+    updatedAt: '2024-01-01T00:00:01.000Z',
+    message: {
+      id: sdkId,
+      role: 'ai',
+      content: '',
+      toolCalls: [{ id: toolCallId, name: 'mcp__linear__get_issue' }],
+    } as ThreadMessageDto['message'],
+  });
+
+  const findChat = (
+    items: PreparedMessage[],
+    rowId: string,
+  ): (PreparedMessage & { type: 'chat' }) | undefined =>
+    collectItems(
+      items,
+      (item) => item.type === 'chat' && item.id === `chat-${rowId}`,
+    )[0] as (PreparedMessage & { type: 'chat' }) | undefined;
+
+  it('marks the preamble text row isToolCallContent when it shares an SDK id with a sibling tool-call row', () => {
+    const prepared = prepareReadyMessages(
+      [
+        splitPreamble('row-text', 'msg_split'),
+        splitToolCall('row-tool', 'msg_split', 'tc1'),
+      ],
+      defaultOptions,
+    );
+
+    const preamble = findChat(prepared, 'row-text');
+    expect(preamble).toBeDefined();
+    expect(preamble!.isToolCallContent).toBe(true);
+  });
+
+  it('leaves a pure-text turn (no sibling tool row) as a standalone chat bubble', () => {
+    const prepared = prepareReadyMessages(
+      [makeMsg('row-final', 'ai', "Here's what that Linear issue is about.")],
+      defaultOptions,
+    );
+
+    const finalAnswer = findChat(prepared, 'row-final');
+    expect(finalAnswer).toBeDefined();
+    expect(finalAnswer!.isToolCallContent).toBeFalsy();
+  });
+});

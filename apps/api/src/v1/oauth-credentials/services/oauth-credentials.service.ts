@@ -382,6 +382,40 @@ export class OAuthCredentialsService {
   }
 
   /**
+   * Resolve the stored access token and validate it is present + header-safe.
+   * Returns the trimmed token, or `null` when it is missing, empty/blank, or
+   * header-unsafe.
+   *
+   * `status.authenticated` (buildStatus) reflects only the credential ROW —
+   * exists + not expired — and NEVER reads the secret VALUE, which lives in a
+   * separate store with its own lifecycle. A row can therefore report
+   * `authenticated: true` while the stored token is empty/blank, which would
+   * inject an empty `Authorization: Bearer ` header and hang the MCP. Callers
+   * that gate on a USABLE token (the deploy pre-flight) MUST use this, not just
+   * `status.authenticated`.
+   */
+  async getValidatedAccessToken(
+    ctx: AppContextStorage,
+    provider: OAuthProvider,
+  ): Promise<string | null> {
+    const projectId = ctx.checkProjectId();
+    if (!this.secretsStore.isAvailable()) {
+      return null;
+    }
+    const raw = await this.secretsStore
+      .getSecret(projectId, this.secretName(provider))
+      .catch(() => null);
+    if (raw == null) {
+      return null;
+    }
+    try {
+      return assertHeaderSafeToken(raw, `${provider} OAuth token`);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * Validate the CSRF state, exchange the code for a token, store the token
    * (OpenBao + a selectable `secrets` row), upsert the credential metadata, and
    * emit the authoritative `credential.acquired` signal. Fails CLOSED when the

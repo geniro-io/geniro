@@ -42,12 +42,21 @@ export class LinearMcp extends BaseMcp<LinearMcpConfig> {
     // spawn time. `envName` is a validated identifier (no shell-unsafe chars);
     // the value is validated header-safe at storage time. Keeping the token in
     // the env (never the args) keeps it out of process listings and logs.
+    //
+    // Fail-closed on an EMPTY/unset token: a disconnected/expired credential can
+    // resolve to an empty env var (the run-gate only checks the credential row,
+    // not the stored value, and the restore path skips that gate entirely). An
+    // empty Bearer makes `mcp-remote` HANG on the auth handshake, which with no
+    // compile timeout strands the graph in `compiling` forever. The shell guard
+    // exits non-zero so the MCP transport closes pre-handshake → the compile
+    // fails fast with a clear error instead of hanging. (See sandbox-boundary.md
+    // "Injecting credentials into a session" — validate before use.)
     return {
       name: 'linear',
       command: 'sh',
       args: [
         '-c',
-        `exec npx -y mcp-remote ${url} --transport http-first --header "Authorization: Bearer \${${envName}}"`,
+        `if [ -z "\${${envName}}" ]; then echo "Linear MCP: OAuth token is empty — reconnect Linear (Authenticate)" >&2; exit 1; fi; exec npx -y mcp-remote ${url} --transport http-first --header "Authorization: Bearer \${${envName}}"`,
       ],
       env: {},
     };

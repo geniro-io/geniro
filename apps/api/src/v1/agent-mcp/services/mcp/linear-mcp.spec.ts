@@ -24,6 +24,18 @@ describe('LinearMcp', () => {
     expect(script).toContain('Authorization: Bearer');
   });
 
+  it('fails fast (non-zero exit) when the token env var is empty, instead of hanging', () => {
+    const block = new LinearMcp(logger);
+    const script =
+      block.getMcpConfig({ token: 'LINEAR_OAUTH_TOKEN' }).args[1] ?? '';
+    // Guard runs BEFORE mcp-remote: an empty/unset token must exit non-zero so
+    // the MCP transport closes pre-handshake rather than hanging on an empty
+    // Bearer (which would strand the graph compile forever).
+    expect(script).toContain('[ -z "${LINEAR_OAUTH_TOKEN}" ]');
+    expect(script).toContain('exit 1');
+    expect(script.indexOf('exit 1')).toBeLessThan(script.indexOf('mcp-remote'));
+  });
+
   it('rejects a missing or shell-unsafe token reference', () => {
     const block = new LinearMcp(logger);
     expect(() => block.getMcpConfig({ token: '' })).toThrow();

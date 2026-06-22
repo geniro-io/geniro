@@ -26,9 +26,10 @@ import { createTestProject } from '../helpers/test-context';
 import { createTestModule, TEST_USER_ID } from '../setup';
 
 // In-memory OpenBao stand-in. The expired-credential case bails in
-// refreshIfNeeded before it ever reads the store (clientId is null), and the
-// valid case short-circuits on a future expiry — so the store is only here to
-// keep the module hermetic, never exercised on the refresh path.
+// refreshIfNeeded before it ever reads the store (clientId is null). The gate's
+// token-VALUE check (getValidatedAccessToken) DOES read the store via getSecret
+// for an authenticated provider — getSecret returns '' for an unstored key, so
+// the empty-token case rejects and the valid case must seed a real token.
 const kvStore = new Map<string, string>();
 const mockStore = {
   isAvailable: vi.fn(() => true),
@@ -78,6 +79,11 @@ describe('OAuth deploy pre-flight gate (integration)', () => {
 
   beforeEach(async () => {
     kvStore.clear();
+    // Reset call history so per-test assertions (e.g. "the store was never
+    // consulted") are not polluted by a prior test's store access.
+    mockStore.getSecret.mockClear();
+    mockStore.putSecret.mockClear();
+    mockStore.deleteSecret.mockClear();
     const created = await createTestProject(app);
     projectId = created.projectId;
     ctx = created.ctx;
@@ -148,6 +154,25 @@ describe('OAuth deploy pre-flight gate (integration)', () => {
     expect(row?.error ?? '').toMatch(OAUTH_ERROR);
   });
 
+  it('rejects a deploy when the credential row is authenticated but the stored token is empty', async () => {
+    const graphId = await seedLinearGraph();
+    // Authenticated row (far-future expiry) but NO stored token value — the
+    // degenerate state that previously injected an empty `Authorization: Bearer `
+    // header and hung the MCP. The gate must catch it via the token-VALUE check,
+    // not just the credential-row status.
+    await seedCredential({
+      expiresAt: new Date(Date.now() + 3_600_000),
+      clientId: 'dcr-client-test',
+    });
+    // kvStore intentionally has no LINEAR_OAUTH_TOKEN -> getSecret returns ''.
+
+    await expect(graphsService.run(ctx, graphId)).rejects.toThrow(OAUTH_ERROR);
+
+    const row = await graphDao.getOne({ id: graphId });
+    expect(row?.status).toBe(GraphStatus.Error);
+    expect(row?.error ?? '').toMatch(OAUTH_ERROR);
+  });
+
   it('rejects a deploy when the credential is expired and not refreshable (no issuing client)', async () => {
     const graphId = await seedLinearGraph();
     // Past expiry + null clientId -> refreshIfNeeded cannot rotate and returns
@@ -187,6 +212,13 @@ describe('OAuth deploy pre-flight gate (integration)', () => {
         expiresAt: new Date(Date.now() + 3_600_000),
         clientId: 'dcr-client-test',
       });
+      // A genuinely valid credential is a row PLUS a non-empty stored token —
+      // the gate now verifies the token VALUE (an empty stored token would
+      // inject an empty Bearer and hang the MCP), so seed the secret too.
+      kvStore.set(
+        `${projectId}:LINEAR_OAUTH_TOKEN`,
+        'lin_oauth_valid-token-123',
+      );
 
       // Spy (call-through) so "the gate actually executed and saw the node"
       // is load-bearing — without this, the test would pass vacuously if

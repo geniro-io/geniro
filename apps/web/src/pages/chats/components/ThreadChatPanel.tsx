@@ -612,8 +612,6 @@ export const ThreadChatPanel: React.FC<ThreadChatPanelProps> = ({
           shouldSelectNewThread ? returnedExternalThreadId : null,
         );
       }
-
-      toast.success('Message sent');
     } catch (error) {
       console.error('Error sending message', error);
 

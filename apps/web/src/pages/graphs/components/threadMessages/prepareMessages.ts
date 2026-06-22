@@ -244,6 +244,13 @@ export const prepareReadyMessages = (
   // messages (which also carry __toolCallId) and skip them all.
   const subagentToolCallIds = new Set<string>();
   const communicationToolCallIds = new Set<string>();
+  // SDK message ids of AI rows that carry tool calls. The Claude bridge splits
+  // ONE assistant turn (leading preamble text + tool_use) into two persisted
+  // rows that share a single SDK message id. A text-only AI row whose id is in
+  // this set is that turn's preamble: it folds INTO the following working block
+  // (rendered as its first line) instead of rendering as a standalone, cost-less
+  // bubble above its own turn's block — the turn's cost lives on the tool row.
+  const aiToolCallMessageIds = new Set<string>();
   // Map communication_exec tool call ID → target agent name from args.
   // Used as a fallback to group inner messages when __toolCallId doesn't match.
   const commToolCallAgentName = new Map<string, string>();
@@ -257,6 +264,12 @@ export const prepareReadyMessages = (
     const tcs = getMessageValue<ToolCall[]>(msg.message, 'toolCalls');
     if (!tcs) {
       continue;
+    }
+    if (tcs.length > 0) {
+      const splitTurnId = getMessageString(msg.message, 'id');
+      if (splitTurnId) {
+        aiToolCallMessageIds.add(splitTurnId);
+      }
     }
     for (const tc of tcs) {
       const tcName = tc.name || tc.function?.name;
@@ -1079,6 +1092,14 @@ export const prepareReadyMessages = (
     }
 
     if (!isBlankContent(m.message?.content)) {
+      // A text-only AI row that shares its SDK id with a sibling tool-call row
+      // is the preamble of a bridge-split turn — fold it into the following
+      // working block (isToolCallContent) so it isn't a cost-less orphan bubble.
+      const sdkId =
+        role === 'ai' ? getMessageString(m.message, 'id') : undefined;
+      const isSplitTurnPreamble = sdkId
+        ? aiToolCallMessageIds.has(sdkId)
+        : false;
       prepared.push({
         type: 'chat',
         message: m,
@@ -1088,6 +1109,7 @@ export const prepareReadyMessages = (
         inCommunicationExec: isInterAgent,
         inSubagentExec: isSubagent,
         sourceAgentNodeId,
+        ...(isSplitTurnPreamble ? { isToolCallContent: true } : {}),
       });
     }
     i++;

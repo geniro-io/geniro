@@ -77,9 +77,11 @@ export type PreparedMessage =
       inCommunicationExec?: boolean;
       inSubagentExec?: boolean;
       sourceAgentNodeId?: string;
-      /** When true this chat message is the AI text content of a message that
-       *  also contains tool calls — it should be rendered inside the working
-       *  block rather than as a standalone bubble. */
+      /** When true this chat message is AI preamble text belonging to a turn
+       *  that also contains tool calls — either in the same row, or a separate
+       *  row sharing the turn's SDK message id (the Claude bridge splits a turn
+       *  into text + tool_use rows). It renders inside the working block rather
+       *  than as a standalone bubble; the turn's cost lives on the tool row. */
       isToolCallContent?: boolean;
     }
   | {

@@ -140,3 +140,37 @@ function extractMetadataNodes(
   }
   return result;
 }
+
+/**
+ * Upper bound for a single graph compile. A node provision (runtime/MCP) can
+ * hang indefinitely — e.g. a remote MCP that never completes its handshake — and
+ * without a ceiling the graph is stranded in `compiling` forever (the registry
+ * holds an active entry, so run() rejects with GRAPH_ALREADY_RUNNING and the UI
+ * shows no progress). Generous enough for a cold runtime + first-run SDK install,
+ * but finite so a hang surfaces as `error` and the user can retry.
+ */
+export const GRAPH_COMPILE_TIMEOUT_MS = 4 * 60 * 1000;
+
+/**
+ * Reject if `promise` does not settle within `ms`. The timeout timer is cleared
+ * once the race settles, so a winning `promise` leaves no dangling timer and the
+ * loser never rejects unhandled. Use to bound an operation that can hang
+ * indefinitely (e.g. a graph compile waiting on a runtime/MCP provision).
+ */
+export async function withTimeout<T>(
+  promise: Promise<T>,
+  ms: number,
+  timeoutMessage: string,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(timeoutMessage)), ms);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  }
+}

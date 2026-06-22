@@ -320,13 +320,12 @@ describe('ClaudeStreamMapper', () => {
     });
   });
 
-  it('counts a turn once when one assistant message arrives as text+tool_use frames sharing an id (no double-count)', () => {
+  it('counts a turn once, on the tool-call frame, when one message arrives as text+tool_use frames sharing an id', () => {
     // Production shape (Opus 4.8 via bridge): a single assistant message is
     // streamed as two `assistant` frames — a text block, then a tool_use block
-    // — that BOTH carry the same cumulative non-zero `usage`. Before the
-    // dedup-by-message-id guard, each frame was persisted as its own AI row
-    // BOTH stamped with the full turn usage, so the thread rollup billed the
-    // turn twice (the user saw the same price on both messages).
+    // — that BOTH carry the same cumulative non-zero `usage`. The turn must be
+    // counted exactly once (no double-bill) AND the cost must land on the
+    // tool-call frame (the working block), not the preamble text frame.
     createMapper(() => 0.25);
 
     mapper.onSdkMessage(
@@ -360,9 +359,18 @@ describe('ClaudeStreamMapper', () => {
     expect(aiMsgs).toHaveLength(2);
     expect(aiMsgs.every((m) => m.id === 'msg-dup')).toBe(true);
 
-    // Exactly ONE row carries usage; the repeat frame carries none.
+    // Exactly ONE row carries usage, and it is the TOOL-call frame (working
+    // block) — not the preamble text frame.
     const withUsage = aiMsgs.filter((m) => m.additional_kwargs.__requestUsage);
     expect(withUsage).toHaveLength(1);
+    const toolFrame = aiMsgs.find(
+      (m) => Array.isArray(m.tool_calls) && m.tool_calls.length > 0,
+    );
+    const textFrame = aiMsgs.find(
+      (m) => !m.tool_calls || m.tool_calls.length === 0,
+    );
+    expect(toolFrame?.additional_kwargs.__requestUsage).toBeDefined();
+    expect(textFrame?.additional_kwargs.__requestUsage).toBeUndefined();
 
     // Σ requestTokenUsage across the rows equals one turn, not two.
     const sumPrice = aiMsgs.reduce(

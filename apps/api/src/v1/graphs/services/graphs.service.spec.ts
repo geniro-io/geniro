@@ -43,6 +43,7 @@ import {
   MessageRole,
   NodeKind,
 } from '../graphs.types';
+import { GRAPH_COMPILE_TIMEOUT_MS } from '../graphs.utils';
 import { CostLimitResolverService } from './cost-limit-resolver.service';
 import { GraphCompiler } from './graph-compiler';
 import { GraphRegistry } from './graph-registry';
@@ -319,6 +320,7 @@ describe('GraphsService', () => {
           provide: OAuthCredentialsService,
           useValue: {
             refreshIfNeeded: vi.fn().mockResolvedValue({ authenticated: true }),
+            getValidatedAccessToken: vi.fn().mockResolvedValue('valid-token'),
           },
         },
         {
@@ -1599,6 +1601,40 @@ describe('GraphsService', () => {
       expect(graphCompiler.compile).toHaveBeenCalled();
     });
 
+    it('rejects when the credential row is authenticated but the stored token resolves empty', async () => {
+      // The status row exists + is not expired (authenticated: true) but the
+      // actual token VALUE is empty/blank — which would inject an empty Bearer
+      // and hang the MCP. The gate must catch this via the token-VALUE check.
+      stubLinearTemplate();
+      const oauthService = module.get<OAuthCredentialsService>(
+        OAuthCredentialsService,
+      );
+      vi.mocked(oauthService.refreshIfNeeded).mockResolvedValue({
+        provider: OAuthProvider.Linear,
+        authenticated: true,
+        accountLabel: 'Acme',
+        secretName: 'LINEAR_OAUTH_TOKEN',
+        expiresAt: null,
+      });
+      vi.mocked(oauthService.getValidatedAccessToken).mockResolvedValue(null);
+
+      vi.mocked(graphDao.getOne).mockResolvedValue(makeOAuthGraph());
+      vi.mocked(graphRegistry.get).mockReturnValue(undefined);
+
+      await expect(service.run(mockCtx, mockGraphId)).rejects.toThrow(
+        /Connect the following OAuth provider/i,
+      );
+      expect(oauthService.getValidatedAccessToken).toHaveBeenCalledWith(
+        mockCtx,
+        OAuthProvider.Linear,
+      );
+      expect(graphCompiler.compile).not.toHaveBeenCalled();
+      expect(graphDao.updateById).toHaveBeenCalledWith(
+        mockGraphId,
+        expect.objectContaining({ status: GraphStatus.Error }),
+      );
+    });
+
     it('skips the gate entirely when the graph has no OAuth nodes', async () => {
       // The default TemplateRegistry mock resolves every template to undefined,
       // so the runtime-only graph carries no oauth marker.
@@ -1702,6 +1738,42 @@ describe('GraphsService', () => {
   });
 
   describe('run', () => {
+    it('transitions the graph to Error and tears it down when compilation hangs past the timeout', async () => {
+      vi.useFakeTimers();
+      try {
+        const graph = createMockGraphEntity({ status: GraphStatus.Created });
+        // The graph is registered (status Compiling) before the node loop, so a
+        // hung provision leaves it in the registry — run()'s catch must tear it
+        // down via destroy().
+        vi.mocked(graphDao.getOne).mockResolvedValue(graph);
+        vi.mocked(graphRegistry.getStatus).mockReturnValue(undefined);
+        vi.mocked(graphRegistry.get).mockReturnValue(createMockCompiledGraph());
+        vi.mocked(graphRegistry.destroy).mockResolvedValue(undefined);
+        vi.mocked(graphDao.updateById).mockResolvedValue(1);
+        // compile never settles — simulates a hung runtime/MCP provision.
+        vi.mocked(graphCompiler.compile).mockReturnValue(
+          new Promise<CompiledGraph>(() => {}),
+        );
+
+        const runPromise = service.run(mockCtx, mockGraphId);
+        const settled = expect(runPromise).rejects.toThrow(/timed out/i);
+
+        await vi.advanceTimersByTimeAsync(GRAPH_COMPILE_TIMEOUT_MS + 1_000);
+        await settled;
+
+        expect(graphRegistry.destroy).toHaveBeenCalledWith(mockGraphId);
+        expect(graphDao.updateById).toHaveBeenCalledWith(
+          mockGraphId,
+          expect.objectContaining({
+            status: GraphStatus.Error,
+            error: expect.stringContaining('timed out'),
+          }),
+        );
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it('should run graph successfully', async () => {
       const graph = createMockGraphEntity({ status: GraphStatus.Created });
       const compiledGraph = createMockCompiledGraph();

@@ -971,15 +971,11 @@ const ThreadMessagesView: React.FC<ThreadMessagesViewProps> = React.memo(
         if (isBlankContent(it.message.message?.content)) {
           return null;
         }
+        // Preamble prose inside a working block ("I'll pull up that issue…"
+        // before the tool call). Render as plain text — no boxed bubble — so it
+        // reads as the agent narrating the work, matching the rest of the block.
         return (
-          <div
-            key={`work-chat-${it.id}-${idx}`}
-            style={{
-              padding: '6px 10px',
-              backgroundColor: '#ffffff',
-              borderRadius: 6,
-              border: '1px solid #f0f0f0',
-            }}>
+          <div key={`work-chat-${it.id}-${idx}`} style={{ padding: '2px 0' }}>
             <MarkdownContent content={content} style={MARKDOWN_COMPACT_STYLE} />
           </div>
         );
