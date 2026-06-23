@@ -14,6 +14,7 @@ export type GithubSyncRepo = Pick<
   | 'createdBy'
   | 'projectId'
   | 'installationId'
+  | 'syncSource'
   | 'syncedAt'
 >;
 
@@ -24,8 +25,10 @@ export class GitRepositoriesDao extends BaseDao<GitRepositoryEntity> {
   }
 
   /**
-   * Upsert repos from a GitHub App sync. On conflict, updates url, defaultBranch,
-   * installationId, and syncedAt without touching other user-managed fields.
+   * Upsert repos from a GitHub sync (App or PAT mode). On conflict, updates url,
+   * defaultBranch, installationId, syncSource, and syncedAt without touching
+   * other user-managed fields. `syncSource` is merged so a row's discriminator
+   * stays accurate across re-syncs and the rare operator-driven mode flip.
    */
   async upsertGithubSyncRepos(repos: GithubSyncRepo[]): Promise<void> {
     if (!repos.length) {
@@ -39,6 +42,7 @@ export class GitRepositoriesDao extends BaseDao<GitRepositoryEntity> {
         'url',
         'defaultBranch',
         'installationId',
+        'syncSource',
         'syncedAt',
         'updatedAt',
       ],

@@ -2,7 +2,7 @@ import path from 'node:path';
 
 import { ToolRunnableConfig } from '@langchain/core/tools';
 import { Injectable } from '@nestjs/common';
-import { DefaultLogger } from '@packages/common';
+import { DefaultLogger, InternalException } from '@packages/common';
 import dedent from 'dedent';
 import { z } from 'zod';
 
@@ -214,8 +214,18 @@ export class GhCloneTool extends GhBaseTool<GhCloneToolSchemaType> {
     let resolvedToken: string | null = null;
     try {
       resolvedToken = await this.resolveToken(config, args.owner, cfg);
-    } catch {
-      // No token available — resolvedToken stays null
+    } catch (error) {
+      // A PAT-mode misconfiguration (GitPatModeService.getValidatedPat throwing
+      // an InternalException — deployment GITHUB_AUTH_MODE=pat but GITHUB_PAT
+      // missing/invalid) MUST NOT be masked by a silent anonymous clone: surface
+      // it so the operator sees the broken config. A benign "no token available"
+      // (the GitHub App not installed for this owner; a public repo) throws a
+      // plain Error from GhBaseTool.resolveToken and still falls through to an
+      // anonymous clone, preserving public-repo support.
+      if (error instanceof InternalException) {
+        throw error;
+      }
+      // No token available — resolvedToken stays null (anonymous clone).
     }
 
     let res = await this.execGhCommand(

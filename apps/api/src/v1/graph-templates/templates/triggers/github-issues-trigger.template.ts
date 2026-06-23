@@ -17,6 +17,7 @@ import {
 } from '../../../agent-triggers/services/github-issues-trigger';
 import type { RunnableAgent } from '../../../agents/agents.types';
 import { BaseAgentConfigurable } from '../../../agents/agents.types';
+import { GitPatModeService } from '../../../git-auth/services/git-pat-mode.service';
 import { GitHubWebhookSubscriptionService } from '../../../git-auth/services/webhook-subscription-registry.service';
 import { GitRepositoriesDao } from '../../../git-repositories/dao/git-repositories.dao';
 import { GraphNode, NodeKind } from '../../../graphs/graphs.types';
@@ -78,6 +79,7 @@ export class GitHubIssuesTriggerTemplate extends TriggerNodeBaseTemplate<
     private readonly gitRepositoriesDao: GitRepositoriesDao,
     private readonly registry: GitHubWebhookSubscriptionService,
     private readonly oauthPreflight: OAuthRunPreflightService,
+    private readonly gitPatModeService: GitPatModeService,
   ) {
     super();
   }
@@ -144,8 +146,16 @@ export class GitHubIssuesTriggerTemplate extends TriggerNodeBaseTemplate<
         const installationId = repoWithInstallation?.installationId ?? null;
 
         if (installationId === null) {
+          // App-installation-based reconciliation polling is inactive without an
+          // installation id. In pat mode this is BY DESIGN (a deployment-wide PAT
+          // has no installations); in app mode it means the repo was added
+          // without an App installation. Either way the trigger still fires via
+          // webhook push receipt, which is mode-agnostic.
+          const reason = this.gitPatModeService.isPatMode()
+            ? 'GITHUB_AUTH_MODE=pat: GitHub App reconciliation polling is App-only and inactive'
+            : 'No installation ID found for these repos';
           this.logger.log(
-            `No installation ID found for trigger repos [${watchedRepoFullNames.join(', ')}]. Reconciliation polling will be skipped; the trigger will still fire via webhook push.`,
+            `${reason} for trigger repos [${watchedRepoFullNames.join(', ')}]. Reconciliation polling will be skipped; the trigger will still fire via webhook push.`,
           );
         }
 

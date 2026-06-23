@@ -783,11 +783,11 @@ export const ThreadChatPanel: React.FC<ThreadChatPanelProps> = ({
       );
     }
     if (repos.length === 0) {
-      if (!systemSettings.githubAppEnabled) {
+      if (!systemSettings.githubAvailable) {
         return (
           <div className="p-3 min-w-[220px]">
             <p className="text-xs text-muted-foreground mb-1.5">
-              No GitHub App connected.
+              GitHub is not connected.
             </p>
             <a
               href="/settings/integrations"

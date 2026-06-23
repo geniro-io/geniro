@@ -96,7 +96,7 @@ interface NodeEditSidebarProps {
    */
   hasNodeUnsavedChangesFromServer?: boolean;
   /** Whether the GitHub App integration is enabled (for conditional form fields). */
-  githubAppEnabled?: boolean;
+  githubAvailable?: boolean;
 }
 
 const SYSTEM_AGENT_INTERNAL_FIELDS = [
@@ -141,7 +141,7 @@ export const NodeEditSidebar = React.memo(
     graphId,
     draftNodeConfigVersion,
     hasNodeUnsavedChangesFromServer,
-    githubAppEnabled = false,
+    githubAvailable = false,
   }: NodeEditSidebarProps) => {
     const isHydratingRef = useRef(false);
     const nodeRef = useRef<GraphNode | null>(null);
@@ -1077,7 +1077,7 @@ export const NodeEditSidebar = React.memo(
               aiSuggestionEnabled={Boolean(
                 isGraphRunning && graphId && node?.id,
               )}
-              githubAppEnabled={githubAppEnabled}
+              githubAvailable={githubAvailable}
               templateId={nodeData?.template}
               graphId={graphId}
               nodeId={node?.id}
@@ -1445,7 +1445,7 @@ export const NodeEditSidebar = React.memo(
       prevProps.onClose === nextProps.onClose &&
       prevProps.onNodeDraftChange === nextProps.onNodeDraftChange &&
       prevProps.draftNodeConfigVersion === nextProps.draftNodeConfigVersion &&
-      prevProps.githubAppEnabled === nextProps.githubAppEnabled
+      prevProps.githubAvailable === nextProps.githubAvailable
     );
   },
 );

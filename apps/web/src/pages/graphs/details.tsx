@@ -1008,7 +1008,7 @@ export const GraphPage = () => {
         compiledNodesLoading={compiledNodesLoading}
         graphId={id}
         draftNodeConfigVersion={draftNodeConfigVersion}
-        githubAppEnabled={systemSettings.githubAppEnabled}
+        githubAvailable={systemSettings.githubAvailable}
       />
 
       <TemplateModal

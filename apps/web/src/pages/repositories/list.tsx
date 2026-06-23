@@ -32,7 +32,7 @@ export const RepositoriesListPage = () => {
   const [deleteTarget, setDeleteTarget] = useState<Repository | null>(null);
 
   const { settings: systemSettings } = useSystemSettings();
-  const githubAppEnabled = systemSettings.githubAppEnabled;
+  const githubAvailable = systemSettings.githubAvailable;
 
   const fetchRepositories = async () => {
     try {
@@ -267,7 +267,7 @@ export const RepositoriesListPage = () => {
               Manage repositories and track indexing progress
             </p>
           </div>
-          {githubAppEnabled && (
+          {githubAvailable && (
             <Button className="gap-2" onClick={handleSync} disabled={syncing}>
               <RefreshCw
                 className={`w-4 h-4 ${syncing ? 'animate-spin' : ''}`}
@@ -315,10 +315,10 @@ export const RepositoriesListPage = () => {
       {repositories.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-16 text-center">
           <FolderGit2 className="w-12 h-12 text-muted-foreground/30 mb-4" />
-          {githubAppEnabled ? (
+          {githubAvailable ? (
             <p className="text-sm font-medium text-muted-foreground">
               No repositories synced yet. Click &apos;Sync from GitHub&apos; to
-              discover repos from your connected GitHub App.
+              discover your repositories.
             </p>
           ) : (
             <p className="text-sm font-medium text-muted-foreground">

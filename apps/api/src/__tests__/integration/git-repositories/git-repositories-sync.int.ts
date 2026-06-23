@@ -1,5 +1,6 @@
 import { EntityManager, type FilterQuery } from '@mikro-orm/postgresql';
 import type { INestApplication } from '@nestjs/common';
+import { InternalException } from '@packages/common';
 import type { FastifyRequest } from 'fastify';
 import {
   afterAll,
@@ -15,12 +16,17 @@ import {
 import { AppContextStorage } from '../../../auth/app-context-storage';
 import { GitProviderConnectionDao } from '../../../v1/git-auth/dao/git-provider-connection.dao';
 import { GitProvider } from '../../../v1/git-auth/git-auth.types';
+import { GitPatModeService } from '../../../v1/git-auth/services/git-pat-mode.service';
 import { GitHubAppService } from '../../../v1/git-auth/services/github-app.service';
 import { GitHubAppProviderService } from '../../../v1/git-auth/services/github-app-provider.service';
 import { GitRepositoriesDao } from '../../../v1/git-repositories/dao/git-repositories.dao';
 import { GitRepositoryEntity } from '../../../v1/git-repositories/entity/git-repository.entity';
-import { GitRepositoryProvider } from '../../../v1/git-repositories/git-repositories.types';
+import {
+  GitRepositoryProvider,
+  PAT_DEPLOYMENT_OWNER,
+} from '../../../v1/git-repositories/git-repositories.types';
 import { GitRepositoriesService } from '../../../v1/git-repositories/services/git-repositories.service';
+import { GitHubAuthMethod } from '../../../v1/graph-resources/graph-resources.types';
 import { ProjectsDao } from '../../../v1/projects/dao/projects.dao';
 import { createTestModule, TEST_USER_ID } from '../setup';
 
@@ -59,6 +65,29 @@ const makeGithubResponse = (
     headers: { get: () => null },
   }) as unknown as Response;
 
+// GET /user/repos returns a flat ARRAY (no { total_count, repositories } wrapper)
+// — the shape the pat-mode sync path consumes.
+const makeUserReposResponse = (
+  repos: {
+    owner: string;
+    name: string;
+    html_url: string;
+    default_branch: string;
+  }[],
+): Response =>
+  ({
+    ok: true,
+    status: 200,
+    json: async () =>
+      repos.map((r) => ({
+        owner: { login: r.owner },
+        name: r.name,
+        html_url: r.html_url,
+        default_branch: r.default_branch,
+      })),
+    headers: { get: () => null },
+  }) as unknown as Response;
+
 describe('GitRepositoriesService sync (integration)', () => {
   let app: INestApplication;
   let gitRepositoriesService: GitRepositoriesService;
@@ -66,6 +95,7 @@ describe('GitRepositoriesService sync (integration)', () => {
   let gitProviderConnectionDao: GitProviderConnectionDao;
   let gitHubAppProviderService: GitHubAppProviderService;
   let gitHubAppService: GitHubAppService;
+  let gitPatModeService: GitPatModeService;
   let projectsDao: ProjectsDao;
 
   const createdRepoIds: string[] = [];
@@ -79,6 +109,7 @@ describe('GitRepositoriesService sync (integration)', () => {
     gitProviderConnectionDao = app.get(GitProviderConnectionDao);
     gitHubAppProviderService = app.get(GitHubAppProviderService);
     gitHubAppService = app.get(GitHubAppService);
+    gitPatModeService = app.get(GitPatModeService);
     projectsDao = app.get(ProjectsDao);
 
     // Create a test project with a deterministic ID so ctx.checkProjectId() resolves correctly.
@@ -110,6 +141,13 @@ describe('GitRepositoriesService sync (integration)', () => {
       .getConnection()
       .execute(`DELETE FROM git_provider_connections WHERE user_id = ?`, [
         TEST_USER_ID,
+      ]);
+    // PAT-mode rows live under the shared deployment owner, not TEST_USER_ID —
+    // wipe them too so the pat-mode tests are repeatable across runs.
+    await em
+      .getConnection()
+      .execute(`DELETE FROM git_repositories WHERE created_by = ?`, [
+        PAT_DEPLOYMENT_OWNER,
       ]);
   }, 360_000);
 
@@ -424,6 +462,186 @@ describe('GitRepositoriesService sync (integration)', () => {
         trackRepo(r.id);
         expect(r.projectId).toBeNull();
       }
+    });
+  });
+
+  describe('PAT mode (GITHUB_AUTH_MODE=pat)', () => {
+    const ctxUserB = new AppContextStorage({ sub: 'pat-user-b-0002' }, {
+      headers: {},
+    } as unknown as FastifyRequest);
+
+    beforeEach(() => {
+      vi.spyOn(gitPatModeService, 'isPatMode').mockReturnValue(true);
+      vi.spyOn(gitPatModeService, 'getValidatedPat').mockReturnValue(
+        'ghp_integration_pat',
+      );
+    });
+
+    // Synced rows live under the shared deployment owner — track them so the
+    // outer afterEach hard-deletes them.
+    const trackSentinelRepos = async () => {
+      const rows = await gitRepositoriesDao.getAll({
+        createdBy: PAT_DEPLOYMENT_OWNER,
+      });
+      for (const r of rows) {
+        trackRepo(r.id);
+      }
+    };
+
+    it('syncs from GET /user/repos under the deployment owner with syncSource=Pat', async () => {
+      const getInstallationsSpy = vi.spyOn(
+        gitHubAppProviderService,
+        'getActiveInstallations',
+      );
+      vi.spyOn(global, 'fetch').mockResolvedValue(
+        makeUserReposResponse([
+          {
+            owner: 'acme-org',
+            name: 'backend',
+            html_url: 'https://github.com/acme-org/backend',
+            default_branch: 'main',
+          },
+          {
+            owner: 'acme-org',
+            name: 'frontend',
+            html_url: 'https://github.com/acme-org/frontend',
+            default_branch: 'develop',
+          },
+        ]),
+      );
+
+      const result = await gitRepositoriesService.syncRepositories(ctx);
+      await trackSentinelRepos();
+
+      expect(result.synced).toBe(2);
+      // The pat path must never consult GitHub App installations.
+      expect(getInstallationsSpy).not.toHaveBeenCalled();
+
+      const rows = await gitRepositoriesDao.getAll({
+        createdBy: PAT_DEPLOYMENT_OWNER,
+      });
+      const backend = rows.find((r) => r.repo === 'backend');
+      expect(backend).toBeDefined();
+      expect(backend!.createdBy).toBe(PAT_DEPLOYMENT_OWNER);
+      expect(backend!.syncSource).toBe(GitHubAuthMethod.Pat);
+      expect(backend!.installationId).toBeNull();
+    });
+
+    it('two users syncing the same PAT account produce no duplicate rows', async () => {
+      vi.spyOn(global, 'fetch').mockResolvedValue(
+        makeUserReposResponse([
+          {
+            owner: 'acme-org',
+            name: 'shared-repo',
+            html_url: 'https://github.com/acme-org/shared-repo',
+            default_branch: 'main',
+          },
+        ]),
+      );
+
+      const a = await gitRepositoriesService.syncRepositories(ctx); // user A
+      const b = await gitRepositoriesService.syncRepositories(ctxUserB); // user B
+      await trackSentinelRepos();
+
+      expect(a.synced).toBe(1);
+      // User B's sync is a clean re-converge, NOT a delete-then-recreate churn:
+      // it re-syncs the same single row and prunes nothing.
+      expect(b.synced).toBe(1);
+      expect(b.removed).toBe(0);
+
+      const sharedRows = await gitRepositoriesDao.getAll({
+        createdBy: PAT_DEPLOYMENT_OWNER,
+        owner: 'acme-org',
+        repo: 'shared-repo',
+      });
+      expect(sharedRows.length).toBe(1);
+    });
+
+    it('surfaces a clear error when GET /user/repos returns 401 (PAT revoked)', async () => {
+      vi.spyOn(global, 'fetch').mockResolvedValue({
+        ok: false,
+        status: 401,
+        headers: { get: () => null },
+      } as unknown as Response);
+
+      await expect(
+        gitRepositoriesService.syncRepositories(ctx),
+      ).rejects.toThrow(/failed with status 401/);
+    });
+
+    it('throws GITHUB_RATE_LIMITED when GET /user/repos returns 429', async () => {
+      vi.spyOn(global, 'fetch').mockResolvedValue({
+        ok: false,
+        status: 429,
+        headers: { get: () => null },
+      } as unknown as Response);
+
+      let caught: unknown;
+      try {
+        await gitRepositoriesService.syncRepositories(ctx);
+      } catch (e) {
+        caught = e;
+      }
+      expect(caught).toBeInstanceOf(InternalException);
+      expect((caught as InternalException).code).toBe('GITHUB_RATE_LIMITED');
+    });
+
+    it('mode-scoped prune removes only PAT orphans, never App-synced rows', async () => {
+      // An App-synced row (installationId set, syncSource=GithubApp), real user.
+      const appRow = await gitRepositoriesDao.create({
+        owner: 'app-org',
+        repo: 'app-repo',
+        url: 'https://github.com/app-org/app-repo',
+        provider: GitRepositoryProvider.GITHUB,
+        defaultBranch: 'main',
+        createdBy: TEST_USER_ID,
+        projectId: null,
+        installationId: 77001,
+        syncSource: GitHubAuthMethod.GithubApp,
+        syncedAt: new Date(),
+      });
+      trackRepo(appRow.id);
+
+      // A PAT orphan (under the sentinel, syncSource=Pat) the next sync drops.
+      const patOrphan = await gitRepositoriesDao.create({
+        owner: 'acme-org',
+        repo: 'stale-repo',
+        url: 'https://github.com/acme-org/stale-repo',
+        provider: GitRepositoryProvider.GITHUB,
+        defaultBranch: 'main',
+        createdBy: PAT_DEPLOYMENT_OWNER,
+        projectId: null,
+        installationId: null,
+        syncSource: GitHubAuthMethod.Pat,
+        syncedAt: new Date(),
+      });
+      trackRepo(patOrphan.id);
+
+      vi.spyOn(global, 'fetch').mockResolvedValue(
+        makeUserReposResponse([
+          {
+            owner: 'acme-org',
+            name: 'live-repo',
+            html_url: 'https://github.com/acme-org/live-repo',
+            default_branch: 'main',
+          },
+        ]),
+      );
+
+      const result = await gitRepositoriesService.syncRepositories(ctx);
+      await trackSentinelRepos();
+
+      expect(result.removed).toBe(1);
+
+      // PAT orphan soft-deleted.
+      const orphanAfter = await gitRepositoriesDao.getOne({ id: patOrphan.id });
+      expect(orphanAfter).toBeNull();
+
+      // App-synced row UNTOUCHED — the cross-mode safety guarantee.
+      const appAfter = await gitRepositoriesDao.getOne({ id: appRow.id });
+      expect(appAfter).not.toBeNull();
+      expect(appAfter!.installationId).toBe(77001);
+      expect(appAfter!.syncSource).toBe(GitHubAuthMethod.GithubApp);
     });
   });
 });

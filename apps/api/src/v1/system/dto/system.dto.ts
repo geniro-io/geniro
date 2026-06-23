@@ -1,10 +1,29 @@
 import { createZodDto } from 'nestjs-zod';
 import { z } from 'zod';
 
+import { GitHubAuthMethod } from '../../graph-resources/graph-resources.types';
+
 export const SystemSettingsResponseSchema = z.object({
   githubAppEnabled: z
     .boolean()
-    .describe('Whether the GitHub App integration is configured and available'),
+    .describe(
+      'Whether the GitHub App is configured (all GITHUB_APP_* env vars set) — the literal App config, independent of the active auth mode',
+    ),
+  githubAuthMode: z
+    .nativeEnum(GitHubAuthMethod)
+    .describe(
+      'Deployment-wide GitHub auth mode: "github_app" uses the GitHub App, "pat" uses a configured personal access token instead',
+    ),
+  githubAvailable: z
+    .boolean()
+    .describe(
+      'Whether GitHub operations are available in this deployment — App configured (app mode) or a PAT configured (pat mode)',
+    ),
+  githubAppInstallable: z
+    .boolean()
+    .describe(
+      'Whether the GitHub App install/authorize UI should be shown — true only in app mode with the App configured; false in pat mode (configured-but-not-installable)',
+    ),
   litellmManagementEnabled: z
     .boolean()
     .describe(

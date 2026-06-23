@@ -2,6 +2,7 @@ import { ToolRunnableConfig } from '@langchain/core/tools';
 import { Injectable } from '@nestjs/common';
 import { RequestError } from '@octokit/request-error';
 import { Octokit } from '@octokit/rest';
+import { InternalException } from '@packages/common';
 import { isPlainObject } from 'lodash';
 import { z } from 'zod';
 
@@ -87,8 +88,17 @@ export abstract class GhBaseTool<
         try {
           const token = await this.resolveToken(config, params.owner, cfg);
           env.GH_TOKEN = token;
-        } catch {
-          // No token available — plain git/find/cat commands work fine without GH_TOKEN.
+        } catch (error) {
+          // A PAT-mode misconfiguration (getValidatedPat throwing an
+          // InternalException — GITHUB_AUTH_MODE=pat but GITHUB_PAT missing/
+          // invalid) MUST fail CLOSED: surface it instead of silently running
+          // git anonymously (which would push/commit/PR as an unauthenticated
+          // user and fail opaquely). The benign "no GitHub App token" case
+          // throws a plain Error from resolveToken and still falls through so
+          // plain git/find/cat commands work without GH_TOKEN.
+          if (error instanceof InternalException) {
+            throw error;
+          }
         }
       }
 

@@ -82,7 +82,7 @@ type FormContext = {
     value?: unknown,
   ) => void;
   aiSuggestionEnabled: boolean;
-  githubAppEnabled: boolean;
+  githubAvailable: boolean;
   formData: FormData;
   graphId?: string;
   nodeId?: string;
@@ -107,7 +107,7 @@ const getFormContext = (props: {
     openExpandedTextarea: () => {},
     openAiSuggestion: () => {},
     aiSuggestionEnabled: false,
-    githubAppEnabled: false,
+    githubAvailable: false,
     formData: {},
   };
 
@@ -1171,7 +1171,7 @@ export interface TemplateConfigFormProps {
     value?: unknown,
   ) => void;
   aiSuggestionEnabled: boolean;
-  githubAppEnabled?: boolean;
+  githubAvailable?: boolean;
   templateId?: string;
   graphId?: string;
   nodeId?: string;
@@ -1186,7 +1186,7 @@ export const TemplateConfigForm: React.FC<TemplateConfigFormProps> = ({
   onOpenExpandedTextarea,
   onOpenAiSuggestion,
   aiSuggestionEnabled,
-  githubAppEnabled = false,
+  githubAvailable = false,
   templateId,
   graphId,
   nodeId,
@@ -1211,7 +1211,7 @@ export const TemplateConfigForm: React.FC<TemplateConfigFormProps> = ({
       openExpandedTextarea: onOpenExpandedTextarea,
       openAiSuggestion: onOpenAiSuggestion,
       aiSuggestionEnabled,
-      githubAppEnabled,
+      githubAvailable,
       formData,
       graphId,
       nodeId,
@@ -1219,7 +1219,7 @@ export const TemplateConfigForm: React.FC<TemplateConfigFormProps> = ({
     [
       aiSuggestionEnabled,
       formData,
-      githubAppEnabled,
+      githubAvailable,
       graphId,
       nodeId,
       liteLlmModels,
@@ -1231,7 +1231,7 @@ export const TemplateConfigForm: React.FC<TemplateConfigFormProps> = ({
 
   const isGitHubNode =
     templateId === 'github-resource' || templateId === 'gh-tool';
-  const showGitHubAppWarning = isGitHubNode && !githubAppEnabled;
+  const showGitHubAuthWarning = isGitHubNode && !githubAvailable;
 
   return (
     <>
@@ -1255,13 +1255,14 @@ export const TemplateConfigForm: React.FC<TemplateConfigFormProps> = ({
           </span>
         </div>
       )}
-      {showGitHubAppWarning && (
+      {showGitHubAuthWarning && (
         <Alert variant="destructive" className="mb-3">
           <AlertTriangle className="size-4" />
-          <AlertTitle>GitHub App not connected</AlertTitle>
+          <AlertTitle>GitHub authentication not configured</AlertTitle>
           <AlertDescription>
-            GitHub authentication requires a GitHub App. Go to Settings &gt;
-            Integrations to install and link the GitHub App.
+            This GitHub node has no working authentication. Check Settings &gt;
+            Integrations, or ask your administrator to configure GitHub access
+            for this deployment.
           </AlertDescription>
         </Alert>
       )}

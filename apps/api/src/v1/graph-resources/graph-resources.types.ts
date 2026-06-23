@@ -6,6 +6,7 @@ export type ResourceResolveContext = ToolRunnableConfig<BaseAgentConfigurable>;
 
 export enum GitHubAuthMethod {
   GithubApp = 'github_app',
+  Pat = 'pat',
 }
 
 export interface ShellResourceData {

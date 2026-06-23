@@ -2765,11 +2765,29 @@ export interface SystemAgentResponseDto {
  */
 export interface SystemSettingsResponseDto {
   /**
-   * Whether the GitHub App integration is configured and available
+   * Whether the GitHub App is configured (all GITHUB_APP_* env vars set) — the literal App config, independent of the active auth mode
    * @type {boolean}
    * @memberof SystemSettingsResponseDto
    */
   'githubAppEnabled': boolean;
+  /**
+   * Deployment-wide GitHub auth mode: \"github_app\" uses the GitHub App, \"pat\" uses a configured personal access token instead
+   * @type {string}
+   * @memberof SystemSettingsResponseDto
+   */
+  'githubAuthMode': SystemSettingsResponseDtoGithubAuthModeEnum;
+  /**
+   * Whether GitHub operations are available in this deployment — App configured (app mode) or a PAT configured (pat mode)
+   * @type {boolean}
+   * @memberof SystemSettingsResponseDto
+   */
+  'githubAvailable': boolean;
+  /**
+   * Whether the GitHub App install/authorize UI should be shown — true only in app mode with the App configured; false in pat mode (configured-but-not-installable)
+   * @type {boolean}
+   * @memberof SystemSettingsResponseDto
+   */
+  'githubAppInstallable': boolean;
   /**
    * Whether the LiteLLM model management UI is enabled for the frontend
    * @type {boolean}
@@ -2801,6 +2819,15 @@ export interface SystemSettingsResponseDto {
    */
   'webVersion': string;
 }
+
+export const SystemSettingsResponseDtoGithubAuthModeEnum = {
+  GithubApp: 'github_app',
+  Pat: 'pat',
+} as const;
+
+export type SystemSettingsResponseDtoGithubAuthModeEnum =
+  (typeof SystemSettingsResponseDtoGithubAuthModeEnum)[keyof typeof SystemSettingsResponseDtoGithubAuthModeEnum];
+
 /**
  *
  * @export

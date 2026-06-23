@@ -11,8 +11,10 @@ import {
 import { AppContextStorage } from '../../../auth/app-context-storage';
 import type { InstallationUnlinkedEvent } from '../../git-auth/git-auth.types';
 import { INSTALLATION_UNLINKED_EVENT } from '../../git-auth/git-auth.types';
+import { GitPatModeService } from '../../git-auth/services/git-pat-mode.service';
 import { GitHubAppService } from '../../git-auth/services/github-app.service';
 import { GitHubAppProviderService } from '../../git-auth/services/github-app-provider.service';
+import { GitHubAuthMethod } from '../../graph-resources/graph-resources.types';
 import { ProjectsDao } from '../../projects/dao/projects.dao';
 import { QdrantService } from '../../qdrant/services/qdrant.service';
 import { GitRepositoriesDao } from '../dao/git-repositories.dao';
@@ -32,6 +34,7 @@ import { GitRepositoryEntity } from '../entity/git-repository.entity';
 import { RepoIndexEntity } from '../entity/repo-index.entity';
 import {
   GitRepositoryProvider,
+  PAT_DEPLOYMENT_OWNER,
   RepoIndexStatus,
 } from '../git-repositories.types';
 import { RepoIndexQueueService } from './repo-index-queue.service';
@@ -51,7 +54,40 @@ export class GitRepositoriesService {
     private readonly projectsDao: ProjectsDao,
     private readonly gitHubAppProviderService: GitHubAppProviderService,
     private readonly gitHubAppService: GitHubAppService,
+    private readonly gitPatModeService: GitPatModeService,
   ) {}
+
+  /**
+   * Ownership scope for git_repositories rows.
+   *
+   * Single-source-of-truth policy: in `app` mode rows are per-user
+   * (`createdBy = <requesting user>`), the existing behaviour. In `pat` mode the
+   * deployment is a SINGLE shared GitHub identity (the operator's PAT), so all
+   * repository rows — synced or manually added — live under a fixed deployment
+   * sentinel (`PAT_DEPLOYMENT_OWNER`) and every read/write resolves to it
+   * regardless of which authenticated user issues the request. This is a
+   * deliberate, mode-scoped deviation from the api-security per-user `createdBy`
+   * ownership rule: the PAT's repos are intrinsically deployment-wide, so a
+   * per-user scope would both duplicate rows (one set per user who syncs) and
+   * hide synced repos from every other user. Requests are still authenticated
+   * (`ctx.checkSub()`); only the data-ownership key is widened to the
+   * deployment.
+   *
+   * ACCEPTED CONSEQUENCE (security): because the widening applies to every
+   * read AND write — including `deleteRepository` (which hard-deletes the repo's
+   * Qdrant collections + BullMQ jobs) and `triggerReindex` — in `pat` mode ANY
+   * authenticated user can manage (incl. irreversibly delete) ANY repository in
+   * the shared deployment set, and `projectId` no longer isolates repo
+   * management. This is intentional under the "single shared deployment
+   * identity" model and was approved at plan/implement time; it is NOT a
+   * per-user/per-project ownership model. If a deployment needs per-project
+   * isolation of destructive ops, scope `deleteRepository`/`triggerReindex` by
+   * `ctx.checkProjectId()` in addition to this sentinel (note: synced rows carry
+   * `projectId = null`, so such scoping would only bind manually-added repos).
+   */
+  private resolveRepoScope(userId: string): string {
+    return this.gitPatModeService.isPatMode() ? PAT_DEPLOYMENT_OWNER : userId;
+  }
 
   // Internal event only — emitted by GitHubAppProviderService after verifying ownership.
   // The userId filter in deleteRepositoriesByInstallationIds is defense-in-depth.
@@ -86,7 +122,7 @@ export class GitRepositoriesService {
       url: data.url,
       provider: data.provider,
       defaultBranch: data.defaultBranch ?? 'main',
-      createdBy: userId,
+      createdBy: this.resolveRepoScope(userId),
       projectId,
       installationId: null,
       syncedAt: null,
@@ -104,7 +140,7 @@ export class GitRepositoriesService {
 
     const existing = await this.gitRepositoriesDao.getOne({
       id,
-      createdBy: userId,
+      createdBy: this.resolveRepoScope(userId),
     });
 
     if (!existing) {
@@ -139,7 +175,7 @@ export class GitRepositoriesService {
     const userId = ctx.checkSub();
 
     const whereParams: FilterQuery<GitRepositoryEntity> = {
-      createdBy: userId,
+      createdBy: this.resolveRepoScope(userId),
     };
     if (query.owner) {
       whereParams.owner = query.owner;
@@ -171,7 +207,7 @@ export class GitRepositoriesService {
 
     const repository = await this.gitRepositoriesDao.getOne({
       id,
-      createdBy: userId,
+      createdBy: this.resolveRepoScope(userId),
     });
 
     if (!repository) {
@@ -187,7 +223,7 @@ export class GitRepositoriesService {
     // Verify repository exists and belongs to user
     const repository = await this.gitRepositoriesDao.getOne({
       id,
-      createdBy: userId,
+      createdBy: this.resolveRepoScope(userId),
     });
 
     if (!repository) {
@@ -210,7 +246,7 @@ export class GitRepositoriesService {
     if (query.repositoryId) {
       const repository = await this.gitRepositoriesDao.getOne({
         id: query.repositoryId,
-        createdBy: userId,
+        createdBy: this.resolveRepoScope(userId),
       });
 
       if (!repository) {
@@ -221,7 +257,7 @@ export class GitRepositoriesService {
     // Fetch only the IDs of user-owned repos for a DB-level IN filter,
     // rather than loading full entities and filtering in memory.
     const userRepos = await this.gitRepositoriesDao.getAll(
-      { createdBy: userId },
+      { createdBy: this.resolveRepoScope(userId) },
       { fields: ['id'] },
     );
 
@@ -268,7 +304,7 @@ export class GitRepositoriesService {
     // Verify repository belongs to user
     const repository = await this.gitRepositoriesDao.getOne({
       id: repositoryId,
-      createdBy: userId,
+      createdBy: this.resolveRepoScope(userId),
     });
 
     if (!repository) {
@@ -306,7 +342,7 @@ export class GitRepositoriesService {
     // Verify repository belongs to user
     const repository = await this.gitRepositoriesDao.getOne({
       id: data.repositoryId,
-      createdBy: userId,
+      createdBy: this.resolveRepoScope(userId),
     });
 
     if (!repository) {
@@ -417,23 +453,39 @@ export class GitRepositoriesService {
   ): Promise<SyncRepositoriesResponse> {
     const userId = ctx.checkSub();
 
-    if (!this.gitHubAppProviderService.isConfigured()) {
+    const patMode = this.gitPatModeService.isPatMode();
+
+    // In app mode the GitHub App must be configured. In pat mode it need not be
+    // (the deployment PAT replaces it); the PAT itself is validated fail-closed
+    // inside performPatSync.
+    if (!patMode && !this.gitHubAppProviderService.isConfigured()) {
       throw new BadRequestException('GITHUB_APP_NOT_CONFIGURED');
     }
 
-    if (this.syncInProgress.has(userId)) {
+    // In pat mode the sync is deployment-scoped (a single shared identity), so
+    // serialize on a fixed key — any user's click drives the same deployment
+    // sync and concurrent runs would race on the shared rows. App mode keeps the
+    // per-user lock.
+    const lockKey = patMode ? PAT_DEPLOYMENT_OWNER : userId;
+    if (this.syncInProgress.has(lockKey)) {
       throw new BadRequestException('SYNC_ALREADY_IN_PROGRESS');
     }
 
-    this.syncInProgress.add(userId);
+    this.syncInProgress.add(lockKey);
     try {
       return await this.performSync(userId);
     } finally {
-      this.syncInProgress.delete(userId);
+      this.syncInProgress.delete(lockKey);
     }
   }
 
   private async performSync(userId: string): Promise<SyncRepositoriesResponse> {
+    // PAT mode is deployment-wide and has no installations — take the dedicated
+    // path that lists via GET /user/repos. The app-mode body below is unchanged.
+    if (this.gitPatModeService.isPatMode()) {
+      return await this.performPatSync();
+    }
+
     const installations =
       await this.gitHubAppProviderService.getActiveInstallations(userId);
 
@@ -580,6 +632,7 @@ export class GitRepositoriesService {
         createdBy: userId,
         projectId: null,
         installationId: r.installationId,
+        syncSource: GitHubAuthMethod.GithubApp,
         syncedAt,
       }));
 
@@ -617,6 +670,173 @@ export class GitRepositoriesService {
     return {
       synced: allGithubRepos.length,
       removed: toRemove.length,
+      total,
+    };
+  }
+
+  /**
+   * PAT-mode repository sync. Lists every repository the deployment PAT can see
+   * (including org repos the GitHub App cannot reach) via `GET /user/repos` and
+   * upserts them under the shared deployment owner so repeated syncs by
+   * different users converge on one set of rows (no per-user duplicates). Fails
+   * CLOSED when the PAT is missing/invalid (getValidatedPat throws). The
+   * mode-scoped orphan-prune is applied after the upsert and targets
+   * `syncSource = Pat` rows ONLY — never App-synced or manually-added repos.
+   */
+  private async performPatSync(): Promise<SyncRepositoriesResponse> {
+    // Fail-closed: throws if GITHUB_PAT is missing/invalid (never proceeds to a
+    // tokenless listing). The value is a secret and is never logged.
+    const pat = this.gitPatModeService.getValidatedPat();
+    const syncedAt = new Date();
+    const allGithubRepos: {
+      owner: string;
+      repo: string;
+      url: string;
+      defaultBranch: string;
+    }[] = [];
+
+    // /user/repos returns every repo the PAT can access, including org repos the
+    // App is not installed on (the whole point of pat mode). Paginated 100/page.
+    const PER_PAGE = 100;
+    const MAX_PAGES = 100; // defensive bound: MAX_PAGES * PER_PAGE = 10k repos
+    let page = 1;
+    while (page <= MAX_PAGES) {
+      const response = await fetch(
+        `https://api.github.com/user/repos?per_page=${PER_PAGE}&page=${page}&affiliation=owner,collaborator,organization_member`,
+        {
+          headers: {
+            Authorization: `Bearer ${pat}`,
+            Accept: 'application/vnd.github+json',
+            'X-GitHub-Api-Version': '2022-11-28',
+          },
+        },
+      );
+
+      const rateLimitRemaining = response.headers.get('x-ratelimit-remaining');
+      if (
+        response.status === 429 ||
+        (response.status === 403 && rateLimitRemaining === '0')
+      ) {
+        throw new InternalException('GITHUB_RATE_LIMITED');
+      }
+
+      if (!response.ok) {
+        // Never echo the response body — it can carry token-derived detail.
+        throw new InternalException(
+          'GITHUB_PAT_REPO_LISTING_FAILED',
+          `GET /user/repos failed with status ${response.status} in pat mode`,
+        );
+      }
+
+      const data = (await response.json()) as unknown;
+      if (!Array.isArray(data)) {
+        // A 200 with a non-array body is a contract violation — fail loud
+        // rather than dereference. Never echo the body (token-derived detail).
+        throw new InternalException(
+          'GITHUB_PAT_REPO_LISTING_FAILED',
+          'GET /user/repos returned an unexpected (non-array) body in pat mode',
+        );
+      }
+
+      const pageRepos = data as {
+        owner: { login: string } | null;
+        name: string;
+        html_url: string;
+        default_branch: string | null;
+      }[];
+
+      for (const ghRepo of pageRepos) {
+        // Skip malformed elements — a repo whose owner account was deleted can
+        // come back with a null owner; skip it rather than throw mid-sync.
+        if (
+          !ghRepo ||
+          typeof ghRepo.name !== 'string' ||
+          !ghRepo.owner?.login
+        ) {
+          continue;
+        }
+        allGithubRepos.push({
+          owner: ghRepo.owner.login,
+          repo: ghRepo.name,
+          url: ghRepo.html_url,
+          defaultBranch: ghRepo.default_branch ?? 'main',
+        });
+      }
+
+      if (pageRepos.length < PER_PAGE) {
+        break;
+      }
+      page++;
+    }
+
+    if (page > MAX_PAGES) {
+      this.logger.warn(
+        `[git-sync] pat-mode sync hit MAX_PAGES=${MAX_PAGES}; repository list may be truncated`,
+      );
+    }
+
+    this.logger.log(
+      `[git-sync] pat-mode deployment sync repositories_received=${allGithubRepos.length}`,
+    );
+
+    if (allGithubRepos.length > 0) {
+      const upsertData = allGithubRepos.map((r) => ({
+        owner: r.owner,
+        repo: r.repo,
+        url: r.url,
+        provider: GitRepositoryProvider.GITHUB,
+        defaultBranch: r.defaultBranch,
+        createdBy: PAT_DEPLOYMENT_OWNER,
+        projectId: null,
+        installationId: null,
+        syncSource: GitHubAuthMethod.Pat,
+        syncedAt,
+      }));
+
+      await this.gitRepositoriesDao.upsertGithubSyncRepos(upsertData);
+
+      await this.gitRepositoriesDao.restoreSoftDeleted(
+        PAT_DEPLOYMENT_OWNER,
+        allGithubRepos.map((r) => ({ owner: r.owner, repo: r.repo })),
+      );
+    }
+
+    // Mode-scoped orphan-prune. Scoped to (createdBy = sentinel AND
+    // syncSource = Pat) so it removes ONLY PAT-synced rows no longer returned by
+    // /user/repos. App-synced rows (different createdBy, installationId set) and
+    // manually-added rows (syncSource = null) are excluded on both predicates,
+    // so flipping GITHUB_AUTH_MODE never triggers the irreversible
+    // cleanupRepositoryResourcesById hard-delete (Qdrant collections + BullMQ
+    // jobs, outside any transaction) against the other mode's repositories.
+    const existingPatRepos = await this.gitRepositoriesDao.getAll({
+      createdBy: PAT_DEPLOYMENT_OWNER,
+      syncSource: GitHubAuthMethod.Pat,
+    });
+
+    const syncedKeys = new Set(
+      allGithubRepos.map((r) => `${r.owner}/${r.repo}`),
+    );
+    const toRemove = existingPatRepos.filter(
+      (r) => !syncedKeys.has(`${r.owner}/${r.repo}`),
+    );
+
+    for (const repo of toRemove) {
+      await this.cleanupRepositoryResourcesById(repo.id);
+      await this.gitRepositoriesDao.deleteById(repo.id);
+    }
+    const removed = toRemove.length;
+
+    const total = await this.gitRepositoriesDao.count({
+      createdBy: PAT_DEPLOYMENT_OWNER,
+    });
+
+    this.logger.log(
+      `[git-sync] pat-mode sync complete synced=${allGithubRepos.length} removed=${removed} total=${total}`,
+    );
+
+    return {
+      synced: allGithubRepos.length,
+      removed,
       total,
     };
   }

@@ -8,20 +8,19 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AppContextStorage } from '../../../auth/app-context-storage';
 import { GitProvider } from '../../git-auth/git-auth.types';
+import { GitPatModeService } from '../../git-auth/services/git-pat-mode.service';
 import { GitHubAppService } from '../../git-auth/services/github-app.service';
 import { GitHubAppProviderService } from '../../git-auth/services/github-app-provider.service';
 import { ProjectsDao } from '../../projects/dao/projects.dao';
 import { QdrantService } from '../../qdrant/services/qdrant.service';
-import {
-  GithubSyncRepo,
-  GitRepositoriesDao,
-} from '../dao/git-repositories.dao';
+import { GitRepositoriesDao } from '../dao/git-repositories.dao';
 import { RepoIndexDao } from '../dao/repo-index.dao';
 import { GetRepositoriesQueryDto } from '../dto/git-repositories.dto';
 import { GitRepositoryEntity } from '../entity/git-repository.entity';
 import { RepoIndexEntity } from '../entity/repo-index.entity';
 import {
   GitRepositoryProvider,
+  PAT_DEPLOYMENT_OWNER,
   RepoIndexStatus,
 } from '../git-repositories.types';
 import { GitRepositoriesService } from './git-repositories.service';
@@ -38,6 +37,12 @@ describe('GitRepositoriesService', () => {
   let gitHubAppProviderService: GitHubAppProviderService;
   let gitHubAppService: GitHubAppService;
   let logger: DefaultLogger;
+  let gitPatModeMock: {
+    isPatMode: ReturnType<typeof vi.fn>;
+    isPatConfigured: ReturnType<typeof vi.fn>;
+    mode: ReturnType<typeof vi.fn>;
+    getValidatedPat: ReturnType<typeof vi.fn>;
+  };
 
   const mockUserId = 'user-123';
   const mockProjectId = '11111111-1111-1111-1111-111111111111';
@@ -155,6 +160,17 @@ describe('GitRepositoriesService', () => {
             getInstallationToken: vi.fn(),
           },
         },
+        {
+          provide: GitPatModeService,
+          useValue: {
+            // Default: app mode — these unit tests exercise the app-mode path,
+            // so resolveRepoScope() returns the requesting user's id unchanged.
+            isPatMode: vi.fn().mockReturnValue(false),
+            isPatConfigured: vi.fn().mockReturnValue(false),
+            mode: vi.fn(),
+            getValidatedPat: vi.fn(),
+          },
+        },
       ],
     }).compile();
 
@@ -171,6 +187,9 @@ describe('GitRepositoriesService', () => {
     );
     gitHubAppService = module.get<GitHubAppService>(GitHubAppService);
     logger = module.get<DefaultLogger>(DefaultLogger);
+    gitPatModeMock = module.get(
+      GitPatModeService,
+    ) as unknown as typeof gitPatModeMock;
   });
 
   describe('createRepository', () => {
@@ -814,13 +833,6 @@ describe('GitRepositoriesService', () => {
     });
 
     it('does not soft-delete repos with installationId = null (PAT repos)', async () => {
-      const patRepo = createMockRepositoryEntity({
-        id: 'pat-repo-id',
-        owner: 'octocat',
-        repo: 'PatRepo',
-        installationId: null,
-      } as Partial<GitRepositoryEntity>);
-
       vi.spyOn(
         gitHubAppProviderService,
         'getActiveInstallations',
@@ -1238,6 +1250,77 @@ describe('GitRepositoriesService', () => {
         githubInstallationIds: [12345],
       });
       expect(spy).toHaveBeenCalledWith('mock-user-id', [12345]);
+    });
+  });
+
+  describe('PAT mode (deployment-scoped ownership)', () => {
+    beforeEach(() => {
+      gitPatModeMock.isPatMode.mockReturnValue(true);
+    });
+
+    it('getRepositories queries under the deployment sentinel, not the requesting user', async () => {
+      vi.mocked(dao.getAll).mockResolvedValue([]);
+
+      await service.getRepositories(mockCtx, {} as GetRepositoriesQueryDto);
+
+      expect(dao.getAll).toHaveBeenCalledWith(
+        expect.objectContaining({ createdBy: PAT_DEPLOYMENT_OWNER }),
+        expect.anything(),
+      );
+    });
+
+    it('getRepositoryById queries under the deployment sentinel', async () => {
+      vi.mocked(dao.getOne).mockResolvedValue(
+        createMockRepositoryEntity({ createdBy: PAT_DEPLOYMENT_OWNER }),
+      );
+
+      await service.getRepositoryById(mockCtx, mockRepositoryId);
+
+      expect(dao.getOne).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: mockRepositoryId,
+          createdBy: PAT_DEPLOYMENT_OWNER,
+        }),
+      );
+    });
+
+    it('createRepository stamps the deployment sentinel as createdBy', async () => {
+      vi.mocked(dao.create).mockResolvedValue(
+        createMockRepositoryEntity({ createdBy: PAT_DEPLOYMENT_OWNER }),
+      );
+
+      await service.createRepository(mockCtx, {
+        owner: 'o',
+        repo: 'r',
+        url: 'https://github.com/o/r.git',
+        provider: GitRepositoryProvider.GITHUB,
+        defaultBranch: 'main',
+      });
+
+      expect(dao.create).toHaveBeenCalledWith(
+        expect.objectContaining({ createdBy: PAT_DEPLOYMENT_OWNER }),
+      );
+    });
+
+    it('syncRepositories does NOT throw GITHUB_APP_NOT_CONFIGURED when the App is unconfigured', async () => {
+      gitPatModeMock.getValidatedPat.mockReturnValue('ghp_x');
+      vi.mocked(gitHubAppProviderService.isConfigured).mockReturnValue(false);
+      vi.mocked(dao.getAll).mockResolvedValue([]);
+      vi.mocked(dao.count).mockResolvedValue(0);
+      const fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => [],
+        headers: { get: () => null },
+      } as unknown as Response);
+
+      await expect(service.syncRepositories(mockCtx)).resolves.toEqual({
+        synced: 0,
+        removed: 0,
+        total: 0,
+      });
+
+      fetchSpy.mockRestore();
     });
   });
 });

@@ -1,6 +1,6 @@
 import { ToolRunnableConfig } from '@langchain/core/tools';
 import { Test, TestingModule } from '@nestjs/testing';
-import { DefaultLogger } from '@packages/common';
+import { DefaultLogger, InternalException } from '@packages/common';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { BaseAgentConfigurable } from '../../../../agents/agents.types';
@@ -126,6 +126,41 @@ describe('GhCloneTool', () => {
           url: 'https://github.com/octocat/Hello-World.git',
         }),
       );
+    });
+
+    it('fails CLOSED: re-throws a PAT-misconfig InternalException without an anonymous clone', async () => {
+      const args: GhCloneToolSchemaType = {
+        owner: 'octocat',
+        repo: 'Hello-World',
+      };
+
+      const failClosedConfig: GhBaseToolConfig = {
+        runtimeProvider: mockConfig.runtimeProvider,
+        resolveTokenForOwner: vi
+          .fn()
+          .mockRejectedValue(
+            new InternalException(
+              'GITHUB_PAT_MISSING',
+              'GITHUB_AUTH_MODE is "pat" but GITHUB_PAT is empty or unset',
+            ),
+          ),
+      };
+
+      const execGhCommandSpy = vi
+        .spyOn(tool as any, 'execGhCommand')
+        .mockResolvedValue({
+          exitCode: 0,
+          stdout: '',
+          stderr: '',
+          execPath: '',
+        });
+
+      // The PAT misconfiguration must surface, not be swallowed into an
+      // anonymous clone (the gh-clone re-throw guard).
+      await expect(
+        tool.invoke(args, failClosedConfig, mockCfg),
+      ).rejects.toThrow(InternalException);
+      expect(execGhCommandSpy).not.toHaveBeenCalled();
     });
 
     it('should use git clone when no token is available', async () => {

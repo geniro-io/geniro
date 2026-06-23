@@ -72,7 +72,7 @@ export class GithubResource extends BaseResource<
     return {
       information: outdent`
         Purpose: Work with GitHub from shell via gh CLI (repos, branches, PRs, issues, workflows).
-        Authentication: Uses GitHub App installation tokens. The GitHub App must be installed on the target organization/account and linked in Settings > Integrations.
+        Authentication: Configured deployment-wide (a GitHub App installation OR a personal access token, depending on the deployment's GITHUB_AUTH_MODE); no per-node setup is required. If GitHub commands fail with an auth error, GitHub authentication is not configured for this deployment — contact your administrator.
 
         Discover commands:
           gh help

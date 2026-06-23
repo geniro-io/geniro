@@ -1,4 +1,5 @@
 import { ToolRunnableConfig } from '@langchain/core/tools';
+import { InternalException } from '@packages/common';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 
@@ -27,6 +28,14 @@ class TestGhTool extends GhBaseTool<unknown> {
     cfg?: ToolRunnableConfig<BaseAgentConfigurable>,
   ): Promise<string> {
     return this.resolveToken(config, owner, cfg);
+  }
+
+  public async testExecGhCommand(
+    params: { cmd: string[] | string; owner?: string },
+    config: GhBaseToolConfig,
+    cfg: ToolRunnableConfig<BaseAgentConfigurable>,
+  ) {
+    return this.execGhCommand(params, config, cfg);
   }
 }
 
@@ -99,5 +108,40 @@ describe('GhBaseTool.resolveToken', () => {
     await expect(tool.testResolveToken(config, 'my-org', {})).rejects.toThrow(
       'No GitHub token available',
     );
+  });
+
+  // The implicit-token fallback inside execGhCommand (used by gh_push / gh_commit
+  // which do not pass an explicit resolvedToken) must fail CLOSED on a PAT
+  // misconfiguration: an InternalException from token resolution surfaces (the
+  // command never runs anonymously). A benign "no token" plain Error is still
+  // swallowed so plain git/find/cat work without GH_TOKEN.
+  it('execGhCommand fails CLOSED: surfaces an InternalException from token resolution instead of running anonymously', async () => {
+    const config: GhBaseToolConfig = {
+      runtimeProvider: {
+        provide: vi.fn().mockResolvedValue({} as never),
+      } as never,
+      resolveTokenForOwner: vi
+        .fn<ResolveTokenForOwnerFn>()
+        .mockRejectedValue(
+          new InternalException(
+            'GITHUB_PAT_MISSING',
+            'GITHUB_AUTH_MODE is "pat" but GITHUB_PAT is empty or unset',
+          ),
+        ),
+    };
+    const cfg: ToolRunnableConfig<BaseAgentConfigurable> = {
+      configurable: { thread_created_by: 'u1' },
+    };
+
+    const res = await tool.testExecGhCommand(
+      { cmd: ['git', 'push'], owner: 'my-org' },
+      config,
+      cfg,
+    );
+
+    // The PAT-misconfig error is surfaced (caught by execGhCommand's outer
+    // handler into a failed result) — NOT swallowed into an anonymous run.
+    expect(res.exitCode).toBe(1);
+    expect(res.stderr).toContain('GITHUB_AUTH_MODE');
   });
 });
