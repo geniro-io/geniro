@@ -1,11 +1,12 @@
 import { Migration } from '@mikro-orm/migrations';
 
-export class Migration20260623123800 extends Migration {
+export class Migration20260623153258 extends Migration {
   override up(): void | Promise<void> {
-    // Hand-trimmed: the generator also emitted unrelated pre-existing drift
-    // (a thread_store_entries FK drop + a threads.total_running_ms default
-    // normalization) that this migration must not carry — only the intended
-    // git_repositories.sync_source change is kept (CLAUDE.md drift exception).
+    // Hand-trimmed per CLAUDE.md drift exception: `pnpm migration:generate`
+    // also emitted unrelated pre-existing dev-schema drift — a
+    // thread_store_entries FK drop and a threads.total_running_ms default
+    // normalization — that this migration must not carry. Only the intended
+    // git_repositories.sync_source change is kept.
     this.addSql(`alter table "git_repositories" add "sync_source" text null;`);
     this.addSql(
       `create index "git_repositories_sync_source_index" on "git_repositories" ("sync_source");`,

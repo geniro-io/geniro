@@ -50,5 +50,5 @@ Entities extending `TimestampsEntity`/`AuditEntity` must add `@Filter({ name: 's
 ## Migrations
 
 - Always generate: `cd apps/api && pnpm run migration:generate`.
-- Never hand-write migration files.
+- Never hand-write migration files. Full rules (the drift-trim exception, regenerating an already-applied change, red flags for hand-authored files) live in `.claude/rules/migrations.md`.
 - MikroORM uses `UnderscoreNamingStrategy` — all DB columns are snake_case.
