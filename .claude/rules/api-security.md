@@ -53,6 +53,7 @@ async findById(ctx: AppContextStorage, id: string): Promise<ItemDto> {
 ## Rules
 
 - Always filter by `createdBy` and/or `projectId` in DAO queries for user-owned resources.
+- **Sanctioned `createdBy` deviation — deployment-wide shared identity.** When a feature intentionally serves a SINGLE deployment-wide shared identity rather than per-user resources, it MAY widen the `createdBy` filter to a fixed sentinel through ONE chokepoint helper (e.g. `resolveRepoScope` → `PAT_DEPLOYMENT_OWNER`), provided: (a) requests stay authenticated (`ctx.checkSub()` is still called); (b) the helper's docstring states the ACCEPTED CONSEQUENCE — that destructive ops (hard-delete, reindex) and `projectId` isolation no longer bind per-user; (c) the deviation was approved at plan/implement time. Never drop `createdBy` filtering ad-hoc at individual call sites. Exemplar: `resolveRepoScope` in `apps/api/src/v1/git-repositories/services/git-repositories.service.ts`.
 - Use `ctx.checkSub()` (not `ctx.sub`) to ensure the value is present and throw if not.
 - Use `ctx.checkProjectId()` (not `ctx.projectId`) to ensure the project header is present.
 - Rate-limit expensive endpoints with `@Throttle({ default: { ttl: 60000, limit: 10 } })`.
