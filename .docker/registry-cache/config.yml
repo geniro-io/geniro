@@ -1,0 +1,29 @@
+# Docker Hub pull-through cache (registry:2 in proxy mode).
+#
+# Distinct from .docker/registry/config.yml, which is a PLAIN registry used as
+# the Daytona snapshot push target — proxy mode disables pushes, so the two
+# cannot be the same instance. This one only mirrors Docker Hub: the first pull
+# of an image (e.g. mcp/playwright) fetches from Hub and caches every layer;
+# subsequent pulls from any runtime are served from local disk over the LAN.
+version: 0.1
+log:
+  fields:
+    service: registry
+http:
+  addr: :5000
+storage:
+  cache:
+    blobdescriptor: inmemory
+  filesystem:
+    rootdirectory: /var/lib/registry
+proxy:
+  remoteurl: https://registry-1.docker.io
+  # Anonymous upstream pulls (subject to Docker Hub's anonymous rate limits, but
+  # the cache means a given image is fetched from Hub at most once per ttl). Set
+  # REGISTRY_PROXY_USERNAME / REGISTRY_PROXY_PASSWORD on the service to raise the
+  # limit with a Hub account.
+health:
+  storagedriver:
+    enabled: true
+    interval: 10s
+    threshold: 3

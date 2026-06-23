@@ -90,19 +90,43 @@ services:
       - ./cliproxy.yaml:/CLIProxyAPI/config.yaml
       - cliproxy-auth:/root/.cli-proxy-api
 
-  registry-mirror:
+  # Daytona snapshot store — a private push target for sandbox snapshots
+  # (the daytona/backup-* repos). Used ONLY by the daytona services, so it is
+  # scoped to the daytona profile like them (was previously always-on). This is
+  # NOT a Docker Hub cache — proxy mode would disable the pushes it exists for;
+  # see registry-cache for Hub caching.
+  daytona-registry:
     image: registry:2
     restart: unless-stopped
+    profiles: ["daytona"]
     networks:
       ai:
       daytona:
-        aliases:
-          - daytona-registry
     ports:
       - "5009:5000"
     volumes:
       - registry:/var/lib/registry
       - ./.docker/registry/config.yml:/etc/docker/registry/config.yml:ro
+
+  # Docker Hub pull-through cache. Runtime dockerds use this as a registry-mirror
+  # so heavy images (e.g. mcp/playwright) are fetched from Hub once and then
+  # served from local disk on every subsequent runtime pull. Always-on (the
+  # local docker runtime needs it on a plain `deps:up`). Local docker runtimes
+  # reach it via host.docker.internal:5010 (published below); Daytona sandboxes
+  # reach it as registry-cache:5000 on the daytona network (see
+  # .docker/daytona-runner/daemon.json). Separate from daytona-registry because
+  # proxy mode disables the pushes the snapshot store serves.
+  registry-cache:
+    image: registry:2
+    restart: unless-stopped
+    networks:
+      ai:
+      daytona:
+    ports:
+      - "5010:5000"
+    volumes:
+      - registry-cache:/var/lib/registry
+      - ./.docker/registry-cache/config.yml:/etc/docker/registry/config.yml:ro
 
   daytona-proxy:
     image: nginx:alpine
@@ -195,8 +219,10 @@ services:
       - ADMIN_TOTAL_CPU_QUOTA=100
       - ADMIN_TOTAL_MEMORY_QUOTA=100
       - ADMIN_TOTAL_DISK_QUOTA=200
-      # Transient registry (uses the local registry-mirror for snapshot storage)
-      - TRANSIENT_REGISTRY_URL=http://geniro-registry-mirror-1:5000
+      # Transient registry (the daytona-registry snapshot store). Service-name
+      # DNS resolves on the shared geniro_ai network; rename-stable vs the prior
+      # project-prefixed container name.
+      - TRANSIENT_REGISTRY_URL=http://daytona-registry:5000
       - TRANSIENT_REGISTRY_ADMIN=admin
       - TRANSIENT_REGISTRY_PASSWORD=admin
       - TRANSIENT_REGISTRY_PROJECT_ID=geniro
@@ -337,6 +363,7 @@ volumes:
   redis:
   qdrant:
   registry:
+  registry-cache:
   cliproxy-auth:
   zitadel-init-data:
   openbao_data:

@@ -53,14 +53,18 @@ export const environment = () =>
     keycloakClientId: getEnv('KEYCLOAK_CLIENT_ID', 'geniro'),
     zitadelClientId: getEnv('ZITADEL_CLIENT_ID', 'geniro'),
 
-    // docker registry mirror (for DinD)
+    // Docker Hub pull-through cache for the local DinD runtime. The runtime
+    // container has ExtraHosts host.docker.internal:host-gateway, so its dockerd
+    // reaches the host-published registry-cache (docker-compose, :5010) here.
+    // (The previous registry-mirror:5000 default resolved on neither the runtime
+    // network nor as a Hub proxy, so every runtime re-pulled from Docker Hub.)
     dockerRegistryMirror: getEnv(
       'DOCKER_REGISTRY_MIRROR',
-      'http://registry-mirror:5000',
+      'http://host.docker.internal:5010',
     ),
     dockerInsecureRegistry: getEnv(
       'DOCKER_INSECURE_REGISTRY',
-      'registry-mirror:5000',
+      'host.docker.internal:5010',
     ),
     knowledgeChunksCollection: getEnv(
       'KNOWLEDGE_CHUNKS_COLLECTION',
