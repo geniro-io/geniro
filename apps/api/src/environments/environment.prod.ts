@@ -168,6 +168,19 @@ export const environment = () =>
     runtimeCleanupIntervalMs: +getEnv('RUNTIME_CLEANUP_INTERVAL_MS', '300000'),
     runtimeIdleThresholdMs: +getEnv('RUNTIME_IDLE_THRESHOLD_MS', '1800000'),
 
+    // OAuth token-refresh watchdog: every interval, proactively refresh
+    // credentials expiring within the threshold so a short-lived token never
+    // goes stale overnight (lazy run-gate refresh only fires when a run starts).
+    // Threshold > the 60s run-gate skew so the watchdog wins the race.
+    oauthTokenRefreshIntervalMs: +getEnv(
+      'OAUTH_TOKEN_REFRESH_INTERVAL_MS',
+      '600000',
+    ),
+    oauthTokenRefreshThresholdMs: +getEnv(
+      'OAUTH_TOKEN_REFRESH_THRESHOLD_MS',
+      '1800000',
+    ),
+
     // tool output limits
     toolMaxOutputTokens: +getEnv('TOOL_MAX_OUTPUT_TOKENS', '5000'),
     filesReadMaxLines: +getEnv('FILES_READ_MAX_LINES', '2000'),

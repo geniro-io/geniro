@@ -121,7 +121,13 @@ export class DockerExecTransport implements Transport {
       // surface stderr to avoid generic "connection closed" errors.
       if (!this.sawAnyMessage && this.stderrTail.trim()) {
         const err = this.buildEarlyCloseError();
-        this.logger.error(err, 'MCP transport closed early');
+        // debug, not error: an early close is propagated to the caller via
+        // `onerror`, and the caller decides severity (the Linear MCP deploy-time
+        // validation tolerates it and re-logs at warn). Logging at error here is
+        // premature double-handling that surfaces a scary ERROR for an expected,
+        // tolerated condition. The full error (with the stderr tail) still rides
+        // `onerror` for any caller that treats it as fatal.
+        this.logger.debug(`MCP transport closed early: ${err.message}`);
         this.onerror?.(err);
       }
       if (this.onclose) {

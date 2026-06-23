@@ -302,11 +302,75 @@ export class OAuthCredentialsService {
       return this.buildStatus(provider, credential);
     }
 
+    await this.performRefresh(credential);
+    return await this.status(ctx, provider);
+  }
+
+  /**
+   * Proactively refresh every credential whose access token expires within
+   * `thresholdMs` (or is already past). The interactive {@link refreshIfNeeded}
+   * gate only rotates a token when a run actually happens — so a token can
+   * expire overnight and the first (often background/trigger) run then pauses
+   * for re-auth. This background watchdog keeps tokens fresh AHEAD of any run.
+   *
+   * Resilient: a per-credential failure (revoked/rotated refresh token, AS
+   * error) is logged at warn and skipped so one bad credential never blocks the
+   * rest. Returns a summary for the caller (watchdog worker) to log. The
+   * threshold is intentionally LARGER than {@link REFRESH_EXPIRY_SKEW_MS} so the
+   * watchdog wins the race and the run gate's 60s window is rarely reached.
+   */
+  async refreshExpiringCredentials(
+    thresholdMs: number,
+  ): Promise<{ scanned: number; refreshed: number; failed: number }> {
+    const cutoff = new Date(Date.now() + thresholdMs);
+    // `expiresAt <= cutoff` excludes NULL (unknown/non-expiring) expiries in SQL;
+    // only rows with a persisted issuing client_id are refreshable at all.
+    const credentials = await this.dao.getAll({
+      expiresAt: { $lte: cutoff },
+      clientId: { $ne: null },
+    });
+    let refreshed = 0;
+    let failed = 0;
+    for (const credential of credentials) {
+      try {
+        if (await this.performRefresh(credential)) {
+          refreshed++;
+        }
+      } catch (error) {
+        failed++;
+        // Safe envelope only — never the token/response body.
+        this.logger.warn('OAuth watchdog: token refresh failed', {
+          provider: credential.provider,
+          projectId: credential.projectId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+    return { scanned: credentials.length, refreshed, failed };
+  }
+
+  /**
+   * Refresh ONE credential's access token using its stored refresh token + the
+   * persisted issuing client. Context-free — projectId / owner / provider are
+   * read from the row, so both the interactive {@link refreshIfNeeded} gate and
+   * the background watchdog reuse it.
+   *
+   * Returns `true` when a refresh was performed, `false` when the credential is
+   * not refreshable (no persisted client_id, no stored refresh token, or the
+   * secrets store is unavailable) — those simply ride to hard expiry, where M3.3
+   * surfaces auth_required. THROWS when the refresh grant itself fails (AS
+   * rejected / network); on a persistence failure the OpenBao writes are rolled
+   * back before rethrowing so a transient DB error never destroys a valid token.
+   */
+  private async performRefresh(
+    credential: OAuthCredentialEntity,
+  ): Promise<boolean> {
+    const { provider, projectId } = credential;
     // A refresh grant is bound to its issuing client; absent the persisted
     // client_id, the stored refresh token, or the secrets store, the credential
     // simply stays near/past expiry (re-auth handled in M3.3).
     if (!credential.clientId || !this.secretsStore.isAvailable()) {
-      return this.buildStatus(provider, credential);
+      return false;
     }
     // Capture the narrowed client_id in a local — control-flow narrowing of a
     // property access does not survive into the async transactional callback
@@ -316,7 +380,7 @@ export class OAuthCredentialsService {
       .getSecret(projectId, this.refreshSecretName(provider))
       .catch(() => null);
     if (!refreshToken) {
-      return this.buildStatus(provider, credential);
+      return false;
     }
     const clientSecret = await this.secretsStore
       .getSecret(projectId, this.clientSecretName(provider))
@@ -377,8 +441,7 @@ export class OAuthCredentialsService {
       }
       throw error;
     }
-
-    return await this.status(ctx, provider);
+    return true;
   }
 
   /**

@@ -55,4 +55,17 @@ export const environment = () =>
     // duration so it doesn't race with explicit teardown.
     runtimeCleanupIntervalMs: +getEnv('RUNTIME_CLEANUP_INTERVAL_MS', '3600000'),
     runtimeIdleThresholdMs: +getEnv('RUNTIME_IDLE_THRESHOLD_MS', '3600000'),
+
+    // Push the OAuth token-refresh watchdog tick well past any test duration so
+    // its BullMQ repeatable never fires mid-test (it would refresh seeded
+    // credentials out from under assertions). The logic is exercised directly
+    // via OAuthCredentialsService.refreshExpiringCredentials in tests.
+    oauthTokenRefreshIntervalMs: +getEnv(
+      'OAUTH_TOKEN_REFRESH_INTERVAL_MS',
+      '3600000',
+    ),
+    oauthTokenRefreshThresholdMs: +getEnv(
+      'OAUTH_TOKEN_REFRESH_THRESHOLD_MS',
+      '1800000',
+    ),
   }) as const satisfies Record<string, string | number | boolean>;

@@ -475,4 +475,121 @@ describe('OAuth refresh-token rotation (integration)', () => {
 
     txSpy.mockRestore();
   });
+
+  describe('refreshExpiringCredentials() — background watchdog', () => {
+    it('proactively refreshes a credential expiring within the threshold', async () => {
+      await doExchange(
+        {
+          accessToken: 'access-v1',
+          scopes: ['read'],
+          // 5 min out — inside a 30 min watchdog threshold, but well outside the
+          // 60s run-gate skew (so only the watchdog would refresh it here).
+          expiresAt: futureDate(5 * 60_000),
+          refreshToken: 'refresh-v1',
+          accountLabel: 'Acme',
+        },
+        { clientId: 'dcr-client-1', clientSecret: null },
+      );
+      mockExchange.refreshAccessToken.mockResolvedValueOnce({
+        accessToken: 'access-v2',
+        scopes: null,
+        expiresAt: futureDate(24 * 3_600_000),
+        refreshToken: 'refresh-v2',
+        accountLabel: null,
+      });
+
+      const summary = await service.refreshExpiringCredentials(30 * 60_000);
+
+      expect(summary).toMatchObject({ scanned: 1, refreshed: 1, failed: 0 });
+      expect(mockExchange.refreshAccessToken).toHaveBeenCalledWith(
+        OAuthProvider.Linear,
+        'refresh-v1',
+        { clientId: 'dcr-client-1', clientSecret: null },
+      );
+      expect(kvStore.get(`${projectId}:${TOKEN_KEY}`)).toBe('access-v2');
+      expect(kvStore.get(`${projectId}:${REFRESH_KEY}`)).toBe('refresh-v2');
+      const cred = await loadCredential();
+      expect(cred?.lastRefreshedAt).toBeInstanceOf(Date);
+    });
+
+    it('skips a credential whose expiry is beyond the threshold', async () => {
+      await doExchange({
+        accessToken: 'access-v1',
+        scopes: ['read'],
+        expiresAt: futureDate(60 * 60_000), // 1 h out — beyond a 30 min threshold
+        refreshToken: 'refresh-v1',
+        accountLabel: 'Acme',
+      });
+
+      const summary = await service.refreshExpiringCredentials(30 * 60_000);
+
+      expect(mockExchange.refreshAccessToken).not.toHaveBeenCalled();
+      expect(summary).toMatchObject({ scanned: 0, refreshed: 0, failed: 0 });
+      expect(kvStore.get(`${projectId}:${TOKEN_KEY}`)).toBe('access-v1');
+      const cred = await loadCredential();
+      expect(cred?.lastRefreshedAt ?? null).toBeNull();
+    });
+
+    it('isolates a per-credential failure — one bad credential does not block the rest', async () => {
+      // Two near-expiry, refreshable credentials in two projects, seeded via the
+      // DAO. One project's refresh throws; the other must still refresh and the
+      // watchdog must not abort the whole sweep.
+      const second = await createTestProject(app);
+      const dao = app.get(OAuthCredentialsDao);
+      const seedCred = async (
+        pid: string,
+        owner: string,
+        refreshTok: string,
+      ): Promise<void> => {
+        await dao.create({
+          provider: OAuthProvider.Linear,
+          accountLabel: 'Acme',
+          secretName: TOKEN_KEY,
+          scopes: ['read'],
+          expiresAt: futureDate(5 * 60_000),
+          clientId: 'dcr-client',
+          lastRefreshedAt: null,
+          createdBy: owner,
+          projectId: pid,
+        });
+        kvStore.set(`${pid}:${TOKEN_KEY}`, 'access-v1');
+        kvStore.set(`${pid}:${REFRESH_KEY}`, refreshTok);
+      };
+      await seedCred(projectId, ctx.checkSub(), 'refresh-bad');
+      await seedCred(second.projectId, second.ctx.checkSub(), 'refresh-good');
+
+      mockExchange.refreshAccessToken.mockImplementation(
+        async (_p: OAuthProvider, refreshToken: string) => {
+          if (refreshToken === 'refresh-bad') {
+            throw new Error('AS rejected the refresh token');
+          }
+          return {
+            accessToken: 'access-v2',
+            scopes: null,
+            expiresAt: futureDate(24 * 3_600_000),
+            refreshToken: null,
+            accountLabel: null,
+          };
+        },
+      );
+
+      try {
+        const summary = await service.refreshExpiringCredentials(30 * 60_000);
+
+        expect(summary).toMatchObject({ scanned: 2, refreshed: 1, failed: 1 });
+        // The good credential rotated; the failing one is untouched (the throw
+        // is BEFORE any OpenBao write — no half-rotated state).
+        expect(kvStore.get(`${second.projectId}:${TOKEN_KEY}`)).toBe(
+          'access-v2',
+        );
+        expect(kvStore.get(`${projectId}:${TOKEN_KEY}`)).toBe('access-v1');
+      } finally {
+        const em = app.get(EntityManager).fork();
+        await em.nativeDelete(OAuthCredentialEntity, {
+          projectId: second.projectId,
+        });
+        await em.nativeDelete(SecretEntity, { projectId: second.projectId });
+      }
+    });
+  });
 });

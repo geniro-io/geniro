@@ -187,6 +187,33 @@ describe('DaytonaExecTransport', () => {
     expect(error.message).toContain('Error: command not found');
   });
 
+  it('logs the early close at debug, not error (caller decides severity)', async () => {
+    const freshMock = createMockSandbox();
+    const logger = createLogger();
+    const errorSpy = vi.spyOn(logger, 'error');
+    const debugSpy = vi.spyOn(logger, 'debug');
+    const freshTransport = new DaytonaExecTransport(
+      freshMock.sandbox,
+      'npx',
+      ['-y', '@mcp/server'],
+      { API_KEY: 'secret' },
+      logger,
+    );
+    freshTransport.onerror = () => undefined;
+
+    await freshTransport.start();
+
+    freshMock.writeStderr('Error: command not found\n');
+    freshMock.resolveLogs();
+
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(errorSpy).not.toHaveBeenCalled();
+    expect(debugSpy).toHaveBeenCalledWith(
+      expect.stringContaining('MCP transport closed early'),
+    );
+  });
+
   it('malformed JSON on stdout is logged and skipped', async () => {
     const received: unknown[] = [];
     transport.onmessage = (msg) => received.push(msg);

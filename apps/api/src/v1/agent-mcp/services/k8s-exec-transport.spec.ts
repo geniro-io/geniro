@@ -192,6 +192,34 @@ describe('K8sExecTransport', () => {
     );
   });
 
+  it('logs the early close at debug, not error (caller decides severity)', async () => {
+    const streams = createStreams();
+    const runtime = createRuntime(streams);
+    const logger = createLogger();
+    const errorSpy = vi.spyOn(logger, 'error');
+    const debugSpy = vi.spyOn(logger, 'debug');
+    const transport = new K8sExecTransport(
+      runtime,
+      'mcp-server',
+      ['--config', 'mcp.json'],
+      {},
+      logger,
+    );
+    transport.onerror = () => undefined;
+
+    await transport.start();
+
+    streams.stderr.write('command not found: mcp-server\n');
+    streams.stdin.destroy();
+
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(errorSpy).not.toHaveBeenCalled();
+    expect(debugSpy).toHaveBeenCalledWith(
+      expect.stringContaining('MCP transport closed early'),
+    );
+  });
+
   it('does not emit early-close error after receiving at least one JSON message', async () => {
     const streams = createStreams();
     const runtime = createRuntime(streams);

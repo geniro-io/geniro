@@ -141,7 +141,11 @@ export class DaytonaExecTransport implements Transport {
         // Stream resolved — process exited.
         if (!this.sawAnyMessage && this.stderrTail.trim()) {
           const err = this.buildEarlyCloseError();
-          this.logger.error(err, 'MCP transport closed early');
+          // debug, not error: the early close is propagated via `onerror` and
+          // the caller decides severity (the Linear MCP deploy-time validation
+          // tolerates it). Logging at error here is premature double-handling
+          // that surfaces a scary ERROR for an expected, tolerated condition.
+          this.logger.debug(`MCP transport closed early: ${err.message}`);
           this.onerror?.(err);
         }
         this.isConnected = false;
