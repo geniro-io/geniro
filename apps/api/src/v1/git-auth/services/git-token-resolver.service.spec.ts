@@ -6,8 +6,8 @@ import { GitHubAuthMethod } from '../../graph-resources/graph-resources.types';
 import { GitProviderConnectionDao } from '../dao/git-provider-connection.dao';
 import { GitProviderConnectionEntity } from '../entity/git-provider-connection.entity';
 import { GitProvider } from '../git-auth.types';
-import { GitPatModeService } from './git-pat-mode.service';
 import { GitTokenResolverService } from './git-token-resolver.service';
+import { GitUserPatService } from './git-user-pat.service';
 import { GitHubAppService } from './github-app.service';
 
 describe('GitTokenResolverService', () => {
@@ -19,10 +19,8 @@ describe('GitTokenResolverService', () => {
   let mockConnectionDao: {
     getOne: ReturnType<typeof vi.fn>;
   };
-  let mockGitPatModeService: {
-    isPatMode: ReturnType<typeof vi.fn>;
-    getValidatedPat: ReturnType<typeof vi.fn>;
-    mode: ReturnType<typeof vi.fn>;
+  let mockGitUserPatService: {
+    resolvePatToken: ReturnType<typeof vi.fn>;
   };
 
   beforeEach(async () => {
@@ -35,11 +33,10 @@ describe('GitTokenResolverService', () => {
       getOne: vi.fn().mockResolvedValue(null),
     };
 
-    // Default: app mode (the existing behaviour). PAT-mode tests override.
-    mockGitPatModeService = {
-      isPatMode: vi.fn().mockReturnValue(false),
-      getValidatedPat: vi.fn(),
-      mode: vi.fn().mockReturnValue(GitHubAuthMethod.GithubApp),
+    // Default: the user has NO stored PAT (resolves to null), so the App path
+    // runs — the existing behaviour. Per-user-PAT tests override this.
+    mockGitUserPatService = {
+      resolvePatToken: vi.fn().mockResolvedValue(null),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -50,8 +47,8 @@ describe('GitTokenResolverService', () => {
           useValue: mockGitHubAppService,
         },
         {
-          provide: GitPatModeService,
-          useValue: mockGitPatModeService,
+          provide: GitUserPatService,
+          useValue: mockGitUserPatService,
         },
         {
           provide: GitProviderConnectionDao,
@@ -224,11 +221,9 @@ describe('GitTokenResolverService', () => {
     });
   });
 
-  describe('PAT mode', () => {
+  describe('per-user PAT', () => {
     beforeEach(() => {
-      mockGitPatModeService.isPatMode.mockReturnValue(true);
-      mockGitPatModeService.mode.mockReturnValue(GitHubAuthMethod.Pat);
-      mockGitPatModeService.getValidatedPat.mockReturnValue('ghp_test_pat');
+      mockGitUserPatService.resolvePatToken.mockResolvedValue('ghp_test_pat');
     });
 
     it('resolveToken returns the PAT (source=Pat) and never touches the App path', async () => {
@@ -242,7 +237,7 @@ describe('GitTokenResolverService', () => {
         token: 'ghp_test_pat',
         source: GitHubAuthMethod.Pat,
       });
-      // PAT short-circuit is above the isConfigured() gate and the connection DAO.
+      // PAT precedence is above the isConfigured() gate and the connection DAO.
       expect(mockConnectionDao.getOne).not.toHaveBeenCalled();
       expect(mockGitHubAppService.getInstallationToken).not.toHaveBeenCalled();
     });
@@ -262,7 +257,7 @@ describe('GitTokenResolverService', () => {
       });
     });
 
-    it('resolveDefaultToken returns the PAT (source=Pat) above the !isConfigured early-return', async () => {
+    it('resolveDefaultToken returns the PAT above the !isConfigured early-return', async () => {
       mockGitHubAppService.isConfigured.mockReturnValue(false);
 
       const result = await service.resolveDefaultToken('user-1');
@@ -274,37 +269,36 @@ describe('GitTokenResolverService', () => {
       expect(mockConnectionDao.getOne).not.toHaveBeenCalled();
     });
 
-    it('resolveToken fails CLOSED, propagating the InternalException when the PAT is missing/invalid', async () => {
-      // Must be an InternalException specifically — the gh-clone / gh-base
-      // re-throw guards key on `error instanceof InternalException` to surface
-      // a PAT misconfig instead of swallowing it into an anonymous clone.
-      mockGitPatModeService.getValidatedPat.mockImplementation(() => {
-        throw new InternalException(
-          'GITHUB_PAT_MISSING',
-          'GITHUB_AUTH_MODE is "pat" but GITHUB_PAT is empty or unset',
-        );
-      });
+    it('resolveToken fails CLOSED, propagating the InternalException when the stored PAT is present-but-unreadable', async () => {
+      // Must propagate an InternalException specifically — the gh-clone / gh-base
+      // re-throw guards key on `error instanceof InternalException` to surface a
+      // broken PAT instead of swallowing it into an anonymous clone.
+      mockGitUserPatService.resolvePatToken.mockRejectedValue(
+        new InternalException(
+          'GITHUB_USER_PAT_UNREADABLE',
+          'stored PAT present but unreadable',
+        ),
+      );
 
       await expect(
         service.resolveToken(GitProvider.GitHub, 'some-org', 'user-1'),
       ).rejects.toThrow(InternalException);
-      // And NOT silently a null token (which gh-clone would swallow).
     });
 
-    it('resolveDefaultToken fails CLOSED, propagating the InternalException when the PAT is missing/invalid', async () => {
-      mockGitPatModeService.getValidatedPat.mockImplementation(() => {
-        throw new InternalException(
-          'GITHUB_PAT_MISSING',
-          'GITHUB_AUTH_MODE is "pat" but GITHUB_PAT is empty or unset',
-        );
-      });
+    it('resolveDefaultToken fails CLOSED, propagating the InternalException when the stored PAT is present-but-unreadable', async () => {
+      mockGitUserPatService.resolvePatToken.mockRejectedValue(
+        new InternalException(
+          'GITHUB_USER_PAT_UNREADABLE',
+          'stored PAT present but unreadable',
+        ),
+      );
 
       await expect(service.resolveDefaultToken('user-1')).rejects.toThrow(
         InternalException,
       );
     });
 
-    it('still returns null for non-GitHub providers in pat mode', async () => {
+    it('still returns null for non-GitHub providers without looking up a PAT', async () => {
       const result = await service.resolveToken(
         GitProvider.GitLab,
         'some-org',
@@ -312,8 +306,8 @@ describe('GitTokenResolverService', () => {
       );
 
       expect(result).toBeNull();
-      // The non-GitHub guard runs before the PAT short-circuit.
-      expect(mockGitPatModeService.getValidatedPat).not.toHaveBeenCalled();
+      // The non-GitHub guard runs before the per-user PAT lookup.
+      expect(mockGitUserPatService.resolvePatToken).not.toHaveBeenCalled();
     });
   });
 });

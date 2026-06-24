@@ -124,8 +124,8 @@ describe('GhBaseTool.resolveToken', () => {
         .fn<ResolveTokenForOwnerFn>()
         .mockRejectedValue(
           new InternalException(
-            'GITHUB_PAT_MISSING',
-            'GITHUB_AUTH_MODE is "pat" but GITHUB_PAT is empty or unset',
+            'GITHUB_USER_PAT_UNREADABLE',
+            'A GitHub PAT is configured but its value could not be read',
           ),
         ),
     };
@@ -142,6 +142,6 @@ describe('GhBaseTool.resolveToken', () => {
     // The PAT-misconfig error is surfaced (caught by execGhCommand's outer
     // handler into a failed result) — NOT swallowed into an anonymous run.
     expect(res.exitCode).toBe(1);
-    expect(res.stderr).toContain('GITHUB_AUTH_MODE');
+    expect(res.stderr).toContain('could not be read');
   });
 });

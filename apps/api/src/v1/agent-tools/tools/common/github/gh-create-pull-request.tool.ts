@@ -1,5 +1,6 @@
 import { ToolRunnableConfig } from '@langchain/core/tools';
 import { Injectable } from '@nestjs/common';
+import { InternalException } from '@packages/common';
 import dedent from 'dedent';
 import { z } from 'zod';
 
@@ -508,7 +509,15 @@ export class GhCreatePullRequestTool extends GhBaseTool<
     let token: string;
     try {
       token = await this.resolveToken(config, validated.owner, cfg);
-    } catch {
+    } catch (error) {
+      // Fail-closed: a configured-but-unreadable per-user PAT surfaces as an
+      // InternalException from the token resolver — re-throw it instead of
+      // degrading to an anonymous/App path. The benign "no credential
+      // available" case throws a plain Error and falls through to the
+      // not-configured response below.
+      if (error instanceof InternalException) {
+        throw error;
+      }
       return {
         output: {
           success: false,

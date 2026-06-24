@@ -276,4 +276,63 @@ describe('SecretsStoreService', () => {
       );
     });
   });
+
+  describe('putUserSecret', () => {
+    it('sends PUT to the user-scoped KV v2 data path', async () => {
+      const fetchMock = stubFetch({ ok: true, status: 200 });
+
+      await service.putUserSecret('user-1', 'github-pat', 'ghp_value');
+
+      expect(fetchMock).toHaveBeenCalledOnce();
+      const [url, options] = fetchMock.mock.calls[0]!;
+      expect(url).toBe(
+        'http://localhost:8200/v1/secret/data/users/user-1/github-pat',
+      );
+      expect((options as RequestInit).method).toBe('PUT');
+      expect(JSON.parse((options as RequestInit).body as string)).toEqual({
+        data: { value: 'ghp_value' },
+      });
+    });
+
+    it('throws InternalException when the service is unavailable', async () => {
+      vi.spyOn(service, 'isAvailable').mockReturnValue(false);
+      await expect(
+        service.putUserSecret('user-1', 'github-pat', 'ghp_value'),
+      ).rejects.toThrow(InternalException);
+    });
+  });
+
+  describe('getUserSecret', () => {
+    it('reads the value from the user-scoped KV v2 data path', async () => {
+      const fetchMock = stubFetch({
+        ok: true,
+        status: 200,
+        json: vi
+          .fn()
+          .mockResolvedValue({ data: { data: { value: 'ghp_value' } } }),
+      });
+
+      const value = await service.getUserSecret('user-1', 'github-pat');
+
+      expect(value).toBe('ghp_value');
+      const [url] = fetchMock.mock.calls[0]!;
+      expect(url).toBe(
+        'http://localhost:8200/v1/secret/data/users/user-1/github-pat',
+      );
+    });
+  });
+
+  describe('deleteUserSecret', () => {
+    it('sends DELETE to the user-scoped KV v2 metadata path', async () => {
+      const fetchMock = stubFetch({ ok: true, status: 204 });
+
+      await service.deleteUserSecret('user-1', 'github-pat');
+
+      const [url, options] = fetchMock.mock.calls[0]!;
+      expect(url).toBe(
+        'http://localhost:8200/v1/secret/metadata/users/user-1/github-pat',
+      );
+      expect((options as RequestInit).method).toBe('DELETE');
+    });
+  });
 });

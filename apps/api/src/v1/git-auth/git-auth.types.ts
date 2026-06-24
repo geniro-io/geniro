@@ -104,3 +104,22 @@ export const INSTALLATION_UNLINKED_EVENT = 'installation.unlinked';
  */
 export const GIT_CREDENTIAL_HELPER_CONFIG =
   'git config --global credential.helper \'!f() { test "$1" = get && echo "protocol=https" && echo "host=github.com" && echo "username=x-access-token" && echo "password=${GH_TOKEN}"; }; f\'';
+
+/**
+ * Personal-access-token class: `classic` (`ghp_`) or `fine-grained`
+ * (`github_pat_`). Used for display metadata on a stored per-user PAT.
+ */
+export type GitPatType = 'classic' | 'fine-grained';
+
+/**
+ * Non-secret display metadata persisted alongside a per-user PAT pointer row.
+ * The token VALUE never lives here (it is in OpenBao under
+ * `secret/data/users/{userId}/...`); only descriptors the settings UI shows.
+ */
+export interface GitUserPatMetadata {
+  /** GitHub login resolved from `GET /user` at validate-on-save time. */
+  login: string;
+  tokenType: GitPatType;
+  /** ISO-8601 timestamp of the successful validate-on-save check. */
+  validatedAt: string;
+}

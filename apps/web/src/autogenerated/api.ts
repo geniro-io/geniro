@@ -768,6 +768,46 @@ export type GitRepositoryDtoProviderEnum =
 /**
  *
  * @export
+ * @interface GitUserPatStatusResponseDto
+ */
+export interface GitUserPatStatusResponseDto {
+  /**
+   * Whether the user has a stored GitHub personal access token
+   * @type {boolean}
+   * @memberof GitUserPatStatusResponseDto
+   */
+  'configured': boolean;
+  /**
+   *
+   * @type {string}
+   * @memberof GitUserPatStatusResponseDto
+   */
+  'login': string | null;
+  /**
+   *
+   * @type {string}
+   * @memberof GitUserPatStatusResponseDto
+   */
+  'tokenType': GitUserPatStatusResponseDtoTokenTypeEnum | null;
+  /**
+   *
+   * @type {string}
+   * @memberof GitUserPatStatusResponseDto
+   */
+  'validatedAt': string | null;
+}
+
+export const GitUserPatStatusResponseDtoTokenTypeEnum = {
+  Classic: 'classic',
+  FineGrained: 'fine-grained',
+} as const;
+
+export type GitUserPatStatusResponseDtoTokenTypeEnum =
+  (typeof GitUserPatStatusResponseDtoTokenTypeEnum)[keyof typeof GitUserPatStatusResponseDtoTokenTypeEnum];
+
+/**
+ *
+ * @export
  * @interface GraphDto
  */
 export interface GraphDto {
@@ -2530,6 +2570,19 @@ export interface SecretResponseDto {
 /**
  *
  * @export
+ * @interface SetGitUserPatRequestDto
+ */
+export interface SetGitUserPatRequestDto {
+  /**
+   * The GitHub personal access token to store (classic ghp_ or fine-grained github_pat_)
+   * @type {string}
+   * @memberof SetGitUserPatRequestDto
+   */
+  'token': string;
+}
+/**
+ *
+ * @export
  * @interface SetThreadMetadataDto
  */
 export interface SetThreadMetadataDto {
@@ -2765,29 +2818,17 @@ export interface SystemAgentResponseDto {
  */
 export interface SystemSettingsResponseDto {
   /**
-   * Whether the GitHub App is configured (all GITHUB_APP_* env vars set) — the literal App config, independent of the active auth mode
+   * Whether the GitHub App is configured (all GITHUB_APP_* env vars set)
    * @type {boolean}
    * @memberof SystemSettingsResponseDto
    */
   'githubAppEnabled': boolean;
   /**
-   * Deployment-wide GitHub auth mode: \"github_app\" uses the GitHub App, \"pat\" uses a configured personal access token instead
-   * @type {string}
-   * @memberof SystemSettingsResponseDto
-   */
-  'githubAuthMode': SystemSettingsResponseDtoGithubAuthModeEnum;
-  /**
-   * Whether GitHub operations are available in this deployment — App configured (app mode) or a PAT configured (pat mode)
+   * Whether per-user GitHub PAT storage is available (the secrets store is configured)
    * @type {boolean}
    * @memberof SystemSettingsResponseDto
    */
-  'githubAvailable': boolean;
-  /**
-   * Whether the GitHub App install/authorize UI should be shown — true only in app mode with the App configured; false in pat mode (configured-but-not-installable)
-   * @type {boolean}
-   * @memberof SystemSettingsResponseDto
-   */
-  'githubAppInstallable': boolean;
+  'githubUserPatEnabled': boolean;
   /**
    * Whether the LiteLLM model management UI is enabled for the frontend
    * @type {boolean}
@@ -2819,15 +2860,6 @@ export interface SystemSettingsResponseDto {
    */
   'webVersion': string;
 }
-
-export const SystemSettingsResponseDtoGithubAuthModeEnum = {
-  GithubApp: 'github_app',
-  Pat: 'pat',
-} as const;
-
-export type SystemSettingsResponseDtoGithubAuthModeEnum =
-  (typeof SystemSettingsResponseDtoGithubAuthModeEnum)[keyof typeof SystemSettingsResponseDtoGithubAuthModeEnum];
-
 /**
  *
  * @export
@@ -5577,6 +5609,48 @@ export const GitAuthApiAxiosParamCreator = function (
      * @param {*} [options] Override http request option.
      * @throws {RequiredError}
      */
+    deletePat: async (
+      options: RawAxiosRequestConfig = {},
+    ): Promise<RequestArgs> => {
+      const localVarPath = `/api/v1/git-auth/pat`;
+      // use dummy base URL string because the URL constructor only accepts absolute URLs.
+      const localVarUrlObj = new URL(localVarPath, DUMMY_BASE_URL);
+      let baseOptions;
+      if (configuration) {
+        baseOptions = configuration.baseOptions;
+      }
+
+      const localVarRequestOptions = {
+        method: 'DELETE',
+        ...baseOptions,
+        ...options,
+      };
+      const localVarHeaderParameter = {} as any;
+      const localVarQueryParameter = {} as any;
+
+      // authentication bearer required
+      // http bearer authentication required
+      await setBearerAuthToObject(localVarHeaderParameter, configuration);
+
+      setSearchParams(localVarUrlObj, localVarQueryParameter);
+      let headersFromBaseOptions =
+        baseOptions && baseOptions.headers ? baseOptions.headers : {};
+      localVarRequestOptions.headers = {
+        ...localVarHeaderParameter,
+        ...headersFromBaseOptions,
+        ...options.headers,
+      };
+
+      return {
+        url: toPathString(localVarUrlObj),
+        options: localVarRequestOptions,
+      };
+    },
+    /**
+     *
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
     disconnectAll: async (
       options: RawAxiosRequestConfig = {},
     ): Promise<RequestArgs> => {
@@ -5623,6 +5697,48 @@ export const GitAuthApiAxiosParamCreator = function (
       options: RawAxiosRequestConfig = {},
     ): Promise<RequestArgs> => {
       const localVarPath = `/api/v1/git-auth/github/setup`;
+      // use dummy base URL string because the URL constructor only accepts absolute URLs.
+      const localVarUrlObj = new URL(localVarPath, DUMMY_BASE_URL);
+      let baseOptions;
+      if (configuration) {
+        baseOptions = configuration.baseOptions;
+      }
+
+      const localVarRequestOptions = {
+        method: 'GET',
+        ...baseOptions,
+        ...options,
+      };
+      const localVarHeaderParameter = {} as any;
+      const localVarQueryParameter = {} as any;
+
+      // authentication bearer required
+      // http bearer authentication required
+      await setBearerAuthToObject(localVarHeaderParameter, configuration);
+
+      setSearchParams(localVarUrlObj, localVarQueryParameter);
+      let headersFromBaseOptions =
+        baseOptions && baseOptions.headers ? baseOptions.headers : {};
+      localVarRequestOptions.headers = {
+        ...localVarHeaderParameter,
+        ...headersFromBaseOptions,
+        ...options.headers,
+      };
+
+      return {
+        url: toPathString(localVarUrlObj),
+        options: localVarRequestOptions,
+      };
+    },
+    /**
+     *
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
+    getStatus: async (
+      options: RawAxiosRequestConfig = {},
+    ): Promise<RequestArgs> => {
+      const localVarPath = `/api/v1/git-auth/pat`;
       // use dummy base URL string because the URL constructor only accepts absolute URLs.
       const localVarUrlObj = new URL(localVarPath, DUMMY_BASE_URL);
       let baseOptions;
@@ -5757,6 +5873,63 @@ export const GitAuthApiAxiosParamCreator = function (
     },
     /**
      *
+     * @param {SetGitUserPatRequestDto} setGitUserPatRequestDto
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
+    setPat: async (
+      setGitUserPatRequestDto: SetGitUserPatRequestDto,
+      options: RawAxiosRequestConfig = {},
+    ): Promise<RequestArgs> => {
+      // verify required parameter 'setGitUserPatRequestDto' is not null or undefined
+      assertParamExists(
+        'setPat',
+        'setGitUserPatRequestDto',
+        setGitUserPatRequestDto,
+      );
+      const localVarPath = `/api/v1/git-auth/pat`;
+      // use dummy base URL string because the URL constructor only accepts absolute URLs.
+      const localVarUrlObj = new URL(localVarPath, DUMMY_BASE_URL);
+      let baseOptions;
+      if (configuration) {
+        baseOptions = configuration.baseOptions;
+      }
+
+      const localVarRequestOptions = {
+        method: 'PUT',
+        ...baseOptions,
+        ...options,
+      };
+      const localVarHeaderParameter = {} as any;
+      const localVarQueryParameter = {} as any;
+
+      // authentication bearer required
+      // http bearer authentication required
+      await setBearerAuthToObject(localVarHeaderParameter, configuration);
+
+      localVarHeaderParameter['Content-Type'] = 'application/json';
+
+      setSearchParams(localVarUrlObj, localVarQueryParameter);
+      let headersFromBaseOptions =
+        baseOptions && baseOptions.headers ? baseOptions.headers : {};
+      localVarRequestOptions.headers = {
+        ...localVarHeaderParameter,
+        ...headersFromBaseOptions,
+        ...options.headers,
+      };
+      localVarRequestOptions.data = serializeDataIfNeeded(
+        setGitUserPatRequestDto,
+        localVarRequestOptions,
+        configuration,
+      );
+
+      return {
+        url: toPathString(localVarUrlObj),
+        options: localVarRequestOptions,
+      };
+    },
+    /**
+     *
      * @param {string} installationId
      * @param {*} [options] Override http request option.
      * @throws {RequiredError}
@@ -5820,6 +5993,31 @@ export const GitAuthApiFp = function (configuration?: Configuration) {
      * @param {*} [options] Override http request option.
      * @throws {RequiredError}
      */
+    async deletePat(
+      options?: RawAxiosRequestConfig,
+    ): Promise<
+      (axios?: AxiosInstance, basePath?: string) => AxiosPromise<void>
+    > {
+      const localVarAxiosArgs =
+        await localVarAxiosParamCreator.deletePat(options);
+      const localVarOperationServerIndex = configuration?.serverIndex ?? 0;
+      const localVarOperationServerBasePath =
+        operationServerMap['GitAuthApi.deletePat']?.[
+          localVarOperationServerIndex
+        ]?.url;
+      return (axios, basePath) =>
+        createRequestFunction(
+          localVarAxiosArgs,
+          globalAxios,
+          BASE_PATH,
+          configuration,
+        )(axios, localVarOperationServerBasePath || basePath);
+    },
+    /**
+     *
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
     async disconnectAll(
       options?: RawAxiosRequestConfig,
     ): Promise<
@@ -5861,6 +6059,34 @@ export const GitAuthApiFp = function (configuration?: Configuration) {
       const localVarOperationServerIndex = configuration?.serverIndex ?? 0;
       const localVarOperationServerBasePath =
         operationServerMap['GitAuthApi.getSetupInfo']?.[
+          localVarOperationServerIndex
+        ]?.url;
+      return (axios, basePath) =>
+        createRequestFunction(
+          localVarAxiosArgs,
+          globalAxios,
+          BASE_PATH,
+          configuration,
+        )(axios, localVarOperationServerBasePath || basePath);
+    },
+    /**
+     *
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
+    async getStatus(
+      options?: RawAxiosRequestConfig,
+    ): Promise<
+      (
+        axios?: AxiosInstance,
+        basePath?: string,
+      ) => AxiosPromise<GitUserPatStatusResponseDto>
+    > {
+      const localVarAxiosArgs =
+        await localVarAxiosParamCreator.getStatus(options);
+      const localVarOperationServerIndex = configuration?.serverIndex ?? 0;
+      const localVarOperationServerBasePath =
+        operationServerMap['GitAuthApi.getStatus']?.[
           localVarOperationServerIndex
         ]?.url;
       return (axios, basePath) =>
@@ -5934,6 +6160,37 @@ export const GitAuthApiFp = function (configuration?: Configuration) {
     },
     /**
      *
+     * @param {SetGitUserPatRequestDto} setGitUserPatRequestDto
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
+    async setPat(
+      setGitUserPatRequestDto: SetGitUserPatRequestDto,
+      options?: RawAxiosRequestConfig,
+    ): Promise<
+      (
+        axios?: AxiosInstance,
+        basePath?: string,
+      ) => AxiosPromise<GitUserPatStatusResponseDto>
+    > {
+      const localVarAxiosArgs = await localVarAxiosParamCreator.setPat(
+        setGitUserPatRequestDto,
+        options,
+      );
+      const localVarOperationServerIndex = configuration?.serverIndex ?? 0;
+      const localVarOperationServerBasePath =
+        operationServerMap['GitAuthApi.setPat']?.[localVarOperationServerIndex]
+          ?.url;
+      return (axios, basePath) =>
+        createRequestFunction(
+          localVarAxiosArgs,
+          globalAxios,
+          BASE_PATH,
+          configuration,
+        )(axios, localVarOperationServerBasePath || basePath);
+    },
+    /**
+     *
      * @param {string} installationId
      * @param {*} [options] Override http request option.
      * @throws {RequiredError}
@@ -5984,6 +6241,16 @@ export const GitAuthApiFactory = function (
      * @param {*} [options] Override http request option.
      * @throws {RequiredError}
      */
+    deletePat(options?: RawAxiosRequestConfig): AxiosPromise<void> {
+      return localVarFp
+        .deletePat(options)
+        .then((request) => request(axios, basePath));
+    },
+    /**
+     *
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
     disconnectAll(
       options?: RawAxiosRequestConfig,
     ): AxiosPromise<UnlinkInstallationResponseDto> {
@@ -6001,6 +6268,18 @@ export const GitAuthApiFactory = function (
     ): AxiosPromise<SetupInfoResponseDto> {
       return localVarFp
         .getSetupInfo(options)
+        .then((request) => request(axios, basePath));
+    },
+    /**
+     *
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
+    getStatus(
+      options?: RawAxiosRequestConfig,
+    ): AxiosPromise<GitUserPatStatusResponseDto> {
+      return localVarFp
+        .getStatus(options)
         .then((request) => request(axios, basePath));
     },
     /**
@@ -6027,6 +6306,20 @@ export const GitAuthApiFactory = function (
     ): AxiosPromise<ListInstallationsResponseDto> {
       return localVarFp
         .listInstallations(options)
+        .then((request) => request(axios, basePath));
+    },
+    /**
+     *
+     * @param {SetGitUserPatRequestDto} setGitUserPatRequestDto
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
+    setPat(
+      setGitUserPatRequestDto: SetGitUserPatRequestDto,
+      options?: RawAxiosRequestConfig,
+    ): AxiosPromise<GitUserPatStatusResponseDto> {
+      return localVarFp
+        .setPat(setGitUserPatRequestDto, options)
         .then((request) => request(axios, basePath));
     },
     /**
@@ -6059,6 +6352,18 @@ export class GitAuthApi extends BaseAPI {
    * @throws {RequiredError}
    * @memberof GitAuthApi
    */
+  public deletePat(options?: RawAxiosRequestConfig) {
+    return GitAuthApiFp(this.configuration)
+      .deletePat(options)
+      .then((request) => request(this.axios, this.basePath));
+  }
+
+  /**
+   *
+   * @param {*} [options] Override http request option.
+   * @throws {RequiredError}
+   * @memberof GitAuthApi
+   */
   public disconnectAll(options?: RawAxiosRequestConfig) {
     return GitAuthApiFp(this.configuration)
       .disconnectAll(options)
@@ -6074,6 +6379,18 @@ export class GitAuthApi extends BaseAPI {
   public getSetupInfo(options?: RawAxiosRequestConfig) {
     return GitAuthApiFp(this.configuration)
       .getSetupInfo(options)
+      .then((request) => request(this.axios, this.basePath));
+  }
+
+  /**
+   *
+   * @param {*} [options] Override http request option.
+   * @throws {RequiredError}
+   * @memberof GitAuthApi
+   */
+  public getStatus(options?: RawAxiosRequestConfig) {
+    return GitAuthApiFp(this.configuration)
+      .getStatus(options)
       .then((request) => request(this.axios, this.basePath));
   }
 
@@ -6102,6 +6419,22 @@ export class GitAuthApi extends BaseAPI {
   public listInstallations(options?: RawAxiosRequestConfig) {
     return GitAuthApiFp(this.configuration)
       .listInstallations(options)
+      .then((request) => request(this.axios, this.basePath));
+  }
+
+  /**
+   *
+   * @param {SetGitUserPatRequestDto} setGitUserPatRequestDto
+   * @param {*} [options] Override http request option.
+   * @throws {RequiredError}
+   * @memberof GitAuthApi
+   */
+  public setPat(
+    setGitUserPatRequestDto: SetGitUserPatRequestDto,
+    options?: RawAxiosRequestConfig,
+  ) {
+    return GitAuthApiFp(this.configuration)
+      .setPat(setGitUserPatRequestDto, options)
       .then((request) => request(this.axios, this.basePath));
   }
 

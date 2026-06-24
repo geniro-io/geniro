@@ -104,3 +104,43 @@ export type SetupInfoResponse = z.infer<typeof SetupInfoResponseSchema>;
 export class SetupInfoResponseDto extends createZodDto(
   SetupInfoResponseSchema,
 ) {}
+
+// --- Personal Access Token (per-user) ---
+
+export const GitUserPatStatusResponseSchema = z.object({
+  configured: z
+    .boolean()
+    .describe('Whether the user has a stored GitHub personal access token'),
+  login: z
+    .string()
+    .nullable()
+    .describe('GitHub login the stored PAT authenticated as (null when none)'),
+  tokenType: z
+    .enum(['classic', 'fine-grained'])
+    .nullable()
+    .describe('Stored PAT class: classic (ghp_) or fine-grained (github_pat_)'),
+  validatedAt: z.iso
+    .datetime()
+    .nullable()
+    .describe('When the stored PAT was last validated against GitHub'),
+});
+
+export const SetGitUserPatRequestSchema = z.object({
+  token: z
+    .string()
+    .min(1)
+    .describe(
+      'The GitHub personal access token to store (classic ghp_ or fine-grained github_pat_)',
+    ),
+});
+
+export type GitUserPatStatusResponse = z.infer<
+  typeof GitUserPatStatusResponseSchema
+>;
+
+export class GitUserPatStatusResponseDto extends createZodDto(
+  GitUserPatStatusResponseSchema,
+) {}
+export class SetGitUserPatRequestDto extends createZodDto(
+  SetGitUserPatRequestSchema,
+) {}

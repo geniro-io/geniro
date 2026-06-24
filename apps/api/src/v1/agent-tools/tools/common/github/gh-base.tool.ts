@@ -89,13 +89,13 @@ export abstract class GhBaseTool<
           const token = await this.resolveToken(config, params.owner, cfg);
           env.GH_TOKEN = token;
         } catch (error) {
-          // A PAT-mode misconfiguration (getValidatedPat throwing an
-          // InternalException — GITHUB_AUTH_MODE=pat but GITHUB_PAT missing/
-          // invalid) MUST fail CLOSED: surface it instead of silently running
-          // git anonymously (which would push/commit/PR as an unauthenticated
-          // user and fail opaquely). The benign "no GitHub App token" case
-          // throws a plain Error from resolveToken and still falls through so
-          // plain git/find/cat commands work without GH_TOKEN.
+          // A configured-but-broken credential (the token resolver throwing an
+          // InternalException — e.g. a per-user PAT present but unreadable) MUST
+          // fail CLOSED: surface it instead of silently running git anonymously
+          // (which would push/commit/PR as an unauthenticated user and fail
+          // opaquely). The benign "no GitHub App token" case throws a plain
+          // Error from resolveToken and still falls through so plain
+          // git/find/cat commands work without GH_TOKEN.
           if (error instanceof InternalException) {
             throw error;
           }

@@ -215,20 +215,20 @@ export class GhCloneTool extends GhBaseTool<GhCloneToolSchemaType> {
     try {
       resolvedToken = await this.resolveToken(config, args.owner, cfg);
     } catch (error) {
-      // A PAT-mode misconfiguration (GitPatModeService.getValidatedPat throwing
-      // an InternalException — deployment GITHUB_AUTH_MODE=pat but GITHUB_PAT
-      // missing/invalid) MUST NOT be masked by a silent anonymous clone: surface
-      // it so the operator sees the broken config. A benign "no token available"
-      // (the GitHub App not installed for this owner; a public repo) throws a
-      // plain Error from GhBaseTool.resolveToken and still falls through to an
-      // anonymous clone, preserving public-repo support.
+      // A configured-but-broken credential (the token resolver throwing an
+      // InternalException — e.g. a per-user PAT present but unreadable) MUST NOT
+      // be masked by a silent anonymous clone: surface it so the broken config
+      // is visible. A benign "no token available" (the GitHub App not installed
+      // for this owner; a public repo) throws a plain Error from
+      // GhBaseTool.resolveToken and still falls through to an anonymous clone,
+      // preserving public-repo support.
       if (error instanceof InternalException) {
         throw error;
       }
       // No token available — resolvedToken stays null (anonymous clone).
     }
 
-    let res = await this.execGhCommand(
+    const res = await this.execGhCommand(
       {
         cmd: resolvedToken
           ? this.buildCloneCommand(args, true)
@@ -240,27 +240,11 @@ export class GhCloneTool extends GhBaseTool<GhCloneToolSchemaType> {
       cfg,
     );
 
-    if (res.exitCode !== 0 && resolvedToken) {
-      const cleanStderrForLog = (res.stderr || '')
-        .split('\n')
-        .filter((line) => !line.includes('[clone-heartbeat]'))
-        .join('\n')
-        .trim();
-      this.logger.warn(
-        `Authenticated clone failed for ${args.owner}/${args.repo}, retrying anonymously: ${cleanStderrForLog || res.stdout || 'unknown error'}`,
-      );
-
-      res = await this.execGhCommand(
-        {
-          cmd: this.buildCloneCommand(args, false),
-          owner: args.owner,
-          resolvedToken: null,
-        },
-        config,
-        cfg,
-      );
-    }
-
+    // No anonymous retry on an authenticated-clone failure: when a token was
+    // resolved, a failure MUST surface (a revoked/expired/wrong-scope PAT fails
+    // closed) rather than silently degrading to an anonymous clone — which would
+    // mask a broken credential and could clone a stale public mirror instead of
+    // the private repo the user expected.
     if (res.exitCode !== 0) {
       const cleanStderr = (res.stderr || '')
         .split('\n')

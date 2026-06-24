@@ -1,9 +1,8 @@
 import type { IContextData } from '@packages/http-server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { GitPatModeService } from '../git-auth/services/git-pat-mode.service';
 import { GitHubAppService } from '../git-auth/services/github-app.service';
-import { GitHubAuthMethod } from '../graph-resources/graph-resources.types';
+import { SecretsStoreService } from '../secrets-store/services/secrets-store.service';
 import { AuthProviderType } from './dto/system.dto';
 import { SystemController } from './system.controller';
 
@@ -53,26 +52,19 @@ const baseSettings = (
 describe('SystemController', () => {
   let controller: SystemController;
   let mockGitHubAppService: { isConfigured: ReturnType<typeof vi.fn> };
-  let mockGitPatModeService: {
-    mode: ReturnType<typeof vi.fn>;
-    isPatMode: ReturnType<typeof vi.fn>;
-    isPatConfigured: ReturnType<typeof vi.fn>;
-  };
+  let mockSecretsStore: { isAvailable: ReturnType<typeof vi.fn> };
 
   beforeEach(() => {
     mockGitHubAppService = {
-      isConfigured: vi.fn(),
+      isConfigured: vi.fn().mockReturnValue(false),
     };
-    // Default: app mode (the existing behaviour). PAT-mode tests override.
-    mockGitPatModeService = {
-      mode: vi.fn().mockReturnValue(GitHubAuthMethod.GithubApp),
-      isPatMode: vi.fn().mockReturnValue(false),
-      isPatConfigured: vi.fn().mockReturnValue(false),
+    mockSecretsStore = {
+      isAvailable: vi.fn().mockReturnValue(false),
     };
 
     controller = new SystemController(
       mockGitHubAppService as unknown as GitHubAppService,
-      mockGitPatModeService as unknown as GitPatModeService,
+      mockSecretsStore as unknown as SecretsStoreService,
     );
 
     // Reset to default for each test
@@ -87,111 +79,79 @@ describe('SystemController', () => {
     const nonAdminCtx = { roles: ['viewer'] } as IContextData;
     const noRolesCtx = {} as IContextData;
 
-    it('app mode + App configured: available + installable', () => {
+    it('App configured + secrets store available: both flags true', () => {
       mockGitHubAppService.isConfigured.mockReturnValue(true);
+      mockSecretsStore.isAvailable.mockReturnValue(true);
       const result = controller.getSettings(nonAdminCtx);
       expect(result).toEqual({
         githubAppEnabled: true,
-        githubAuthMode: GitHubAuthMethod.GithubApp,
-        githubAvailable: true,
-        githubAppInstallable: true,
+        githubUserPatEnabled: true,
         ...baseSettings(),
       });
     });
 
-    it('app mode + App not configured: unavailable + not installable', () => {
+    it('App not configured + secrets store available: PAT available, App not', () => {
       mockGitHubAppService.isConfigured.mockReturnValue(false);
+      mockSecretsStore.isAvailable.mockReturnValue(true);
       const result = controller.getSettings(nonAdminCtx);
       expect(result).toEqual({
         githubAppEnabled: false,
-        githubAuthMode: GitHubAuthMethod.GithubApp,
-        githubAvailable: false,
-        githubAppInstallable: false,
+        githubUserPatEnabled: true,
         ...baseSettings(),
       });
     });
 
-    it('pat mode + PAT configured (App not configured): available but NOT installable', () => {
-      mockGitHubAppService.isConfigured.mockReturnValue(false);
-      mockGitPatModeService.mode.mockReturnValue(GitHubAuthMethod.Pat);
-      mockGitPatModeService.isPatMode.mockReturnValue(true);
-      mockGitPatModeService.isPatConfigured.mockReturnValue(true);
-      const result = controller.getSettings(nonAdminCtx);
-      expect(result).toEqual({
-        githubAppEnabled: false,
-        githubAuthMode: GitHubAuthMethod.Pat,
-        githubAvailable: true,
-        githubAppInstallable: false,
-        ...baseSettings(),
-      });
-    });
-
-    it('pat mode + PAT NOT configured: unavailable + not installable', () => {
-      mockGitHubAppService.isConfigured.mockReturnValue(false);
-      mockGitPatModeService.mode.mockReturnValue(GitHubAuthMethod.Pat);
-      mockGitPatModeService.isPatMode.mockReturnValue(true);
-      mockGitPatModeService.isPatConfigured.mockReturnValue(false);
-      const result = controller.getSettings(nonAdminCtx);
-      expect(result).toEqual({
-        githubAppEnabled: false,
-        githubAuthMode: GitHubAuthMethod.Pat,
-        githubAvailable: false,
-        githubAppInstallable: false,
-        ...baseSettings(),
-      });
-    });
-
-    it('pat mode while App ALSO configured: githubAppEnabled true but NOT installable', () => {
-      // App env vars are set but GITHUB_AUTH_MODE=pat — the install UI must stay
-      // hidden because the App is not the active mode.
+    it('App configured + secrets store unavailable: App available, PAT not', () => {
       mockGitHubAppService.isConfigured.mockReturnValue(true);
-      mockGitPatModeService.mode.mockReturnValue(GitHubAuthMethod.Pat);
-      mockGitPatModeService.isPatMode.mockReturnValue(true);
-      mockGitPatModeService.isPatConfigured.mockReturnValue(true);
+      mockSecretsStore.isAvailable.mockReturnValue(false);
       const result = controller.getSettings(nonAdminCtx);
       expect(result).toEqual({
         githubAppEnabled: true,
-        githubAuthMode: GitHubAuthMethod.Pat,
-        githubAvailable: true,
-        githubAppInstallable: false,
+        githubUserPatEnabled: false,
+        ...baseSettings(),
+      });
+    });
+
+    it('neither configured: both flags false', () => {
+      mockGitHubAppService.isConfigured.mockReturnValue(false);
+      mockSecretsStore.isAvailable.mockReturnValue(false);
+      const result = controller.getSettings(nonAdminCtx);
+      expect(result).toEqual({
+        githubAppEnabled: false,
+        githubUserPatEnabled: false,
         ...baseSettings(),
       });
     });
 
     it('should return litellmManagementEnabled: false when disabled', () => {
       mockGitHubAppService.isConfigured.mockReturnValue(true);
+      mockSecretsStore.isAvailable.mockReturnValue(true);
       mockEnvironment.litellmManagementEnabled = false;
       const result = controller.getSettings(nonAdminCtx);
       expect(result).toEqual({
         githubAppEnabled: true,
-        githubAuthMode: GitHubAuthMethod.GithubApp,
-        githubAvailable: true,
-        githubAppInstallable: true,
+        githubUserPatEnabled: true,
         ...baseSettings({ litellmManagementEnabled: false }),
       });
     });
 
     it('should return isAdmin: true when user has admin role', () => {
-      mockGitHubAppService.isConfigured.mockReturnValue(true);
       const result = controller.getSettings(adminCtx);
       expect(result.isAdmin).toBe(true);
     });
 
     it('should return isAdmin: false when user has no roles', () => {
-      mockGitHubAppService.isConfigured.mockReturnValue(true);
       const result = controller.getSettings(noRolesCtx);
       expect(result.isAdmin).toBe(false);
     });
 
     it('should return isAdmin: false when user has roles but not the admin role', () => {
-      mockGitHubAppService.isConfigured.mockReturnValue(true);
       const multiRoleCtx = { roles: ['viewer', 'editor'] } as IContextData;
       const result = controller.getSettings(multiRoleCtx);
       expect(result.isAdmin).toBe(false);
     });
 
     it('should return isAdmin: true when custom admin role matches', () => {
-      mockGitHubAppService.isConfigured.mockReturnValue(true);
       mockEnvironment.adminRole = 'superuser';
 
       const superuserCtx = { roles: ['superuser'] } as IContextData;
@@ -202,7 +162,6 @@ describe('SystemController', () => {
     });
 
     it('should return apiVersion and webVersion from environment', () => {
-      mockGitHubAppService.isConfigured.mockReturnValue(true);
       const result = controller.getSettings(nonAdminCtx);
       expect(result.apiVersion).toBe('1.2.3');
       expect(result.webVersion).toBe('0.4.5');

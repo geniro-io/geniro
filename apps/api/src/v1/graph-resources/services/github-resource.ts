@@ -1,12 +1,15 @@
 import { Injectable, Scope } from '@nestjs/common';
-import { DefaultLogger } from '@packages/common';
+import { DefaultLogger, InternalException } from '@packages/common';
 import outdent from 'outdent';
 
 import {
   GIT_CREDENTIAL_HELPER_CONFIG,
   GitProvider,
 } from '../../git-auth/git-auth.types';
-import { GitTokenResolverService } from '../../git-auth/services/git-token-resolver.service';
+import {
+  GitTokenResolverService,
+  ResolvedToken,
+} from '../../git-auth/services/git-token-resolver.service';
 import {
   IShellResourceOutput,
   ResourceKind,
@@ -61,8 +64,21 @@ export class GithubResource extends BaseResource<
       if (!userId) {
         return {};
       }
-      const resolved =
-        await this.gitTokenResolverService.resolveDefaultToken(userId);
+      let resolved: ResolvedToken | null;
+      try {
+        resolved =
+          await this.gitTokenResolverService.resolveDefaultToken(userId);
+      } catch (error) {
+        // Fail CLOSED on a configured-but-broken credential: a present-but-
+        // unreadable per-user PAT throws an InternalException, which MUST
+        // propagate so the init script never runs unauthenticated on a broken
+        // PAT (matching the gh-clone / gh-base swallow-point guards). A benign
+        // "no token" returns null below and never throws.
+        if (error instanceof InternalException) {
+          throw error;
+        }
+        return {};
+      }
       if (resolved?.token) {
         return { GH_TOKEN: resolved.token };
       }
@@ -72,7 +88,7 @@ export class GithubResource extends BaseResource<
     return {
       information: outdent`
         Purpose: Work with GitHub from shell via gh CLI (repos, branches, PRs, issues, workflows).
-        Authentication: Configured deployment-wide (a GitHub App installation OR a personal access token, depending on the deployment's GITHUB_AUTH_MODE); no per-node setup is required. If GitHub commands fail with an auth error, GitHub authentication is not configured for this deployment — contact your administrator.
+        Authentication: Resolved automatically from your configured GitHub credentials (a personal access token set in Settings if present, otherwise the GitHub App installation); no per-node setup is required. If GitHub commands fail with an auth error, GitHub authentication is not configured for your account.
 
         Discover commands:
           gh help

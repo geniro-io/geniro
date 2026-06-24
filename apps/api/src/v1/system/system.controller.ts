@@ -9,8 +9,8 @@ import type { IContextData } from '@packages/http-server';
 import { CtxData, OnlyForAuthorized } from '@packages/http-server';
 
 import { environment } from '../../environments';
-import { GitPatModeService } from '../git-auth/services/git-pat-mode.service';
 import { GitHubAppService } from '../git-auth/services/github-app.service';
+import { SecretsStoreService } from '../secrets-store/services/secrets-store.service';
 import {
   AuthConfigResponseDto,
   AuthProviderType,
@@ -22,7 +22,7 @@ import {
 export class SystemController {
   constructor(
     private readonly gitHubAppService: GitHubAppService,
-    private readonly gitPatModeService: GitPatModeService,
+    private readonly secretsStore: SecretsStoreService,
   ) {}
 
   @Get('settings')
@@ -30,17 +30,11 @@ export class SystemController {
   @OnlyForAuthorized()
   @ApiOkResponse({ type: SystemSettingsResponseDto })
   getSettings(@CtxData() ctx: IContextData): SystemSettingsResponseDto {
-    const appConfigured = this.gitHubAppService.isConfigured();
-    const patMode = this.gitPatModeService.isPatMode();
     return {
-      // Literal App config — independent of the active mode (the App env vars
-      // may be set even while GITHUB_AUTH_MODE=pat).
-      githubAppEnabled: appConfigured,
-      githubAuthMode: this.gitPatModeService.mode(),
-      githubAvailable: patMode
-        ? this.gitPatModeService.isPatConfigured()
-        : appConfigured,
-      githubAppInstallable: !patMode && appConfigured,
+      githubAppEnabled: this.gitHubAppService.isConfigured(),
+      // Per-user PATs require the secrets store (OpenBao); the settings UI gates
+      // the PAT card on this flag.
+      githubUserPatEnabled: this.secretsStore.isAvailable(),
       litellmManagementEnabled: environment.litellmManagementEnabled === true,
       isAdmin:
         Array.isArray(ctx.roles) && ctx.roles.includes(environment.adminRole),

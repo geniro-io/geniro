@@ -783,7 +783,11 @@ export const ThreadChatPanel: React.FC<ThreadChatPanelProps> = ({
       );
     }
     if (repos.length === 0) {
-      if (!systemSettings.githubAvailable) {
+      if (
+        !(
+          systemSettings.githubAppEnabled || systemSettings.githubUserPatEnabled
+        )
+      ) {
         return (
           <div className="p-3 min-w-[220px]">
             <p className="text-xs text-muted-foreground mb-1.5">

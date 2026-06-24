@@ -29,6 +29,7 @@ docs/GetRepoIndexesBranchesParameter.md
 docs/GitAuthApi.md
 docs/GitRepositoriesApi.md
 docs/GitRepositoryDto.md
+docs/GitUserPatStatusResponseDto.md
 docs/GraphDto.md
 docs/GraphNodeWithStatusDto.md
 docs/GraphNodeWithStatusDtoMetadata.md
@@ -76,6 +77,7 @@ docs/RuntimeInstanceStateDto.md
 docs/RuntimesApi.md
 docs/SecretResponseDto.md
 docs/SecretsApi.md
+docs/SetGitUserPatRequestDto.md
 docs/SetThreadMetadataDto.md
 docs/SetupInfoResponseDto.md
 docs/SuggestAgentInstructionsDto.md

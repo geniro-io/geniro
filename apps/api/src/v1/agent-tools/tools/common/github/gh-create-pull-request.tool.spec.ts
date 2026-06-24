@@ -1,5 +1,6 @@
 import { ToolRunnableConfig } from '@langchain/core/tools';
 import { Test, TestingModule } from '@nestjs/testing';
+import { InternalException } from '@packages/common';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { BaseAgentConfigurable } from '../../../../agents/agents.types';
@@ -490,6 +491,62 @@ describe('GhCreatePullRequestTool', () => {
       }
 
       expect(output.error).toContain('GitHubError:');
+    });
+
+    it('re-throws an InternalException from the token resolver (fail-closed — never degrades to anonymous)', async () => {
+      const args: GhCreatePullRequestToolSchemaType = {
+        owner: 'acme',
+        repo: 'demo',
+        title: 'Add feature',
+        head: 'feat/add-feature',
+        base: 'main',
+      };
+
+      // A configured-but-unreadable per-user PAT surfaces as an
+      // InternalException from the resolver. The tool MUST re-throw it rather
+      // than return the not-configured response (which would let the agent
+      // silently proceed unauthenticated).
+      const failClosedConfig: GhBaseToolConfig = {
+        ...mockConfig,
+        resolveTokenForOwner: vi
+          .fn()
+          .mockRejectedValue(
+            new InternalException(
+              'GITHUB_USER_PAT_UNREADABLE',
+              'present but unreadable',
+            ),
+          ),
+      };
+
+      await expect(
+        tool.invoke(args, failClosedConfig, mockCfg),
+      ).rejects.toThrow(InternalException);
+    });
+
+    it('returns a not-configured error (does NOT throw) when no token is available', async () => {
+      const args: GhCreatePullRequestToolSchemaType = {
+        owner: 'acme',
+        repo: 'demo',
+        title: 'Add feature',
+        head: 'feat/add-feature',
+        base: 'main',
+      };
+
+      // The benign "no credential available" case: resolveTokenForOwner yields
+      // null, resolveToken throws a plain Error, and the tool falls through to
+      // the structured not-configured response (NOT a fail-closed throw).
+      const noTokenConfig: GhBaseToolConfig = {
+        ...mockConfig,
+        resolveTokenForOwner: vi.fn().mockResolvedValue(null),
+      };
+
+      const { output } = await tool.invoke(args, noTokenConfig, mockCfg);
+
+      expect(output.success).toBe(false);
+      if (output.success !== false) {
+        throw new Error('Expected error output');
+      }
+      expect(output.error).toContain('No GitHub token available');
     });
   });
 });

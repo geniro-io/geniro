@@ -3,6 +3,7 @@ import axios from 'axios';
 import {
   AnalyticsApi,
   Configuration,
+  GitAuthApi,
   GitRepositoriesApi,
   GraphRevisionsApi,
   GraphsApi,
@@ -44,6 +45,7 @@ export const graphRevisionsApi = new GraphRevisionsApi(configuration);
 export const litellmApi = new LitellmApi(configuration);
 export const knowledgeApi = new KnowledgeApi(configuration);
 export const gitRepositoriesApi = new GitRepositoriesApi(configuration);
+export const gitAuthApi = new GitAuthApi(configuration);
 export const analyticsApi = new AnalyticsApi(configuration);
 export const runtimesApi = new RuntimesApi(configuration);
 export const projectsApi = new ProjectsApi(configuration);

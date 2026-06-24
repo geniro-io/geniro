@@ -32,7 +32,8 @@ export const RepositoriesListPage = () => {
   const [deleteTarget, setDeleteTarget] = useState<Repository | null>(null);
 
   const { settings: systemSettings } = useSystemSettings();
-  const githubAvailable = systemSettings.githubAvailable;
+  const githubAvailable =
+    systemSettings.githubAppEnabled || systemSettings.githubUserPatEnabled;
 
   const fetchRepositories = async () => {
     try {

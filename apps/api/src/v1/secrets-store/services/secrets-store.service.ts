@@ -32,6 +32,14 @@ export class SecretsStoreService {
     return `${environment.openbaoAddr}/v1/secret/metadata/projects/${encodeURIComponent(projectId)}/${encodeURIComponent(secretName)}`;
   }
 
+  private buildUserDataPath(userId: string, secretName: string): string {
+    return `${environment.openbaoAddr}/v1/secret/data/users/${encodeURIComponent(userId)}/${encodeURIComponent(secretName)}`;
+  }
+
+  private buildUserMetadataPath(userId: string, secretName: string): string {
+    return `${environment.openbaoAddr}/v1/secret/metadata/users/${encodeURIComponent(userId)}/${encodeURIComponent(secretName)}`;
+  }
+
   private get authHeaders(): Record<string, string> {
     return {
       'X-Vault-Token': environment.openbaoToken,
@@ -61,6 +69,33 @@ export class SecretsStoreService {
     }
 
     return response;
+  }
+
+  /**
+   * Extract the KV v2 value from an OpenBao read response (shape
+   * `{ data: { data: { value } } }`). Throws if the value is missing or not a
+   * string. Shared by the project- and user-scoped getters.
+   */
+  private extractSecretValue(body: unknown, name: string): string {
+    const value =
+      body != null &&
+      typeof body === 'object' &&
+      'data' in body &&
+      body.data != null &&
+      typeof body.data === 'object' &&
+      'data' in body.data &&
+      body.data.data != null &&
+      typeof body.data.data === 'object' &&
+      'value' in body.data.data
+        ? (body.data.data as Record<string, unknown>)['value']
+        : undefined;
+    if (typeof value !== 'string') {
+      throw new InternalException(
+        'SECRETS_STORE_GET_FAILED',
+        `Unexpected response from OpenBao for secret "${name}"`,
+      );
+    }
+    return value;
   }
 
   /**
@@ -94,26 +129,7 @@ export class SecretsStoreService {
       'SECRETS_STORE_GET_FAILED',
       'getSecret',
     );
-    const body = (await response.json()) as unknown;
-    const value =
-      body != null &&
-      typeof body === 'object' &&
-      'data' in body &&
-      body.data != null &&
-      typeof body.data === 'object' &&
-      'data' in body.data &&
-      body.data.data != null &&
-      typeof body.data.data === 'object' &&
-      'value' in body.data.data
-        ? (body.data.data as Record<string, unknown>)['value']
-        : undefined;
-    if (typeof value !== 'string') {
-      throw new InternalException(
-        'SECRETS_STORE_GET_FAILED',
-        `Unexpected response from OpenBao for secret "${name}"`,
-      );
-    }
-    return value;
+    return this.extractSecretValue(await response.json(), name);
   }
 
   /**
@@ -128,6 +144,55 @@ export class SecretsStoreService {
       { method: 'DELETE' },
       'SECRETS_STORE_DELETE_FAILED',
       'deleteSecret',
+    );
+  }
+
+  /**
+   * Write a user-scoped secret value to the KV v2 store at
+   * `secret/data/users/{userId}/{secretName}`. Host-side per-user credential
+   * storage (e.g. a per-user GitHub PAT) — never a project secret, and never
+   * routed through the project secret picker / `collectSecretNames`.
+   */
+  async putUserSecret(
+    userId: string,
+    name: string,
+    value: string,
+  ): Promise<void> {
+    this.assertAvailable();
+    await this.request(
+      this.buildUserDataPath(userId, name),
+      { method: 'PUT', body: JSON.stringify({ data: { value } }) },
+      'SECRETS_STORE_PUT_FAILED',
+      'putUserSecret',
+    );
+  }
+
+  /**
+   * Read a user-scoped secret value from the KV v2 store at
+   * `secret/data/users/{userId}/{secretName}`.
+   */
+  async getUserSecret(userId: string, name: string): Promise<string> {
+    this.assertAvailable();
+    const response = await this.request(
+      this.buildUserDataPath(userId, name),
+      { method: 'GET' },
+      'SECRETS_STORE_GET_FAILED',
+      'getUserSecret',
+    );
+    return this.extractSecretValue(await response.json(), name);
+  }
+
+  /**
+   * Delete a user-scoped secret by removing its KV v2 metadata at
+   * `secret/metadata/users/{userId}/{secretName}` (removes all versions).
+   */
+  async deleteUserSecret(userId: string, name: string): Promise<void> {
+    this.assertAvailable();
+    await this.request(
+      this.buildUserMetadataPath(userId, name),
+      { method: 'DELETE' },
+      'SECRETS_STORE_DELETE_FAILED',
+      'deleteUserSecret',
     );
   }
 }

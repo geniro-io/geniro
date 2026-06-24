@@ -203,16 +203,6 @@ export const environment = () =>
     githubAppClientId: getEnv('GITHUB_APP_CLIENT_ID'),
     githubAppClientSecret: getEnv('GITHUB_APP_CLIENT_SECRET'),
 
-    // --- GitHub auth mode (deployment-wide switch) ---
-    // 'app'  -> all GitHub operations resolve through the GitHub App above.
-    // 'pat'  -> all GitHub operations resolve through GITHUB_PAT (a classic
-    //           repo-scoped personal access token) instead of the App. This is
-    //           the escape hatch for orgs that will not install the App.
-    // Defaults to 'app', so existing deployments are unchanged. dev/test inherit
-    // these reads via the environment.dev.ts -> environment.prod.ts spread.
-    githubAuthMode: getEnv('GITHUB_AUTH_MODE', 'app'),
-    githubPat: getEnv('GITHUB_PAT'),
-
     // --- GitHub Webhook ---
     githubWebhookSecret: getEnv('GITHUB_WEBHOOK_SECRET'),
     webhookPollIntervalMs: +getEnv('WEBHOOK_POLL_INTERVAL_MS', '60000'),

@@ -49,7 +49,7 @@ interface ListInstallationsResponse {
 // --- System Settings ---
 
 // Aliased to the generated client DTO so the shape stays in sync with the
-// backend — including githubAuthMode / githubAvailable / githubAppInstallable.
+// backend — including githubAppEnabled / githubUserPatEnabled.
 export type SystemSettingsDto = SystemSettingsResponseDto;
 
 export const systemSettingsApi = {

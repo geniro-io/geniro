@@ -2,15 +2,17 @@ import { Test, TestingModule } from '@nestjs/testing';
 import {
   BadRequestException,
   DefaultLogger,
+  InternalException,
   NotFoundException,
 } from '@packages/common';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AppContextStorage } from '../../../auth/app-context-storage';
 import { GitProvider } from '../../git-auth/git-auth.types';
-import { GitPatModeService } from '../../git-auth/services/git-pat-mode.service';
+import { GitUserPatService } from '../../git-auth/services/git-user-pat.service';
 import { GitHubAppService } from '../../git-auth/services/github-app.service';
 import { GitHubAppProviderService } from '../../git-auth/services/github-app-provider.service';
+import { GitHubAuthMethod } from '../../graph-resources/graph-resources.types';
 import { ProjectsDao } from '../../projects/dao/projects.dao';
 import { QdrantService } from '../../qdrant/services/qdrant.service';
 import { GitRepositoriesDao } from '../dao/git-repositories.dao';
@@ -20,7 +22,6 @@ import { GitRepositoryEntity } from '../entity/git-repository.entity';
 import { RepoIndexEntity } from '../entity/repo-index.entity';
 import {
   GitRepositoryProvider,
-  PAT_DEPLOYMENT_OWNER,
   RepoIndexStatus,
 } from '../git-repositories.types';
 import { GitRepositoriesService } from './git-repositories.service';
@@ -37,11 +38,8 @@ describe('GitRepositoriesService', () => {
   let gitHubAppProviderService: GitHubAppProviderService;
   let gitHubAppService: GitHubAppService;
   let logger: DefaultLogger;
-  let gitPatModeMock: {
-    isPatMode: ReturnType<typeof vi.fn>;
-    isPatConfigured: ReturnType<typeof vi.fn>;
-    mode: ReturnType<typeof vi.fn>;
-    getValidatedPat: ReturnType<typeof vi.fn>;
+  let gitUserPatMock: {
+    resolvePatToken: ReturnType<typeof vi.fn>;
   };
 
   const mockUserId = 'user-123';
@@ -161,14 +159,11 @@ describe('GitRepositoriesService', () => {
           },
         },
         {
-          provide: GitPatModeService,
+          provide: GitUserPatService,
           useValue: {
-            // Default: app mode — these unit tests exercise the app-mode path,
-            // so resolveRepoScope() returns the requesting user's id unchanged.
-            isPatMode: vi.fn().mockReturnValue(false),
-            isPatConfigured: vi.fn().mockReturnValue(false),
-            mode: vi.fn(),
-            getValidatedPat: vi.fn(),
+            // Default: the user has no stored PAT — these unit tests exercise the
+            // App-mode path (createdBy = the requesting user).
+            resolvePatToken: vi.fn().mockResolvedValue(null),
           },
         },
       ],
@@ -187,9 +182,9 @@ describe('GitRepositoriesService', () => {
     );
     gitHubAppService = module.get<GitHubAppService>(GitHubAppService);
     logger = module.get<DefaultLogger>(DefaultLogger);
-    gitPatModeMock = module.get(
-      GitPatModeService,
-    ) as unknown as typeof gitPatModeMock;
+    gitUserPatMock = module.get(
+      GitUserPatService,
+    ) as unknown as typeof gitUserPatMock;
   });
 
   describe('createRepository', () => {
@@ -1253,57 +1248,12 @@ describe('GitRepositoriesService', () => {
     });
   });
 
-  describe('PAT mode (deployment-scoped ownership)', () => {
+  describe('per-user PAT sync', () => {
     beforeEach(() => {
-      gitPatModeMock.isPatMode.mockReturnValue(true);
+      gitUserPatMock.resolvePatToken.mockResolvedValue('ghp_user_token');
     });
 
-    it('getRepositories queries under the deployment sentinel, not the requesting user', async () => {
-      vi.mocked(dao.getAll).mockResolvedValue([]);
-
-      await service.getRepositories(mockCtx, {} as GetRepositoriesQueryDto);
-
-      expect(dao.getAll).toHaveBeenCalledWith(
-        expect.objectContaining({ createdBy: PAT_DEPLOYMENT_OWNER }),
-        expect.anything(),
-      );
-    });
-
-    it('getRepositoryById queries under the deployment sentinel', async () => {
-      vi.mocked(dao.getOne).mockResolvedValue(
-        createMockRepositoryEntity({ createdBy: PAT_DEPLOYMENT_OWNER }),
-      );
-
-      await service.getRepositoryById(mockCtx, mockRepositoryId);
-
-      expect(dao.getOne).toHaveBeenCalledWith(
-        expect.objectContaining({
-          id: mockRepositoryId,
-          createdBy: PAT_DEPLOYMENT_OWNER,
-        }),
-      );
-    });
-
-    it('createRepository stamps the deployment sentinel as createdBy', async () => {
-      vi.mocked(dao.create).mockResolvedValue(
-        createMockRepositoryEntity({ createdBy: PAT_DEPLOYMENT_OWNER }),
-      );
-
-      await service.createRepository(mockCtx, {
-        owner: 'o',
-        repo: 'r',
-        url: 'https://github.com/o/r.git',
-        provider: GitRepositoryProvider.GITHUB,
-        defaultBranch: 'main',
-      });
-
-      expect(dao.create).toHaveBeenCalledWith(
-        expect.objectContaining({ createdBy: PAT_DEPLOYMENT_OWNER }),
-      );
-    });
-
-    it('syncRepositories does NOT throw GITHUB_APP_NOT_CONFIGURED when the App is unconfigured', async () => {
-      gitPatModeMock.getValidatedPat.mockReturnValue('ghp_x');
+    it('does NOT throw GITHUB_APP_NOT_CONFIGURED when the user has a PAT but the App is unconfigured, and prunes ONLY the user own Pat rows', async () => {
       vi.mocked(gitHubAppProviderService.isConfigured).mockReturnValue(false);
       vi.mocked(dao.getAll).mockResolvedValue([]);
       vi.mocked(dao.count).mockResolvedValue(0);
@@ -1319,6 +1269,130 @@ describe('GitRepositoriesService', () => {
         removed: 0,
         total: 0,
       });
+
+      // The orphan-prune is scoped strictly to the requesting user's PAT-synced
+      // rows (createdBy AND syncSource=Pat AND installationId IS NULL) — never a
+      // cross-user / cross-source delete. The installationId predicate is the
+      // belt-and-braces guard that an App row sharing this user's createdBy is
+      // never enumerated for pruning even if mislabeled.
+      expect(dao.getAll).toHaveBeenCalledWith({
+        createdBy: mockUserId,
+        syncSource: GitHubAuthMethod.Pat,
+        installationId: null,
+      });
+      expect(dao.count).toHaveBeenCalledWith({ createdBy: mockUserId });
+
+      fetchSpy.mockRestore();
+    });
+
+    it('upserts synced repos under the requesting user createdBy with syncSource Pat', async () => {
+      vi.mocked(gitHubAppProviderService.isConfigured).mockReturnValue(false);
+      vi.mocked(dao.getAll).mockResolvedValue([]);
+      vi.mocked(dao.count).mockResolvedValue(1);
+      const fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => [
+          {
+            owner: { login: 'octo' },
+            name: 'hello',
+            html_url: 'https://github.com/octo/hello',
+            default_branch: 'main',
+          },
+        ],
+        headers: { get: () => null },
+      } as unknown as Response);
+
+      await service.syncRepositories(mockCtx);
+
+      // mergeSource:false — the PAT upsert must never relabel an App row that
+      // shares this user's (owner, repo, createdBy, provider).
+      expect(dao.upsertGithubSyncRepos).toHaveBeenCalledWith(
+        [
+          expect.objectContaining({
+            owner: 'octo',
+            repo: 'hello',
+            createdBy: mockUserId,
+            installationId: null,
+            syncSource: GitHubAuthMethod.Pat,
+          }),
+        ],
+        { mergeSource: false },
+      );
+
+      fetchSpy.mockRestore();
+    });
+
+    it('fails CLOSED when the stored PAT is present-but-unreadable (resolvePatToken throws)', async () => {
+      gitUserPatMock.resolvePatToken.mockRejectedValue(
+        new InternalException(
+          'GITHUB_USER_PAT_UNREADABLE',
+          'stored PAT present but unreadable',
+        ),
+      );
+
+      await expect(service.syncRepositories(mockCtx)).rejects.toThrow(
+        InternalException,
+      );
+    });
+
+    it('does NOT prune an existing PAT repo when /user/repos pagination is truncated at the page cap', async () => {
+      // /user/repos returns 100 FULL pages (each exactly PER_PAGE=100 repos),
+      // which drives the loop to its MAX_PAGES=100 defensive bound and exits
+      // with the listing truncated — none of the user's repos beyond page 100
+      // are in the synced set. A real account with >10k accessible repos hits
+      // this on every sync.
+      const PER_PAGE = 100;
+      const MAX_PAGES = 100;
+      const fullPage = (pageNum: number) =>
+        Array.from({ length: PER_PAGE }, (_, i) => ({
+          owner: { login: 'big-org' },
+          name: `repo-p${pageNum}-${i}`,
+          html_url: `https://github.com/big-org/repo-p${pageNum}-${i}`,
+          default_branch: 'main',
+        }));
+      let pageCounter = 0;
+      const fetchSpy = vi
+        .spyOn(global, 'fetch')
+        .mockImplementation(async () => {
+          pageCounter += 1;
+          return {
+            ok: true,
+            status: 200,
+            // Always a full page → the loop never short-circuits and runs the
+            // full MAX_PAGES iterations, hitting the truncation bound.
+            json: async () => fullPage(pageCounter),
+            headers: { get: () => null },
+          } as unknown as Response;
+        });
+
+      // The user already has a PAT-synced repo that lives beyond the page cap,
+      // so it is NOT in the (truncated) synced set this run returned. Its Qdrant
+      // collections + BullMQ jobs are hard-deleted by cleanupRepositoryResourcesById
+      // on prune — an IRREVERSIBLE delete. On a truncated listing it must survive.
+      const beyondCapRepo = createMockRepositoryEntity({
+        id: 'beyond-cap-repo',
+        owner: 'big-org',
+        repo: 'repo-on-page-101',
+        installationId: null,
+        syncSource: GitHubAuthMethod.Pat,
+      });
+      vi.mocked(dao.getAll).mockResolvedValue([beyondCapRepo]);
+      vi.mocked(dao.count).mockResolvedValue(1);
+      // Let cleanupRepositoryResourcesById complete cleanly if it is reached, so
+      // the prune (deleteById) assertion below is what catches the bug — not an
+      // unmocked-dependency TypeError inside the cleanup step.
+      vi.mocked(repoIndexDao.getAll).mockResolvedValue([]);
+
+      await service.syncRepositories(mockCtx);
+
+      // The listing was truncated, so the absence of repo-on-page-101 from the
+      // synced set is NOT proof it was revoked — pruning it destroys live data.
+      expect(dao.deleteById).not.toHaveBeenCalledWith('beyond-cap-repo');
+
+      // Confirm the test actually drove the loop to the page cap (guards against
+      // the assertion passing because the loop exited early for another reason).
+      expect(pageCounter).toBe(MAX_PAGES);
 
       fetchSpy.mockRestore();
     });

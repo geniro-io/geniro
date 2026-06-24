@@ -17,7 +17,6 @@ import {
 } from '../../../agent-triggers/services/github-issues-trigger';
 import type { RunnableAgent } from '../../../agents/agents.types';
 import { BaseAgentConfigurable } from '../../../agents/agents.types';
-import { GitPatModeService } from '../../../git-auth/services/git-pat-mode.service';
 import { GitHubWebhookSubscriptionService } from '../../../git-auth/services/webhook-subscription-registry.service';
 import { GitRepositoriesDao } from '../../../git-repositories/dao/git-repositories.dao';
 import { GraphNode, NodeKind } from '../../../graphs/graphs.types';
@@ -79,7 +78,6 @@ export class GitHubIssuesTriggerTemplate extends TriggerNodeBaseTemplate<
     private readonly gitRepositoriesDao: GitRepositoriesDao,
     private readonly registry: GitHubWebhookSubscriptionService,
     private readonly oauthPreflight: OAuthRunPreflightService,
-    private readonly gitPatModeService: GitPatModeService,
   ) {
     super();
   }
@@ -147,15 +145,11 @@ export class GitHubIssuesTriggerTemplate extends TriggerNodeBaseTemplate<
 
         if (installationId === null) {
           // App-installation-based reconciliation polling is inactive without an
-          // installation id. In pat mode this is BY DESIGN (a deployment-wide PAT
-          // has no installations); in app mode it means the repo was added
-          // without an App installation. Either way the trigger still fires via
-          // webhook push receipt, which is mode-agnostic.
-          const reason = this.gitPatModeService.isPatMode()
-            ? 'GITHUB_AUTH_MODE=pat: GitHub App reconciliation polling is App-only and inactive'
-            : 'No installation ID found for these repos';
+          // installation id — e.g. a repo synced via a per-user PAT (which has
+          // no App installation) or one added manually. The trigger still fires
+          // via webhook push receipt, which does not depend on an installation.
           this.logger.log(
-            `${reason} for trigger repos [${watchedRepoFullNames.join(', ')}]. Reconciliation polling will be skipped; the trigger will still fire via webhook push.`,
+            `No GitHub App installation for trigger repos [${watchedRepoFullNames.join(', ')}]; reconciliation polling will be skipped (the trigger still fires via webhook push).`,
           );
         }
 

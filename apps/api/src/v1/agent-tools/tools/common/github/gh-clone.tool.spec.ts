@@ -140,8 +140,8 @@ describe('GhCloneTool', () => {
           .fn()
           .mockRejectedValue(
             new InternalException(
-              'GITHUB_PAT_MISSING',
-              'GITHUB_AUTH_MODE is "pat" but GITHUB_PAT is empty or unset',
+              'GITHUB_USER_PAT_UNREADABLE',
+              'A GitHub PAT is configured but its value could not be read',
             ),
           ),
       };
@@ -196,53 +196,35 @@ describe('GhCloneTool', () => {
       expect(firstCallParams.resolvedToken).toBeNull();
     });
 
-    it('should retry with git clone when authenticated clone fails', async () => {
+    it('does NOT retry anonymously when an authenticated clone fails (fail-closed on a revoked/expired PAT)', async () => {
       const args: GhCloneToolSchemaType = {
         owner: 'octocat',
         repo: 'Hello-World',
       };
 
-      vi.spyOn(tool as any, 'detectDefaultBranch').mockResolvedValue('main');
-      vi.spyOn(tool as any, 'findAgentInstructions').mockResolvedValue(
-        undefined,
-      );
-
       const execGhCommandSpy = vi
         .spyOn(tool as any, 'execGhCommand')
-        .mockResolvedValueOnce({
+        .mockResolvedValue({
           exitCode: 1,
           stdout: '',
           stderr: 'Repository not granted to installation',
           execPath: '/runtime-workspace/test-thread-123',
-        })
-        .mockResolvedValueOnce({
-          exitCode: 0,
-          stdout: '',
-          stderr: '',
-          execPath: '/runtime-workspace/test-thread-123',
         });
 
-      await tool.invoke(args, mockConfig, mockCfg);
+      const result = await tool.invoke(args, mockConfig, mockCfg);
 
-      expect(execGhCommandSpy).toHaveBeenCalledTimes(2);
-
+      // Only the authenticated clone runs — no silent second anonymous attempt
+      // that would mask a revoked/expired/wrong-scope token.
+      expect(execGhCommandSpy).toHaveBeenCalledTimes(1);
       const firstCallParams = execGhCommandSpy.mock.calls[0]![0] as {
         cmd: string;
         resolvedToken: string | null;
       };
-      expect(firstCallParams.cmd).toContain(' clone --progress ');
       expect(firstCallParams.cmd).toContain('http.extraHeader');
-      expect(firstCallParams.cmd).toContain('[clone-heartbeat]');
       expect(firstCallParams.resolvedToken).toBe('ghp_test_token');
 
-      const secondCallParams = execGhCommandSpy.mock.calls[1]![0] as {
-        cmd: string;
-        resolvedToken: string | null;
-      };
-      expect(secondCallParams.cmd).toContain('git clone');
-      expect(secondCallParams.cmd).not.toContain('gh repo clone');
-      expect(secondCallParams.cmd).toContain('[clone-heartbeat]');
-      expect(secondCallParams.resolvedToken).toBeNull();
+      // The failure surfaces as an error instead of degrading to anonymous.
+      expect(result.output.error).toBeTruthy();
     });
 
     it('should sanitize dots in repo name to hyphens in default clone path', async () => {

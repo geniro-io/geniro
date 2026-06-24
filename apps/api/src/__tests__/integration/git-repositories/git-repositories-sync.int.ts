@@ -16,21 +16,19 @@ import {
 import { AppContextStorage } from '../../../auth/app-context-storage';
 import { GitProviderConnectionDao } from '../../../v1/git-auth/dao/git-provider-connection.dao';
 import { GitProvider } from '../../../v1/git-auth/git-auth.types';
-import { GitPatModeService } from '../../../v1/git-auth/services/git-pat-mode.service';
+import { GitUserPatService } from '../../../v1/git-auth/services/git-user-pat.service';
 import { GitHubAppService } from '../../../v1/git-auth/services/github-app.service';
 import { GitHubAppProviderService } from '../../../v1/git-auth/services/github-app-provider.service';
 import { GitRepositoriesDao } from '../../../v1/git-repositories/dao/git-repositories.dao';
 import { GitRepositoryEntity } from '../../../v1/git-repositories/entity/git-repository.entity';
-import {
-  GitRepositoryProvider,
-  PAT_DEPLOYMENT_OWNER,
-} from '../../../v1/git-repositories/git-repositories.types';
+import { GitRepositoryProvider } from '../../../v1/git-repositories/git-repositories.types';
 import { GitRepositoriesService } from '../../../v1/git-repositories/services/git-repositories.service';
 import { GitHubAuthMethod } from '../../../v1/graph-resources/graph-resources.types';
 import { ProjectsDao } from '../../../v1/projects/dao/projects.dao';
 import { createTestModule, TEST_USER_ID } from '../setup';
 
 const TEST_PROJECT_ID = '99999999-9999-9999-9999-999999999901';
+const PAT_USER_B_ID = 'pat-user-b-0002';
 
 // ctx without project ID (user-level sync)
 const ctx = new AppContextStorage({ sub: TEST_USER_ID }, {
@@ -95,7 +93,7 @@ describe('GitRepositoriesService sync (integration)', () => {
   let gitProviderConnectionDao: GitProviderConnectionDao;
   let gitHubAppProviderService: GitHubAppProviderService;
   let gitHubAppService: GitHubAppService;
-  let gitPatModeService: GitPatModeService;
+  let gitUserPatService: GitUserPatService;
   let projectsDao: ProjectsDao;
 
   const createdRepoIds: string[] = [];
@@ -109,7 +107,7 @@ describe('GitRepositoriesService sync (integration)', () => {
     gitProviderConnectionDao = app.get(GitProviderConnectionDao);
     gitHubAppProviderService = app.get(GitHubAppProviderService);
     gitHubAppService = app.get(GitHubAppService);
-    gitPatModeService = app.get(GitPatModeService);
+    gitUserPatService = app.get(GitUserPatService);
     projectsDao = app.get(ProjectsDao);
 
     // Create a test project with a deterministic ID so ctx.checkProjectId() resolves correctly.
@@ -142,12 +140,12 @@ describe('GitRepositoriesService sync (integration)', () => {
       .execute(`DELETE FROM git_provider_connections WHERE user_id = ?`, [
         TEST_USER_ID,
       ]);
-    // PAT-mode rows live under the shared deployment owner, not TEST_USER_ID —
-    // wipe them too so the pat-mode tests are repeatable across runs.
+    // The per-user PAT tests also sync under a second user — wipe their rows so
+    // the tests are repeatable across runs.
     await em
       .getConnection()
       .execute(`DELETE FROM git_repositories WHERE created_by = ?`, [
-        PAT_DEPLOYMENT_OWNER,
+        PAT_USER_B_ID,
       ]);
   }, 360_000);
 
@@ -264,6 +262,9 @@ describe('GitRepositoriesService sync (integration)', () => {
       );
       expect(apiService!.createdBy).toBe(TEST_USER_ID);
       expect(apiService!.projectId).toBeNull();
+      // App sync must stamp syncSource=GithubApp so the source-scoped PAT prune
+      // can never target these rows.
+      expect(apiService!.syncSource).toBe(GitHubAuthMethod.GithubApp);
 
       expect(webApp).toBeDefined();
       expect(webApp!.owner).toBe('sync-org');
@@ -465,30 +466,28 @@ describe('GitRepositoriesService sync (integration)', () => {
     });
   });
 
-  describe('PAT mode (GITHUB_AUTH_MODE=pat)', () => {
-    const ctxUserB = new AppContextStorage({ sub: 'pat-user-b-0002' }, {
+  describe('per-user PAT sync', () => {
+    const ctxUserB = new AppContextStorage({ sub: PAT_USER_B_ID }, {
       headers: {},
     } as unknown as FastifyRequest);
 
     beforeEach(() => {
-      vi.spyOn(gitPatModeService, 'isPatMode').mockReturnValue(true);
-      vi.spyOn(gitPatModeService, 'getValidatedPat').mockReturnValue(
+      // The token resolver reads the per-user PAT from OpenBao, which is not
+      // available in the integration harness — stub the resolve seam to return a
+      // PAT for any user. The DB sync/prune behaviour below runs for real.
+      vi.spyOn(gitUserPatService, 'resolvePatToken').mockResolvedValue(
         'ghp_integration_pat',
       );
     });
 
-    // Synced rows live under the shared deployment owner — track them so the
-    // outer afterEach hard-deletes them.
-    const trackSentinelRepos = async () => {
-      const rows = await gitRepositoriesDao.getAll({
-        createdBy: PAT_DEPLOYMENT_OWNER,
-      });
+    const trackUserRepos = async (userId: string) => {
+      const rows = await gitRepositoriesDao.getAll({ createdBy: userId });
       for (const r of rows) {
         trackRepo(r.id);
       }
     };
 
-    it('syncs from GET /user/repos under the deployment owner with syncSource=Pat', async () => {
+    it('syncs from GET /user/repos under the requesting user createdBy with syncSource=Pat', async () => {
       const getInstallationsSpy = vi.spyOn(
         gitHubAppProviderService,
         'getActiveInstallations',
@@ -511,23 +510,40 @@ describe('GitRepositoriesService sync (integration)', () => {
       );
 
       const result = await gitRepositoriesService.syncRepositories(ctx);
-      await trackSentinelRepos();
+      await trackUserRepos(TEST_USER_ID);
 
       expect(result.synced).toBe(2);
-      // The pat path must never consult GitHub App installations.
+      // The PAT path must never consult GitHub App installations.
       expect(getInstallationsSpy).not.toHaveBeenCalled();
 
-      const rows = await gitRepositoriesDao.getAll({
-        createdBy: PAT_DEPLOYMENT_OWNER,
-      });
+      const rows = await gitRepositoriesDao.getAll({ createdBy: TEST_USER_ID });
       const backend = rows.find((r) => r.repo === 'backend');
       expect(backend).toBeDefined();
-      expect(backend!.createdBy).toBe(PAT_DEPLOYMENT_OWNER);
+      expect(backend!.createdBy).toBe(TEST_USER_ID);
       expect(backend!.syncSource).toBe(GitHubAuthMethod.Pat);
       expect(backend!.installationId).toBeNull();
     });
 
-    it('two users syncing the same PAT account produce no duplicate rows', async () => {
+    it('resolves the PAT and syncs even when the GitHub App is not configured', async () => {
+      vi.spyOn(gitHubAppProviderService, 'isConfigured').mockReturnValue(false);
+      vi.spyOn(global, 'fetch').mockResolvedValue(
+        makeUserReposResponse([
+          {
+            owner: 'acme-org',
+            name: 'solo',
+            html_url: 'https://github.com/acme-org/solo',
+            default_branch: 'main',
+          },
+        ]),
+      );
+
+      const result = await gitRepositoriesService.syncRepositories(ctx);
+      await trackUserRepos(TEST_USER_ID);
+
+      expect(result.synced).toBe(1);
+    });
+
+    it('two users syncing the same repo get independent per-user rows (no collision, no cross-user prune)', async () => {
       vi.spyOn(global, 'fetch').mockResolvedValue(
         makeUserReposResponse([
           {
@@ -541,20 +557,26 @@ describe('GitRepositoriesService sync (integration)', () => {
 
       const a = await gitRepositoriesService.syncRepositories(ctx); // user A
       const b = await gitRepositoriesService.syncRepositories(ctxUserB); // user B
-      await trackSentinelRepos();
+      await trackUserRepos(TEST_USER_ID);
+      await trackUserRepos(PAT_USER_B_ID);
 
       expect(a.synced).toBe(1);
-      // User B's sync is a clean re-converge, NOT a delete-then-recreate churn:
-      // it re-syncs the same single row and prunes nothing.
       expect(b.synced).toBe(1);
+      // User B's sync writes its OWN row and prunes nothing of user A's.
       expect(b.removed).toBe(0);
 
-      const sharedRows = await gitRepositoriesDao.getAll({
-        createdBy: PAT_DEPLOYMENT_OWNER,
+      const aRows = await gitRepositoriesDao.getAll({
+        createdBy: TEST_USER_ID,
         owner: 'acme-org',
         repo: 'shared-repo',
       });
-      expect(sharedRows.length).toBe(1);
+      const bRows = await gitRepositoriesDao.getAll({
+        createdBy: PAT_USER_B_ID,
+        owner: 'acme-org',
+        repo: 'shared-repo',
+      });
+      expect(aRows.length).toBe(1);
+      expect(bRows.length).toBe(1);
     });
 
     it('surfaces a clear error when GET /user/repos returns 401 (PAT revoked)', async () => {
@@ -586,8 +608,24 @@ describe('GitRepositoriesService sync (integration)', () => {
       expect((caught as InternalException).code).toBe('GITHUB_RATE_LIMITED');
     });
 
-    it('mode-scoped prune removes only PAT orphans, never App-synced rows', async () => {
-      // An App-synced row (installationId set, syncSource=GithubApp), real user.
+    it('fails CLOSED when the stored PAT is present-but-unreadable (resolvePatToken throws), never listing repos', async () => {
+      vi.mocked(gitUserPatService.resolvePatToken).mockRejectedValue(
+        new InternalException(
+          'GITHUB_USER_PAT_UNREADABLE',
+          'stored PAT present but unreadable',
+        ),
+      );
+      const fetchSpy = vi.spyOn(global, 'fetch');
+
+      await expect(
+        gitRepositoriesService.syncRepositories(ctx),
+      ).rejects.toThrow(InternalException);
+      // Failed closed at resolve time — never reached the GitHub listing.
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    it('per-user prune removes only THIS user PAT orphans, never App-synced or another user rows', async () => {
+      // App-synced row for the requesting user (installationId set).
       const appRow = await gitRepositoriesDao.create({
         owner: 'app-org',
         repo: 'app-repo',
@@ -602,20 +640,35 @@ describe('GitRepositoriesService sync (integration)', () => {
       });
       trackRepo(appRow.id);
 
-      // A PAT orphan (under the sentinel, syncSource=Pat) the next sync drops.
+      // A PAT orphan for the requesting user the next sync drops.
       const patOrphan = await gitRepositoriesDao.create({
         owner: 'acme-org',
         repo: 'stale-repo',
         url: 'https://github.com/acme-org/stale-repo',
         provider: GitRepositoryProvider.GITHUB,
         defaultBranch: 'main',
-        createdBy: PAT_DEPLOYMENT_OWNER,
+        createdBy: TEST_USER_ID,
         projectId: null,
         installationId: null,
         syncSource: GitHubAuthMethod.Pat,
         syncedAt: new Date(),
       });
       trackRepo(patOrphan.id);
+
+      // Another user's identical PAT row — must NOT be pruned by THIS user's sync.
+      const otherUserRow = await gitRepositoriesDao.create({
+        owner: 'acme-org',
+        repo: 'stale-repo',
+        url: 'https://github.com/acme-org/stale-repo',
+        provider: GitRepositoryProvider.GITHUB,
+        defaultBranch: 'main',
+        createdBy: PAT_USER_B_ID,
+        projectId: null,
+        installationId: null,
+        syncSource: GitHubAuthMethod.Pat,
+        syncedAt: new Date(),
+      });
+      trackRepo(otherUserRow.id);
 
       vi.spyOn(global, 'fetch').mockResolvedValue(
         makeUserReposResponse([
@@ -629,19 +682,118 @@ describe('GitRepositoriesService sync (integration)', () => {
       );
 
       const result = await gitRepositoriesService.syncRepositories(ctx);
-      await trackSentinelRepos();
+      await trackUserRepos(TEST_USER_ID);
 
       expect(result.removed).toBe(1);
 
-      // PAT orphan soft-deleted.
+      // The requesting user's PAT orphan is pruned.
       const orphanAfter = await gitRepositoriesDao.getOne({ id: patOrphan.id });
       expect(orphanAfter).toBeNull();
 
-      // App-synced row UNTOUCHED — the cross-mode safety guarantee.
+      // App-synced row UNTOUCHED — the cross-source safety guarantee.
       const appAfter = await gitRepositoriesDao.getOne({ id: appRow.id });
       expect(appAfter).not.toBeNull();
       expect(appAfter!.installationId).toBe(77001);
       expect(appAfter!.syncSource).toBe(GitHubAuthMethod.GithubApp);
+
+      // Another user's identical PAT row UNTOUCHED — no cross-user delete.
+      const otherAfter = await gitRepositoriesDao.getOne({
+        id: otherUserRow.id,
+      });
+      expect(otherAfter).not.toBeNull();
+    });
+
+    it('does NOT relabel an App-synced row when the PAT lists the same owner/repo (no reclassification → no prune exposure)', async () => {
+      // App-synced row whose (owner, repo) EXACTLY matches a repo the PAT will
+      // also list — the upsert conflict path. Pre-fix, the PAT upsert merged
+      // installationId + syncSource and relabeled this row to (Pat, null),
+      // exposing an App repo to the per-user PAT orphan-prune (irreversible
+      // Qdrant + BullMQ hard-delete). The mergeSource:false fix must leave the
+      // App identity intact.
+      const appRow = await gitRepositoriesDao.create({
+        owner: 'collide-org',
+        repo: 'shared-repo',
+        url: 'https://github.com/collide-org/shared-repo',
+        provider: GitRepositoryProvider.GITHUB,
+        defaultBranch: 'main',
+        createdBy: TEST_USER_ID,
+        projectId: null,
+        installationId: 99001,
+        syncSource: GitHubAuthMethod.GithubApp,
+        syncedAt: new Date(),
+      });
+      trackRepo(appRow.id);
+
+      // The PAT lists the SAME owner/repo (so the row is in the live set and the
+      // upsert hits the (owner, repo, createdBy, provider) conflict).
+      vi.spyOn(global, 'fetch').mockResolvedValue(
+        makeUserReposResponse([
+          {
+            owner: 'collide-org',
+            name: 'shared-repo',
+            html_url: 'https://github.com/collide-org/shared-repo',
+            default_branch: 'develop',
+          },
+        ]),
+      );
+
+      await gitRepositoriesService.syncRepositories(ctx);
+      await trackUserRepos(TEST_USER_ID);
+
+      const after = await gitRepositoriesDao.getOne({ id: appRow.id });
+      expect(after).not.toBeNull();
+      // SOURCE identity preserved — never relabeled to (Pat, null).
+      expect(after!.syncSource).toBe(GitHubAuthMethod.GithubApp);
+      expect(after!.installationId).toBe(99001);
+      // Mutable fields (defaultBranch/url) still refresh from the listing.
+      expect(after!.defaultBranch).toBe('develop');
+      // Exactly one row for the pair — no duplicate inserted alongside the App row.
+      const pairRows = await gitRepositoriesDao.getAll({
+        createdBy: TEST_USER_ID,
+        owner: 'collide-org',
+        repo: 'shared-repo',
+      });
+      expect(pairRows.length).toBe(1);
+    });
+
+    it('per-user prune leaves a manually-added (syncSource=null) row untouched', async () => {
+      // A manually-added repo (syncSource=null, installationId=null) the PAT
+      // does NOT list. The prune is scoped to syncSource=Pat, so this row must
+      // survive — it falls on the null predicate, not the Pat one.
+      const manualRow = await gitRepositoriesDao.create({
+        owner: 'manual-org',
+        repo: 'hand-added',
+        url: 'https://github.com/manual-org/hand-added',
+        provider: GitRepositoryProvider.GITHUB,
+        defaultBranch: 'main',
+        createdBy: TEST_USER_ID,
+        projectId: null,
+        installationId: null,
+        syncSource: null,
+        syncedAt: null,
+      });
+      trackRepo(manualRow.id);
+
+      // The PAT lists a different repo, so the manual row is "not in the live
+      // set" — the exact condition that would prune a Pat-sourced orphan.
+      vi.spyOn(global, 'fetch').mockResolvedValue(
+        makeUserReposResponse([
+          {
+            owner: 'acme-org',
+            name: 'live-only',
+            html_url: 'https://github.com/acme-org/live-only',
+            default_branch: 'main',
+          },
+        ]),
+      );
+
+      await gitRepositoriesService.syncRepositories(ctx);
+      await trackUserRepos(TEST_USER_ID);
+
+      const after = await gitRepositoriesDao.getOne({ id: manualRow.id });
+      expect(after).not.toBeNull();
+      expect(after!.syncSource).toBeNull();
+      expect(after!.installationId).toBeNull();
     });
   });
 });

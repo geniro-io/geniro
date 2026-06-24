@@ -1,5 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { DefaultLogger } from '@packages/common';
+import { DefaultLogger, InternalException } from '@packages/common';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { GitTokenResolverService } from '../../git-auth/services/git-token-resolver.service';
@@ -278,6 +278,36 @@ describe('GithubResource', () => {
       expect(
         mockGitTokenResolverService.resolveDefaultToken,
       ).not.toHaveBeenCalled();
+    });
+
+    it('resolveEnv re-throws an InternalException from the resolver (fail-closed on a broken PAT)', async () => {
+      vi.mocked(
+        mockGitTokenResolverService.resolveDefaultToken,
+      ).mockRejectedValue(
+        new InternalException('GITHUB_USER_PAT_UNREADABLE', 'unreadable'),
+      );
+
+      const result = await githubResource.getData({ auth: true });
+
+      await expect(
+        result.data.resolveEnv({
+          configurable: { thread_created_by: 'user-1' },
+        }),
+      ).rejects.toThrow(InternalException);
+    });
+
+    it('resolveEnv returns {} (does not throw) on a benign resolver error', async () => {
+      vi.mocked(
+        mockGitTokenResolverService.resolveDefaultToken,
+      ).mockRejectedValue(new Error('benign network blip'));
+
+      const result = await githubResource.getData({ auth: true });
+
+      const env = await result.data.resolveEnv({
+        configurable: { thread_created_by: 'user-1' },
+      });
+
+      expect(env).toEqual({});
     });
 
     it('resolveEnv does not return user-A token when called with user-B identity', async () => {
