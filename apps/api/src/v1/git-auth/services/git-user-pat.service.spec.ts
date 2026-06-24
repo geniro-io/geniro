@@ -1,4 +1,8 @@
-import { BadRequestException, InternalException } from '@packages/common';
+import {
+  BadRequestException,
+  DefaultLogger,
+  InternalException,
+} from '@packages/common';
 import type { FastifyRequest } from 'fastify';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -18,7 +22,7 @@ describe('GitUserPatService', () => {
     hardDelete: ReturnType<typeof vi.fn>;
   };
   let secretsStore: {
-    getUserSecret: ReturnType<typeof vi.fn>;
+    readUserSecret: ReturnType<typeof vi.fn>;
     putUserSecret: ReturnType<typeof vi.fn>;
     deleteUserSecret: ReturnType<typeof vi.fn>;
   };
@@ -35,7 +39,7 @@ describe('GitUserPatService', () => {
       hardDelete: vi.fn().mockResolvedValue(undefined),
     };
     secretsStore = {
-      getUserSecret: vi.fn(),
+      readUserSecret: vi.fn(),
       putUserSecret: vi.fn().mockResolvedValue(undefined),
       deleteUserSecret: vi.fn().mockResolvedValue(undefined),
     };
@@ -43,6 +47,12 @@ describe('GitUserPatService', () => {
       dao as unknown as GitUserPatDao,
       secretsStore as unknown as SecretsStoreService,
       new GitPatValidatorService(),
+      {
+        warn: vi.fn(),
+        debug: vi.fn(),
+        log: vi.fn(),
+        error: vi.fn(),
+      } as unknown as DefaultLogger,
     );
   });
 
@@ -54,8 +64,8 @@ describe('GitUserPatService', () => {
         json: async () => ({ login: 'octocat' }),
         headers: { get: () => null },
       } as unknown as Response);
-      // No prior stored value (a fresh save).
-      secretsStore.getUserSecret.mockRejectedValue(new Error('not found'));
+      // No prior stored value (a fresh save) — a confirmed-absent read.
+      secretsStore.readUserSecret.mockResolvedValue({ found: false });
     });
 
     afterEach(() => {
@@ -164,7 +174,10 @@ describe('GitUserPatService', () => {
     });
 
     it('restores the prior OpenBao value on DB failure when one existed', async () => {
-      secretsStore.getUserSecret.mockResolvedValue('ghp_prior');
+      secretsStore.readUserSecret.mockResolvedValue({
+        found: true,
+        value: 'ghp_prior',
+      });
       dao.upsertByUserId.mockRejectedValue(new Error('db down'));
 
       await expect(service.putPat(ctx, 'ghp_token')).rejects.toThrow('db down');
@@ -174,6 +187,25 @@ describe('GitUserPatService', () => {
         'user-1',
         SECRET_NAME,
         'ghp_prior',
+      );
+      expect(secretsStore.deleteUserSecret).not.toHaveBeenCalled();
+    });
+
+    it('does NOT delete or restore on DB failure when the prior value could not be read (transient) — never destroys an unprovable prior', async () => {
+      // A transient read failure must NOT be collapsed to "absent": deleting
+      // here could destroy a still-valid prior PAT. The just-written orphan is
+      // left in place (unreachable without a pointer row, overwritten next save).
+      secretsStore.readUserSecret.mockRejectedValue(new Error('openbao down'));
+      dao.upsertByUserId.mockRejectedValue(new Error('db down'));
+
+      await expect(service.putPat(ctx, 'ghp_token')).rejects.toThrow('db down');
+
+      // Only the single main write happened — no restore, no delete.
+      expect(secretsStore.putUserSecret).toHaveBeenCalledTimes(1);
+      expect(secretsStore.putUserSecret).toHaveBeenCalledWith(
+        'user-1',
+        SECRET_NAME,
+        'ghp_token',
       );
       expect(secretsStore.deleteUserSecret).not.toHaveBeenCalled();
     });
@@ -251,16 +283,27 @@ describe('GitUserPatService', () => {
 
     it('returns the stored token when the row and OpenBao value are both present', async () => {
       dao.getOne.mockResolvedValue({ secretName: SECRET_NAME });
-      secretsStore.getUserSecret.mockResolvedValue('ghp_stored');
+      secretsStore.readUserSecret.mockResolvedValue({
+        found: true,
+        value: 'ghp_stored',
+      });
       expect(await service.resolvePatToken('user-1')).toBe('ghp_stored');
     });
 
-    it('throws InternalException (fail-CLOSED) when the row is present but the value is unreadable', async () => {
+    it('throws InternalException (fail-CLOSED) when the row is present but the value is CONFIRMED-ABSENT (corrupt)', async () => {
       dao.getOne.mockResolvedValue({ secretName: SECRET_NAME });
-      secretsStore.getUserSecret.mockRejectedValue(new Error('openbao 404'));
+      secretsStore.readUserSecret.mockResolvedValue({ found: false });
       await expect(service.resolvePatToken('user-1')).rejects.toThrow(
         InternalException,
       );
+    });
+
+    it('returns null (App fallback) when the row is present but the store fails TRANSIENTLY — never bricks git on an OpenBao blip', async () => {
+      dao.getOne.mockResolvedValue({ secretName: SECRET_NAME });
+      secretsStore.readUserSecret.mockRejectedValue(
+        new InternalException('SECRETS_STORE_GET_FAILED', 'openbao down'),
+      );
+      expect(await service.resolvePatToken('user-1')).toBeNull();
     });
   });
 });

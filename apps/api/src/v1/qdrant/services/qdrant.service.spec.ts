@@ -570,7 +570,9 @@ describe('QdrantService', () => {
 
       expect(mockClient.createPayloadIndex).toHaveBeenCalledWith(
         'test-collection',
-        { field_name: 'repo_id', field_schema: 'keyword' },
+        // wait:true so the index is searchable before indexing reports "ready"
+        // (a filtered search issued immediately after must be able to use it).
+        { field_name: 'repo_id', field_schema: 'keyword', wait: true },
       );
     });
 

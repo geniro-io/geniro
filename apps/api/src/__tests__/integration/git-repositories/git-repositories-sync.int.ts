@@ -795,5 +795,218 @@ describe('GitRepositoriesService sync (integration)', () => {
       expect(after!.syncSource).toBeNull();
       expect(after!.installationId).toBeNull();
     });
+
+    it('does NOT prune any PAT rows when GET /user/repos returns an empty (200) listing — guards the data-loss path (F1)', async () => {
+      // A scope-reduced PAT (passes validate-on-save, which only checks GET
+      // /user) lists ZERO repos. The prune MUST be skipped on an empty listing,
+      // exactly like a truncated one — otherwise every syncSource=Pat row enters
+      // toRemove and its Qdrant collection + index are irreversibly hard-deleted.
+      const patRepo = await gitRepositoriesDao.create({
+        owner: 'acme-org',
+        repo: 'keep-me',
+        url: 'https://github.com/acme-org/keep-me',
+        provider: GitRepositoryProvider.GITHUB,
+        defaultBranch: 'main',
+        createdBy: TEST_USER_ID,
+        projectId: null,
+        installationId: null,
+        syncSource: GitHubAuthMethod.Pat,
+        syncedAt: new Date(),
+      });
+      trackRepo(patRepo.id);
+
+      vi.spyOn(global, 'fetch').mockResolvedValue(makeUserReposResponse([]));
+
+      const result = await gitRepositoriesService.syncRepositories(ctx);
+
+      expect(result.synced).toBe(0);
+      expect(result.removed).toBe(0);
+      // The previously-synced PAT repo survives, NOT soft-deleted or cleaned up.
+      const after = await gitRepositoriesDao.getOne({ id: patRepo.id });
+      expect(after).not.toBeNull();
+      expect(after!.deletedAt).toBeNull();
+    });
+
+    it('restores a soft-deleted Pat row when the PAT lists it again (same-source resurrection)', async () => {
+      const patRow = await gitRepositoriesDao.create({
+        owner: 'acme-org',
+        repo: 'comeback',
+        url: 'https://github.com/acme-org/comeback',
+        provider: GitRepositoryProvider.GITHUB,
+        defaultBranch: 'main',
+        createdBy: TEST_USER_ID,
+        projectId: null,
+        installationId: null,
+        syncSource: GitHubAuthMethod.Pat,
+        syncedAt: new Date(),
+      });
+      trackRepo(patRow.id);
+      // Soft-delete it (sets deletedAt) — the softDelete filter now hides it.
+      await gitRepositoriesDao.deleteById(patRow.id);
+
+      vi.spyOn(global, 'fetch').mockResolvedValue(
+        makeUserReposResponse([
+          {
+            owner: 'acme-org',
+            name: 'comeback',
+            html_url: 'https://github.com/acme-org/comeback',
+            default_branch: 'main',
+          },
+        ]),
+      );
+
+      await gitRepositoriesService.syncRepositories(ctx);
+
+      // Read via a FRESH EM fork: restoreAndClaimForPat issues a raw QueryBuilder
+      // UPDATE that does not refresh the shared EM's identity map (the row was
+      // loaded + soft-deleted earlier in this test), so a shared-EM read would
+      // return the stale pre-restore entity. Restored (deletedAt cleared) + Pat.
+      const em = app.get(EntityManager).fork();
+      const after = await em.findOne(
+        GitRepositoryEntity,
+        { id: patRow.id },
+        { filters: { softDelete: false } },
+      );
+      expect(after).not.toBeNull();
+      expect(after!.deletedAt).toBeNull();
+      expect(after!.syncSource).toBe(GitHubAuthMethod.Pat);
+    });
+
+    it('claims a soft-deleted App row as a Pat row when the PAT lists it (F6 — no hidden, churning zombie)', async () => {
+      // A repo the user removed under the App, soft-deleted (deletedAt set,
+      // syncSource=GithubApp, installationId set). The PAT now lists it. Under
+      // PAT-exclusive precedence the PAT must resurrect AND claim it as a Pat row
+      // — otherwise the source-scoped restore skips it (wrong source) and it
+      // stays a hidden row whose syncedAt churns every run.
+      const appRow = await gitRepositoriesDao.create({
+        owner: 'acme-org',
+        repo: 'crossover',
+        url: 'https://github.com/acme-org/crossover',
+        provider: GitRepositoryProvider.GITHUB,
+        defaultBranch: 'main',
+        createdBy: TEST_USER_ID,
+        projectId: null,
+        installationId: 55001,
+        syncSource: GitHubAuthMethod.GithubApp,
+        syncedAt: new Date(),
+      });
+      trackRepo(appRow.id);
+      await gitRepositoriesDao.deleteById(appRow.id);
+
+      vi.spyOn(global, 'fetch').mockResolvedValue(
+        makeUserReposResponse([
+          {
+            owner: 'acme-org',
+            name: 'crossover',
+            html_url: 'https://github.com/acme-org/crossover',
+            default_branch: 'main',
+          },
+        ]),
+      );
+
+      await gitRepositoriesService.syncRepositories(ctx);
+
+      // Fresh EM fork — restoreAndClaimForPat's raw UPDATE bypasses the shared
+      // identity map (see the same-source test above for the full rationale).
+      const em = app.get(EntityManager).fork();
+      const after = await em.findOne(
+        GitRepositoryEntity,
+        { id: appRow.id },
+        { filters: { softDelete: false } },
+      );
+      expect(after).not.toBeNull();
+      expect(after!.deletedAt).toBeNull();
+      // Claimed as a fully PAT-governed row.
+      expect(after!.syncSource).toBe(GitHubAuthMethod.Pat);
+      expect(after!.installationId).toBeNull();
+    });
+
+    it('leaves a soft-deleted cross-source App row untouched when the PAT does NOT list it (restore-skip)', async () => {
+      const appRow = await gitRepositoriesDao.create({
+        owner: 'other-org',
+        repo: 'still-removed',
+        url: 'https://github.com/other-org/still-removed',
+        provider: GitRepositoryProvider.GITHUB,
+        defaultBranch: 'main',
+        createdBy: TEST_USER_ID,
+        projectId: null,
+        installationId: 55002,
+        syncSource: GitHubAuthMethod.GithubApp,
+        syncedAt: new Date(),
+      });
+      trackRepo(appRow.id);
+      await gitRepositoriesDao.deleteById(appRow.id);
+
+      // The PAT lists a DIFFERENT repo, so the soft-deleted App row is not in the
+      // resurrection pairs and must stay soft-deleted with its App source intact.
+      vi.spyOn(global, 'fetch').mockResolvedValue(
+        makeUserReposResponse([
+          {
+            owner: 'acme-org',
+            name: 'unrelated',
+            html_url: 'https://github.com/acme-org/unrelated',
+            default_branch: 'main',
+          },
+        ]),
+      );
+
+      await gitRepositoriesService.syncRepositories(ctx);
+
+      // Still soft-deleted (hidden by the default filter) — read with the filter
+      // off to assert it survives unclaimed, not hard-deleted.
+      const visible = await gitRepositoriesDao.getOne({ id: appRow.id });
+      expect(visible).toBeNull();
+      const raw = await gitRepositoriesDao.getOne(
+        { id: appRow.id },
+        { filters: { softDelete: false } },
+      );
+      expect(raw).not.toBeNull();
+      expect(raw!.deletedAt).not.toBeNull();
+      expect(raw!.syncSource).toBe(GitHubAuthMethod.GithubApp);
+      expect(raw!.installationId).toBe(55002);
+    });
+
+    it('accumulates repos ACROSS pages — a full first page triggers a second fetch and both pages are upserted (F10)', async () => {
+      // PER_PAGE is 100; a full first page (length === PER_PAGE) must NOT break
+      // the loop — it advances to page 2 and accumulates the partial page too.
+      // The truncation test only asserts the page-cap bound; this asserts the
+      // page++ / `< PER_PAGE` break actually unions page-2 repos.
+      const PER_PAGE = 100;
+      const page1 = Array.from({ length: PER_PAGE }, (_, i) => ({
+        owner: 'page-org',
+        name: `repo-${i}`,
+        html_url: `https://github.com/page-org/repo-${i}`,
+        default_branch: 'main',
+      }));
+      const page2 = [
+        {
+          owner: 'page-org',
+          name: 'last-page-repo',
+          html_url: 'https://github.com/page-org/last-page-repo',
+          default_branch: 'main',
+        },
+      ];
+
+      const fetchSpy = vi
+        .spyOn(global, 'fetch')
+        .mockResolvedValueOnce(makeUserReposResponse(page1))
+        .mockResolvedValueOnce(makeUserReposResponse(page2));
+
+      const result = await gitRepositoriesService.syncRepositories(ctx);
+      await trackUserRepos(TEST_USER_ID);
+
+      // A full first page forced a second fetch; the partial page ended it.
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+      expect(result.synced).toBe(PER_PAGE + 1);
+
+      // The page-2 repo made it into the DB (accumulation, not just page 1).
+      const page2Row = await gitRepositoriesDao.getOne({
+        createdBy: TEST_USER_ID,
+        owner: 'page-org',
+        repo: 'last-page-repo',
+      });
+      expect(page2Row).not.toBeNull();
+      expect(page2Row!.syncSource).toBe(GitHubAuthMethod.Pat);
+    });
   });
 });

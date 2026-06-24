@@ -4,6 +4,7 @@ import { INestApplication } from '@nestjs/common';
 import type { BridgeCommand } from '@packages/claude-bridge';
 import {
   afterAll,
+  afterEach,
   beforeAll,
   beforeEach,
   describe,
@@ -62,6 +63,14 @@ describe('Claude Agent M3 — MockBridge full loop (integration)', () => {
   let internalThreadId: string;
   const externalThreadId = `claude-m3-int-${Date.now()}`;
 
+  // The agent event bus emit() is synchronous fire-and-forget — subscribe()
+  // drops the callback's returned promise, so a run can resolve while the final
+  // assistant-message persistence (messageHandler.handle → MessagesDao insert)
+  // is still in flight. We track every such write and drain it BEFORE any thread
+  // deletion (afterEach / afterAll); otherwise a late, detached insert lands
+  // after teardown and rejects as an unhandled rejection under parallel load.
+  let pendingWrites: Promise<unknown>[] = [];
+
   beforeAll(async () => {
     app = await createTestModule();
     graphDao = app.get(GraphDao);
@@ -111,6 +120,9 @@ describe('Claude Agent M3 — MockBridge full loop (integration)', () => {
   }, 120_000);
 
   afterAll(async () => {
+    // Belt-and-suspenders: afterEach already drained per-test, but join anything
+    // still pending before deleting the thread + closing the app.
+    await Promise.allSettled(pendingWrites);
     if (internalThreadId) {
       await messagesDao.hardDelete({ threadId: internalThreadId });
       await threadsDao.hardDeleteById(internalThreadId);
@@ -119,6 +131,14 @@ describe('Claude Agent M3 — MockBridge full loop (integration)', () => {
       await graphDao.hardDeleteById(graphId);
     }
     await app.close();
+  });
+
+  afterEach(async () => {
+    // Join this test's in-flight persistence writes BEFORE the next test's
+    // beforeEach (or afterAll) deletes the thread — the emit bus is fire-and-
+    // forget, so the final flush can outlive the run() that triggered it.
+    await Promise.allSettled(pendingWrites);
+    pendingWrites = [];
   });
 
   beforeEach(async () => {
@@ -171,7 +191,9 @@ describe('Claude Agent M3 — MockBridge full loop (integration)', () => {
 
     agent.subscribe(async (event) => {
       if (event.type === 'message') {
-        await messageHandler.handle({
+        // Capture the write so afterEach/afterAll can drain it — emit() drops
+        // this callback's promise, so the run can resolve before it settles.
+        const write = messageHandler.handle({
           type: NotificationEvent.AgentMessage,
           graphId,
           nodeId: NODE_ID,
@@ -179,6 +201,8 @@ describe('Claude Agent M3 — MockBridge full loop (integration)', () => {
           parentThreadId: externalThreadId,
           data: { messages: event.data.messages },
         });
+        pendingWrites.push(write);
+        await write;
       }
     });
 

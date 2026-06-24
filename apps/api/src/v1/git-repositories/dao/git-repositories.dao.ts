@@ -99,4 +99,48 @@ export class GitRepositoriesDao extends BaseDao<GitRepositoryEntity> {
       })
       .execute();
   }
+
+  /**
+   * PAT-sync resurrection: for every SOFT-DELETED row matching the user's
+   * owner/repo pairs — REGARDLESS of its prior source — un-delete it AND claim
+   * it as a PAT row (`syncSource = Pat`, `installationId = null`).
+   *
+   * Under PAT-exclusive precedence (a stored PAT shadows the GitHub App), a repo
+   * the PAT lists is PAT-owned. The source-scoped `restoreSoftDeleted(…, Pat)`
+   * only un-deletes prior Pat rows, so a soft-deleted GitHub-App row (or a
+   * manually-removed `syncSource = null` row) that the PAT now lists would
+   * otherwise stay hidden forever while the `mergeSource: false` upsert churns
+   * its `syncedAt` every run (the F6 zombie). Claiming it as Pat makes the row
+   * fully PAT-governed: visible again AND subject to the PAT orphan-prune.
+   *
+   * Only SOFT-DELETED rows (`deletedAt IS NOT NULL`) are claimed. A LIVE App row
+   * (`deletedAt = null`) the PAT also lists is NOT matched here and keeps its App
+   * source (the `mergeSource: false` upsert leaves it intact), so no live
+   * App-synced repo is ever relabeled into the PAT prune's blast radius.
+   */
+  async restoreAndClaimForPat(
+    userId: string,
+    ownerRepoPairs: { owner: string; repo: string }[],
+  ): Promise<void> {
+    if (!ownerRepoPairs.length) {
+      return;
+    }
+
+    await this.em
+      .createQueryBuilder(GitRepositoryEntity)
+      .update({
+        deletedAt: null,
+        syncSource: GitHubAuthMethod.Pat,
+        installationId: null,
+      })
+      .where({
+        createdBy: userId,
+        $or: ownerRepoPairs.map((pair) => ({
+          owner: pair.owner,
+          repo: pair.repo,
+        })),
+        deletedAt: { $ne: null },
+      })
+      .execute();
+  }
 }

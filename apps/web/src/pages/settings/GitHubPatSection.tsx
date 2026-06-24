@@ -3,6 +3,16 @@ import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -48,18 +58,27 @@ export const GitHubPatSection = ({
   const [replacing, setReplacing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [removing, setRemoving] = useState(false);
+  const [confirmingRemove, setConfirmingRemove] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Distinct from `error` (save/remove): a failed STATUS fetch must not silently
+  // drop to the empty "add a token" form (state A) — that implies no token
+  // exists and invites a confused re-entry. Surface an error + Retry instead.
+  const [statusError, setStatusError] = useState<string | null>(null);
 
   const fetchStatus = useCallback(async () => {
     if (!enabled) {
       setLoading(false);
       return;
     }
+    setLoading(true);
     try {
       const response = await gitAuthApi.getStatus();
       setStatus(response.data);
+      setStatusError(null);
     } catch (e: unknown) {
-      console.warn('Failed to fetch GitHub PAT status:', e);
+      setStatusError(
+        extractApiErrorMessage(e, 'Could not load your GitHub token status.'),
+      );
     } finally {
       setLoading(false);
     }
@@ -102,6 +121,7 @@ export const GitHubPatSection = ({
       setError(extractApiErrorMessage(e, 'Failed to remove the token.'));
     } finally {
       setRemoving(false);
+      setConfirmingRemove(false);
     }
   }, []);
 
@@ -129,6 +149,20 @@ export const GitHubPatSection = ({
       <Card className="p-4 space-y-3">
         {header}
         <Skeleton className="h-9 w-full" />
+      </Card>
+    );
+  }
+
+  if (statusError) {
+    return (
+      <Card className="p-4 space-y-3">
+        {header}
+        <Alert variant="destructive">
+          <AlertDescription>{statusError}</AlertDescription>
+        </Alert>
+        <Button variant="outline" onClick={fetchStatus}>
+          Retry
+        </Button>
       </Card>
     );
   }
@@ -201,7 +235,9 @@ export const GitHubPatSection = ({
           <Alert>
             <AlertDescription>
               Your personal access token takes precedence over the GitHub App
-              for your GitHub operations. Remove it to fall back to the App.
+              for your GitHub operations. While it is set, App-synced
+              repositories are not refreshed and may go stale. Remove it to fall
+              back to the App.
             </AlertDescription>
           </Alert>
         )}
@@ -212,12 +248,44 @@ export const GitHubPatSection = ({
           </Button>
           <Button
             variant="destructive"
-            onClick={handleRemove}
+            onClick={() => setConfirmingRemove(true)}
             disabled={removing}>
             {removing && <Loader2 className="h-4 w-4 animate-spin" />}
             Remove
           </Button>
         </div>
+        <AlertDialog
+          open={confirmingRemove}
+          onOpenChange={(open) => {
+            if (!open) {
+              setConfirmingRemove(false);
+            }
+          }}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Remove personal access token</AlertDialogTitle>
+              <AlertDialogDescription>
+                Your stored GitHub personal access token will be deleted.{' '}
+                {hasAppInstallations
+                  ? 'Your GitHub operations will fall back to the GitHub App.'
+                  : 'You have no GitHub App installation, so GitHub operations will stop working until you add a token again or connect the App.'}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={removing}>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={(e) => {
+                  e.preventDefault();
+                  handleRemove();
+                }}
+                disabled={removing}
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+                {removing && <Loader2 className="mr-1 size-4 animate-spin" />}
+                Remove token
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </Card>
     );
   }

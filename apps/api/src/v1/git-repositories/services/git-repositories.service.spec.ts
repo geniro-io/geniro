@@ -83,6 +83,7 @@ describe('GitRepositoriesService', () => {
             upsertMany: vi.fn(),
             upsertGithubSyncRepos: vi.fn(),
             restoreSoftDeleted: vi.fn(),
+            restoreAndClaimForPat: vi.fn(),
             count: vi.fn(),
           },
         },
@@ -1256,18 +1257,27 @@ describe('GitRepositoriesService', () => {
     it('does NOT throw GITHUB_APP_NOT_CONFIGURED when the user has a PAT but the App is unconfigured, and prunes ONLY the user own Pat rows', async () => {
       vi.mocked(gitHubAppProviderService.isConfigured).mockReturnValue(false);
       vi.mocked(dao.getAll).mockResolvedValue([]);
-      vi.mocked(dao.count).mockResolvedValue(0);
+      vi.mocked(dao.count).mockResolvedValue(1);
+      // A NON-EMPTY listing so the orphan-prune actually runs — an empty listing
+      // now skips the prune entirely (see the dedicated empty-listing test below).
       const fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValue({
         ok: true,
         status: 200,
-        json: async () => [],
+        json: async () => [
+          {
+            owner: { login: 'octo' },
+            name: 'hello',
+            html_url: 'https://github.com/octo/hello',
+            default_branch: 'main',
+          },
+        ],
         headers: { get: () => null },
       } as unknown as Response);
 
       await expect(service.syncRepositories(mockCtx)).resolves.toEqual({
-        synced: 0,
+        synced: 1,
         removed: 0,
-        total: 0,
+        total: 1,
       });
 
       // The orphan-prune is scoped strictly to the requesting user's PAT-synced
@@ -1281,6 +1291,34 @@ describe('GitRepositoriesService', () => {
         installationId: null,
       });
       expect(dao.count).toHaveBeenCalledWith({ createdBy: mockUserId });
+
+      fetchSpy.mockRestore();
+    });
+
+    it('skips the orphan-prune entirely when GET /user/repos returns an empty (200) listing — guards the data-loss path (F1)', async () => {
+      vi.mocked(gitHubAppProviderService.isConfigured).mockReturnValue(false);
+      // A previously-synced PAT repo exists; an empty listing must NOT prune it.
+      // validateAgainstGitHub only checks GET /user, so a scope-reduced PAT can
+      // pass save and then return 200 [] here — the destructive prune (Qdrant +
+      // index hard-delete) must be skipped, exactly like a truncated listing.
+      vi.mocked(dao.count).mockResolvedValue(1);
+      const fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => [],
+        headers: { get: () => null },
+      } as unknown as Response);
+
+      const result = await service.syncRepositories(mockCtx);
+
+      expect(result).toEqual({ synced: 0, removed: 0, total: 1 });
+      // Neither the scoped prune query nor the destructive deleteById run.
+      expect(dao.getAll).not.toHaveBeenCalledWith({
+        createdBy: mockUserId,
+        syncSource: GitHubAuthMethod.Pat,
+        installationId: null,
+      });
+      expect(dao.deleteById).not.toHaveBeenCalled();
 
       fetchSpy.mockRestore();
     });

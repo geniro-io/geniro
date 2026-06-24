@@ -109,4 +109,66 @@ describe('GitHubPatSection', () => {
       await screen.findByText(/takes precedence over the GitHub App/i),
     ).toBeInTheDocument();
   });
+
+  it('removes the token through a confirmation dialog and flips back to the input state', async () => {
+    getStatus.mockResolvedValue({ data: CONFIGURED });
+    const user = userEvent.setup();
+    render(<GitHubPatSection enabled hasAppInstallations={false} />);
+    expect(await screen.findByText(/Connected as/)).toBeInTheDocument();
+
+    // Clicking Remove only OPENS the confirm dialog — it must not delete yet.
+    await user.click(screen.getByRole('button', { name: 'Remove' }));
+    expect(deletePat).not.toHaveBeenCalled();
+
+    // Confirming in the dialog performs the delete and flips to state A.
+    await user.click(
+      await screen.findByRole('button', { name: 'Remove token' }),
+    );
+    await waitFor(() => expect(deletePat).toHaveBeenCalledTimes(1));
+    expect(await screen.findByLabelText('Token')).toBeInTheDocument();
+    expect(screen.queryByText(/Connected as/)).not.toBeInTheDocument();
+  });
+
+  it('keeps the connected state and surfaces an error when the remove fails', async () => {
+    getStatus.mockResolvedValue({ data: CONFIGURED });
+    deletePat.mockRejectedValue(new Error('cannot remove'));
+    const user = userEvent.setup();
+    render(<GitHubPatSection enabled hasAppInstallations={false} />);
+    expect(await screen.findByText(/Connected as/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Remove' }));
+    await user.click(
+      await screen.findByRole('button', { name: 'Remove token' }),
+    );
+    await waitFor(() => expect(deletePat).toHaveBeenCalled());
+
+    // The error surfaces and the card stays in the connected state (no flip).
+    expect(
+      await screen.findByText(/Failed to remove the token/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Connected as/)).toBeInTheDocument();
+  });
+
+  it('shows an error + Retry (not the empty add-token form) when the status fetch fails, and recovers on Retry', async () => {
+    // A failed status fetch must NOT silently drop to state A (which implies no
+    // token exists). It surfaces an error with a Retry that refetches.
+    getStatus.mockReset();
+    getStatus
+      .mockRejectedValueOnce(new Error('boom'))
+      .mockResolvedValue({ data: NO_PAT });
+    const user = userEvent.setup();
+    render(<GitHubPatSection enabled hasAppInstallations={false} />);
+
+    expect(
+      await screen.findByText(/Could not load your GitHub token status/i),
+    ).toBeInTheDocument();
+    // The empty add-token form must NOT be shown in the error state.
+    expect(screen.queryByLabelText('Token')).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Retry' }));
+
+    // Recovered: the error clears and the (NO_PAT) input form renders.
+    expect(await screen.findByLabelText('Token')).toBeInTheDocument();
+    expect(getStatus).toHaveBeenCalledTimes(2);
+  });
 });

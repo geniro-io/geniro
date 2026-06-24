@@ -322,6 +322,87 @@ describe('SecretsStoreService', () => {
     });
   });
 
+  describe('readUserSecret', () => {
+    // The load-bearing seam for the Q2 transient-vs-absent split: a {found}
+    // return = "definitively unretrievable, NOT a store outage" (caller fails
+    // CLOSED); a thrown InternalException = transient (caller may App-fallback).
+    it('returns { found: true, value } on a 200 with a well-formed body', async () => {
+      stubFetch({
+        ok: true,
+        status: 200,
+        json: vi
+          .fn()
+          .mockResolvedValue({ data: { data: { value: 'ghp_value' } } }),
+      });
+
+      const result = await service.readUserSecret('user-1', 'github-pat');
+
+      expect(result).toEqual({ found: true, value: 'ghp_value' });
+    });
+
+    it('returns { found: false } on a confirmed 404 (absent secret)', async () => {
+      stubFetch({ ok: false, status: 404, statusText: 'Not Found' });
+
+      const result = await service.readUserSecret('user-1', 'github-pat');
+
+      expect(result).toEqual({ found: false });
+    });
+
+    it('returns { found: false } on a 200 with a corrupt/malformed body — fail-closed, NOT transient', async () => {
+      // A 200 whose KV body has no string value at data.data.value is a corrupt
+      // secret; it must map to {found:false} (so the resolver fails CLOSED) and
+      // must NOT throw through the transient channel (which would mask it).
+      stubFetch({
+        ok: true,
+        status: 200,
+        json: vi.fn().mockResolvedValue({ data: { data: { wrong: 'shape' } } }),
+      });
+
+      const result = await service.readUserSecret('user-1', 'github-pat');
+
+      expect(result).toEqual({ found: false });
+    });
+
+    it('returns { found: false } on a 200 with an EMPTY-STRING value — a zero-length credential is corrupt, not "found"', async () => {
+      // extractSecretValue accepts '' (it is a string), but a zero-length value
+      // is unusable and never written by the validated put* path; it must fail
+      // CLOSED rather than reach a consumer as a falsy "no PAT" → App fallback.
+      stubFetch({
+        ok: true,
+        status: 200,
+        json: vi.fn().mockResolvedValue({ data: { data: { value: '' } } }),
+      });
+
+      const result = await service.readUserSecret('user-1', 'github-pat');
+
+      expect(result).toEqual({ found: false });
+    });
+
+    it('THROWS InternalException on a network error / timeout (transient)', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockRejectedValue(new Error('network down')),
+      );
+
+      await expect(
+        service.readUserSecret('user-1', 'github-pat'),
+      ).rejects.toThrow(InternalException);
+    });
+
+    it('THROWS InternalException on a non-404 error status (e.g. 503 — transient)', async () => {
+      stubFetch({
+        ok: false,
+        status: 503,
+        statusText: 'Service Unavailable',
+        text: vi.fn().mockResolvedValue('sealed'),
+      });
+
+      await expect(
+        service.readUserSecret('user-1', 'github-pat'),
+      ).rejects.toThrow(InternalException);
+    });
+  });
+
   describe('deleteUserSecret', () => {
     it('sends DELETE to the user-scoped KV v2 metadata path', async () => {
       const fetchMock = stubFetch({ ok: true, status: 204 });

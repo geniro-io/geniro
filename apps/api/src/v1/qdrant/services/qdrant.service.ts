@@ -383,6 +383,14 @@ export class QdrantService {
       await this.client.createPayloadIndex(collection, {
         field_name: field,
         field_schema: schema,
+        // Block until the index is built (and the segment flushed) so a filtered
+        // search issued immediately after indexing completes can actually use it.
+        // Points are upserted with wait:true (durable), but a filtered HNSW
+        // search needs this payload index ready too — without the wait it builds
+        // asynchronously, so under load a search can fire before the field is
+        // indexed and return empty results (the indexer's "ready ⇒ searchable"
+        // contract would silently break).
+        wait: true,
       });
     } catch (error) {
       // Qdrant returns an error if the index already exists — ignore it

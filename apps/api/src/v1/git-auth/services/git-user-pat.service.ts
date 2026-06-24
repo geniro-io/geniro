@@ -1,5 +1,9 @@
 import { Injectable } from '@nestjs/common';
-import { BadRequestException, InternalException } from '@packages/common';
+import {
+  BadRequestException,
+  DefaultLogger,
+  InternalException,
+} from '@packages/common';
 
 import { AppContextStorage } from '../../../auth/app-context-storage';
 import { SecretsStoreService } from '../../secrets-store/services/secrets-store.service';
@@ -28,6 +32,7 @@ export class GitUserPatService {
     private readonly gitUserPatDao: GitUserPatDao,
     private readonly secretsStore: SecretsStoreService,
     private readonly validator: GitPatValidatorService,
+    private readonly logger: DefaultLogger,
   ) {}
 
   /**
@@ -35,6 +40,18 @@ export class GitUserPatService {
    * token against GitHub `GET /user`, then write OpenBao-first-then-DB with a
    * snapshot rollback so a DB failure restores the store to its prior state.
    * The token VALUE is never logged or returned.
+   *
+   * Rollback-snapshot policy (single source for the DB-failure path): the prior
+   * value is read via {@link SecretsStoreService.readUserSecret}, which is the
+   * ONLY authority for "was there a prior value" and distinguishes three cases —
+   *   - prior FOUND      → restore it (put the prior value back),
+   *   - prior CONFIRMED-ABSENT (404) → delete the orphan we just wrote,
+   *   - prior UNKNOWN (transient read failure) → leave the just-written value in
+   *     place. We must NOT delete on a transient failure: a `.catch(() => null)`
+   *     that collapses "absent" and "could-not-read" into one would delete a
+   *     still-valid prior PAT on a compound (transient read + DB upsert) failure.
+   *     An orphaned value with no pointer row is unreachable and harmless
+   *     (overwritten on the next save), so leaving it is the safe choice.
    */
   async putPat(
     ctx: AppContextStorage,
@@ -46,12 +63,19 @@ export class GitUserPatService {
     const validatedAt = new Date().toISOString();
     const secretName = GitUserPatService.SECRET_NAME;
 
-    // OpenBao-first-then-DB with snapshot rollback (mirrors oauth-credentials):
-    // an unavailable store throws here BEFORE any DB write; the snapshot lets a
-    // later DB failure restore the store to its pre-write state.
-    const prior = await this.secretsStore
-      .getUserSecret(userId, secretName)
-      .catch(() => null);
+    // Snapshot the prior value (see the rollback-snapshot policy above). A
+    // transient read failure is captured as 'unknown' — NOT collapsed to
+    // "absent" — so the rollback never deletes a prior it could not prove gone.
+    let prior: { found: true; value: string } | { found: false } | 'unknown';
+    try {
+      prior = await this.secretsStore.readUserSecret(userId, secretName);
+    } catch {
+      prior = 'unknown';
+    }
+
+    // An unavailable store throws here BEFORE any DB write (assertAvailable in
+    // putUserSecret), so the fail-closed save semantics are preserved even
+    // though the snapshot read above swallowed the same unavailability.
     await this.secretsStore.putUserSecret(userId, secretName, token);
     try {
       await this.gitUserPatDao.upsertByUserId(userId, secretName, {
@@ -60,11 +84,12 @@ export class GitUserPatService {
         validatedAt,
       });
     } catch (error) {
-      // DB write failed — restore the store (best-effort): put the prior value
-      // back, or delete the orphan if there was none.
-      if (prior !== null) {
+      if (prior === 'unknown') {
+        // Prior unknown (transient read) — leave the just-written orphan; never
+        // delete a value we could not prove was absent.
+      } else if (prior.found) {
         await this.secretsStore
-          .putUserSecret(userId, secretName, prior)
+          .putUserSecret(userId, secretName, prior.value)
           .catch(() => undefined);
       } else {
         await this.secretsStore
@@ -123,27 +148,46 @@ export class GitUserPatService {
   }
 
   /**
-   * Resolve the user's stored PAT for the token resolver / repo sync. Returns
-   * null when the user has NO PAT (benign — the caller falls back to the App).
-   * Throws an `InternalException` when a PAT row IS present but its value cannot
-   * be read (fail-CLOSED): the gh-tool swallow-point guards re-throw
-   * `InternalException`, so a configured-but-broken PAT never silently degrades
-   * to an anonymous/App clone. Takes a bare `userId` — a non-HTTP leaf with no
-   * request context.
+   * Resolve the user's stored PAT for the token resolver / repo sync. Takes a
+   * bare `userId` — a non-HTTP leaf with no request context. Three outcomes,
+   * distinguished by {@link SecretsStoreService.readUserSecret}:
+   *
+   *   - NO PAT row → returns `null` (benign — the caller falls back to the App).
+   *   - Row present, store TRANSIENTLY unreadable (unavailable / 5xx / network /
+   *     timeout) → returns `null` (App fallback). A momentary OpenBao blip must
+   *     not fail-close git for EVERY PAT user when the GitHub App can serve the
+   *     request; the user's PAT is presumably valid, so degrade gracefully.
+   *   - Row present, value CONFIRMED-ABSENT (404) or corrupt → throws
+   *     `InternalException` (fail-CLOSED). The credential is genuinely broken
+   *     (row says configured, store has nothing); the gh-tool swallow-point
+   *     guards re-throw `InternalException`, so this surfaces to the user (who
+   *     re-saves) rather than silently degrading to an anonymous/App clone that
+   *     would mask the corruption indefinitely.
    */
   async resolvePatToken(userId: string): Promise<string | null> {
     const row = await this.gitUserPatDao.getOne({ userId });
     if (!row) {
       return null;
     }
+    let result: { found: true; value: string } | { found: false };
     try {
-      return await this.secretsStore.getUserSecret(userId, row.secretName);
-    } catch {
+      result = await this.secretsStore.readUserSecret(userId, row.secretName);
+    } catch (error) {
+      // Transient secrets-store failure — degrade to the App fallback rather
+      // than bricking git for every PAT user on a blip. The error messages are
+      // store-constructed (never carry the token), but keep the log terse.
+      this.logger.warn(
+        `Per-user GitHub PAT for user ${userId} is temporarily unreadable (transient secrets-store error); falling back to the GitHub App for this operation: ${error instanceof Error ? error.message : 'unknown error'}`,
+      );
+      return null;
+    }
+    if (!result.found) {
       throw new InternalException(
         'GITHUB_USER_PAT_UNREADABLE',
-        'A GitHub PAT is configured for the user but its value could not be read from the secrets store.',
+        'A GitHub PAT is configured for the user but its value is absent from the secrets store. Re-save the token in Settings.',
       );
     }
+    return result.value;
   }
 
   /**

@@ -507,16 +507,29 @@ export class GitRepositoriesService {
       let installationAccessible = true;
 
       do {
-        const response = await fetch(
-          `https://api.github.com/installation/repositories?per_page=100&page=${page}`,
-          {
-            headers: {
-              Authorization: `Bearer ${token}`,
-              Accept: 'application/vnd.github+json',
-              'X-GitHub-Api-Version': '2022-11-28',
+        let response: Response;
+        try {
+          response = await fetch(
+            `https://api.github.com/installation/repositories?per_page=100&page=${page}`,
+            {
+              headers: {
+                Authorization: `Bearer ${token}`,
+                Accept: 'application/vnd.github+json',
+                'X-GitHub-Api-Version': '2022-11-28',
+              },
+              signal: AbortSignal.timeout(10_000),
             },
-          },
-        );
+          );
+        } catch {
+          // Network error or AbortError (timeout). Bounded so a non-settling
+          // fetch cannot hold the per-user syncInProgress lock for undici's
+          // default ~5min — abort this run (the finally in syncRepositories
+          // releases the lock). Never echo the cause (token-derived detail).
+          throw new InternalException(
+            'GITHUB_INSTALLATION_REPO_LISTING_FAILED',
+            `Listing repositories for installation ${ghInstallationId} could not be completed (network error or timeout).`,
+          );
+        }
 
         this.logger.log(
           `[git-sync] user=${userId} installation=${ghInstallationId} page=${page} github_status=${response.status}`,
@@ -665,16 +678,29 @@ export class GitRepositoriesService {
     const MAX_PAGES = 100; // defensive bound: MAX_PAGES * PER_PAGE = 10k repos
     let page = 1;
     while (page <= MAX_PAGES) {
-      const response = await fetch(
-        `https://api.github.com/user/repos?per_page=${PER_PAGE}&page=${page}&affiliation=owner,collaborator,organization_member`,
-        {
-          headers: {
-            Authorization: `Bearer ${pat}`,
-            Accept: 'application/vnd.github+json',
-            'X-GitHub-Api-Version': '2022-11-28',
+      let response: Response;
+      try {
+        response = await fetch(
+          `https://api.github.com/user/repos?per_page=${PER_PAGE}&page=${page}&affiliation=owner,collaborator,organization_member`,
+          {
+            headers: {
+              Authorization: `Bearer ${pat}`,
+              Accept: 'application/vnd.github+json',
+              'X-GitHub-Api-Version': '2022-11-28',
+            },
+            signal: AbortSignal.timeout(10_000),
           },
-        },
-      );
+        );
+      } catch {
+        // Network error or AbortError (timeout). Bounded so a non-settling
+        // fetch cannot hold the per-user syncInProgress lock for undici's
+        // default ~5min — abort this run (the finally in syncRepositories
+        // releases the lock). Never echo the cause (token-derived detail).
+        throw new InternalException(
+          'GITHUB_PAT_REPO_LISTING_FAILED',
+          'GET /user/repos could not be completed (network error or timeout).',
+        );
+      }
 
       const rateLimitRemaining = response.headers.get('x-ratelimit-remaining');
       if (
@@ -743,6 +769,22 @@ export class GitRepositoriesService {
       );
     }
 
+    // An empty (but HTTP-200) /user/repos listing is treated as suspect, NOT as
+    // "the user revoked every repo". validateAgainstGitHub only checks GET /user,
+    // so a PAT regenerated without `repo` scope (classic) or scoped to zero repos
+    // (fine-grained) passes validate-on-save and then returns `200 []` here. If
+    // the prune ran on that, it would irreversibly hard-delete every previously
+    // synced repo's Qdrant collection + index (cleanupRepositoryResourcesById,
+    // outside any transaction). So an empty listing skips the orphan-prune,
+    // exactly like a truncated one — the upsert/restore block above is already
+    // length-gated for the same reason.
+    const emptyListing = allGithubRepos.length === 0;
+    if (emptyListing) {
+      this.logger.warn(
+        `[git-sync] user=${userId} pat sync returned an empty repository listing — skipping orphan-prune this run (a scope-reduced PAT or revoked org access can produce this; prune would otherwise destroy all synced indexes)`,
+      );
+    }
+
     this.logger.log(
       `[git-sync] user=${userId} pat sync repositories_received=${allGithubRepos.length}`,
     );
@@ -769,10 +811,15 @@ export class GitRepositoriesService {
         mergeSource: false,
       });
 
-      await this.gitRepositoriesDao.restoreSoftDeleted(
+      // Resurrect-and-claim: a soft-deleted row the PAT now lists (a Pat row, OR
+      // a cross-source App / manual row under PAT-exclusive precedence) is
+      // un-deleted AND claimed as a Pat row, so it becomes visible + PAT-prune-
+      // governed instead of a hidden, syncedAt-churning zombie (F6). A LIVE App
+      // row the PAT also lists is untouched (it is not soft-deleted), so its App
+      // source is preserved.
+      await this.gitRepositoriesDao.restoreAndClaimForPat(
         userId,
         allGithubRepos.map((r) => ({ owner: r.owner, repo: r.repo })),
-        GitHubAuthMethod.Pat,
       );
     }
 
@@ -784,9 +831,10 @@ export class GitRepositoriesService {
     // auth never triggers the irreversible cleanupRepositoryResourcesById
     // hard-delete (Qdrant collections + BullMQ jobs, outside any transaction)
     // against the other source's repositories. Skipped entirely on a truncated
-    // listing (see above).
+    // OR empty listing (see above) — neither is evidence the un-listed repos were
+    // revoked.
     let removed = 0;
-    if (!truncated) {
+    if (!truncated && !emptyListing) {
       const existingPatRepos = await this.gitRepositoriesDao.getAll({
         createdBy: userId,
         syncSource: GitHubAuthMethod.Pat,
