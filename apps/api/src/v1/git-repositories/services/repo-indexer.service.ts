@@ -121,9 +121,20 @@ export class RepoIndexerService {
 
   /**
    * Built-in file patterns excluded from indexing by default.
-   * Covers binary assets, compiled artifacts, lock files, and minified
-   * bundles that are semantically useless for vector search and waste tokens.
-   * Users can override via negations in .codebaseindexignore (e.g. `!*.svg`).
+   * Covers binary assets, compiled artifacts, lock files, minified bundles, and
+   * dependency / build / cache / tooling DIRECTORIES that are semantically
+   * useless for vector search and waste tokens.
+   *
+   * Directory patterns matter most for COMMITTED tooling metadata (`.github`,
+   * `.husky`, `.cursor`, …) that a repo's `.gitignore` does NOT cover — the
+   * dependency/build/cache dirs are usually already `.gitignore`'d (the indexer
+   * loads `.gitignore` too, see {@link buildIgnoreMatcher}), so listing them
+   * here is belt-and-braces for repos with an incomplete `.gitignore`.
+   *
+   * Patterns are gitignore-syntax: a bare name (e.g. `node_modules`, `.github`)
+   * matches that file/dir at ANY depth and ignores everything under it. A repo
+   * can re-include anything via a negation in `.codebaseindexignore` (e.g.
+   * `!*.svg`, `!.github/workflows/deploy.yml`).
    */
   private static readonly BUILTIN_EXCLUDE_PATTERNS: string[] = [
     // Images
@@ -207,6 +218,51 @@ export class RepoIndexerService {
     '*.sqlite',
     '*.sqlite3',
     '*.db',
+    // Dependency directories (usually .gitignore'd, but not every repo has a
+    // complete one — and these are pure noise for code search regardless)
+    'node_modules',
+    'bower_components',
+    'jspm_packages',
+    // Build / compile output
+    'dist',
+    'build',
+    'out',
+    'target',
+    '.next',
+    '.nuxt',
+    '.output',
+    '.svelte-kit',
+    '.gradle',
+    // Caches
+    '.turbo',
+    '.cache',
+    '.parcel-cache',
+    '__pycache__',
+    '.pytest_cache',
+    '.mypy_cache',
+    '.ruff_cache',
+    '.tox',
+    '.venv',
+    'venv',
+    // Coverage / test reports
+    'coverage',
+    '.nyc_output',
+    // VCS / CI / IDE / agent-tooling metadata. Committed (so NOT covered by a
+    // repo's .gitignore) yet noise for code search — the main gap built-ins fill.
+    '.github',
+    '.gitlab',
+    '.circleci',
+    '.husky',
+    '.vscode',
+    '.idea',
+    '.cursor',
+    '.claude',
+    '.docker',
+    // OS cruft
+    '.DS_Store',
+    'Thumbs.db',
+    // Logs
+    '*.log',
   ];
 
   /**

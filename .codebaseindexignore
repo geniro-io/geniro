@@ -1,14 +1,11 @@
-/.cursor
-/.claude
-/.docker
-/.github
-/.husky
+# Repo-specific codebase-indexing excludes — IN ADDITION to the indexer's
+# built-in defaults. Binary/lock/build/dependency/cache files and tooling-
+# metadata dirs (.github, .husky, .cursor, .claude, .docker, node_modules,
+# .turbo, dist, coverage, …) are already excluded globally by
+# BUILTIN_EXCLUDE_PATTERNS, so only patterns UNIQUE to this repo belong here.
 /docs
-/pnpm-lock.yaml
 /pnpm-workspace.yaml
 /release.config.cjs
-**/node_modules
-**/.turbo
 /CLAUDE.md
 /LICENSE
 /README.md

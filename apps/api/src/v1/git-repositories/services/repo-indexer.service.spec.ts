@@ -177,6 +177,56 @@ describe('RepoIndexerService', () => {
       expect(result).toBe(Math.floor(((4000 + 2000) / 3) * OVERLAP_FACTOR));
     });
 
+    it('excludes built-in dependency / build / tooling directories without any .codebaseindexignore (matched at any depth)', async () => {
+      const execFn: RepoExecFn = vi.fn().mockImplementation(async (params) => {
+        if (params.cmd.includes('ls-tree -r --long HEAD')) {
+          return {
+            exitCode: 0,
+            stdout: [
+              '100644 blob a1    4000\tsrc/app.ts',
+              '100644 blob a2    9000\tnode_modules/lib/index.js',
+              '100644 blob a3    3000\t.turbo/cache.json',
+              '100644 blob a4    2000\t.github/workflows/ci.yml',
+              '100644 blob a5    1500\t.husky/pre-commit',
+              '100644 blob a6    1200\tapps/web/.cursor/rules.md',
+              '100644 blob a7    8000\tdist/bundle.js',
+            ].join('\n'),
+            stderr: '',
+          };
+        }
+        return { exitCode: 0, stdout: '', stderr: '' };
+      });
+
+      const result = await service.estimateTokenCount('/repo', execFn);
+      // Only src/app.ts (4000) survives — every other path is a built-in
+      // directory exclude (including the nested apps/web/.cursor, matched at
+      // any depth) with NO .codebaseindexignore present.
+      expect(result).toBe(Math.floor((4000 / 3) * OVERLAP_FACTOR));
+    });
+
+    it('allows .codebaseindexignore to re-include a built-in excluded directory', async () => {
+      const execFn: RepoExecFn = vi.fn().mockImplementation(async (params) => {
+        if (params.cmd.includes('ls-tree -r --long HEAD')) {
+          return {
+            exitCode: 0,
+            stdout: [
+              '100644 blob b1    4000\tsrc/app.ts',
+              '100644 blob b2    2000\t.github/workflows/deploy.yml',
+            ].join('\n'),
+            stderr: '',
+          };
+        }
+        if (params.cmd.includes('.codebaseindexignore')) {
+          return { exitCode: 0, stdout: '!.github', stderr: '' };
+        }
+        return { exitCode: 0, stdout: '', stderr: '' };
+      });
+
+      const result = await service.estimateTokenCount('/repo', execFn);
+      // !.github re-includes the built-in-excluded directory → both files count.
+      expect(result).toBe(Math.floor(((4000 + 2000) / 3) * OVERLAP_FACTOR));
+    });
+
     it('uses factor 1.0 when overlap >= target tokens (no division by zero)', async () => {
       const mutableEnv = environment as {
         -readonly [K in keyof typeof environment]: (typeof environment)[K];
