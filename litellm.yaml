@@ -41,6 +41,9 @@ model_list:
       additional_drop_params: [ "stop" ]
     model_info:
       mode: embedding
+      max_input_tokens: 32768              # 32K context (OpenRouter); also feeds the indexer clamp
+      input_cost_per_token: 0.00000001     # $0.01 / 1M — verified on OpenRouter; LiteLLM has no price for this slug
+      output_cost_per_token: 0
 
   - model_name: gpt-5-mini
     litellm_params:
