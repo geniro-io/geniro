@@ -21,6 +21,7 @@ describe('GitTokenResolverService', () => {
   };
   let mockGitUserPatService: {
     resolvePatToken: ReturnType<typeof vi.fn>;
+    getPatSyncedOwners: ReturnType<typeof vi.fn>;
   };
 
   beforeEach(async () => {
@@ -35,8 +36,10 @@ describe('GitTokenResolverService', () => {
 
     // Default: the user has NO stored PAT (resolves to null), so the App path
     // runs — the existing behaviour. Per-user-PAT tests override this.
+    // getPatSyncedOwners defaults to an empty set (no per-owner hint).
     mockGitUserPatService = {
       resolvePatToken: vi.fn().mockResolvedValue(null),
+      getPatSyncedOwners: vi.fn().mockResolvedValue(new Set<string>()),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -226,7 +229,11 @@ describe('GitTokenResolverService', () => {
       mockGitUserPatService.resolvePatToken.mockResolvedValue('ghp_test_pat');
     });
 
-    it('resolveToken returns the PAT (source=Pat) and never touches the App path', async () => {
+    it('resolveToken returns the PAT (source=Pat) when the owner has no App installation', async () => {
+      // No App connection for this owner → the PAT is the only credential and
+      // wins. The per-owner reachable-set check is skipped (no App alternative).
+      mockConnectionDao.getOne.mockResolvedValue(null);
+
       const result = await service.resolveToken(
         GitProvider.GitHub,
         'some-org',
@@ -237,9 +244,103 @@ describe('GitTokenResolverService', () => {
         token: 'ghp_test_pat',
         source: GitHubAuthMethod.Pat,
       });
-      // PAT precedence is above the isConfigured() gate and the connection DAO.
-      expect(mockConnectionDao.getOne).not.toHaveBeenCalled();
       expect(mockGitHubAppService.getInstallationToken).not.toHaveBeenCalled();
+      expect(mockGitUserPatService.getPatSyncedOwners).not.toHaveBeenCalled();
+    });
+
+    it('resolveToken returns the PAT for an owner the PAT can reach, even when an App installation also covers it', async () => {
+      mockConnectionDao.getOne.mockResolvedValue({
+        metadata: { installationId: 1 },
+        isActive: true,
+      } as unknown as GitProviderConnectionEntity);
+      mockGitUserPatService.getPatSyncedOwners.mockResolvedValue(
+        new Set(['some-org']),
+      );
+
+      const result = await service.resolveToken(
+        GitProvider.GitHub,
+        'some-org',
+        'user-1',
+      );
+
+      expect(result).toEqual({
+        token: 'ghp_test_pat',
+        source: GitHubAuthMethod.Pat,
+      });
+      expect(mockGitHubAppService.getInstallationToken).not.toHaveBeenCalled();
+    });
+
+    it('resolveToken falls back to the App for an App-covered owner the PAT canNOT reach (e.g. an SSO-restricted org)', async () => {
+      // The PAT exists but its last sync never listed this owner (not in the
+      // reachable set) — using it would 403. An App installation covers the
+      // owner, so resolve via the App instead of the unreachable PAT.
+      mockConnectionDao.getOne.mockResolvedValue({
+        metadata: { installationId: 42 },
+        isActive: true,
+      } as unknown as GitProviderConnectionEntity);
+      mockGitUserPatService.getPatSyncedOwners.mockResolvedValue(
+        new Set(['other-org']),
+      );
+
+      const result = await service.resolveToken(
+        GitProvider.GitHub,
+        'some-org',
+        'user-1',
+      );
+
+      expect(result).toEqual({
+        token: 'ghs_app_token',
+        source: GitHubAuthMethod.GithubApp,
+      });
+      expect(mockGitHubAppService.getInstallationToken).toHaveBeenCalledWith(
+        42,
+      );
+    });
+
+    it('resolveToken matches the PAT-reachable owner case-insensitively', async () => {
+      mockConnectionDao.getOne.mockResolvedValue({
+        metadata: { installationId: 1 },
+        isActive: true,
+      } as unknown as GitProviderConnectionEntity);
+      mockGitUserPatService.getPatSyncedOwners.mockResolvedValue(
+        new Set(['some-org']),
+      );
+
+      const result = await service.resolveToken(
+        GitProvider.GitHub,
+        'Some-Org',
+        'user-1',
+      );
+
+      expect(result).toEqual({
+        token: 'ghp_test_pat',
+        source: GitHubAuthMethod.Pat,
+      });
+      expect(mockGitHubAppService.getInstallationToken).not.toHaveBeenCalled();
+    });
+
+    it('resolveToken falls back to the PAT when the App token fetch fails for an unreachable owner (best-available)', async () => {
+      mockConnectionDao.getOne.mockResolvedValue({
+        metadata: { installationId: 42 },
+        isActive: true,
+      } as unknown as GitProviderConnectionEntity);
+      mockGitUserPatService.getPatSyncedOwners.mockResolvedValue(
+        new Set<string>(),
+      );
+      mockGitHubAppService.getInstallationToken.mockRejectedValue(
+        new Error('app down'),
+      );
+
+      const result = await service.resolveToken(
+        GitProvider.GitHub,
+        'some-org',
+        'user-1',
+      );
+
+      expect(result).toEqual({
+        token: 'ghp_test_pat',
+        source: GitHubAuthMethod.Pat,
+      });
     });
 
     it('resolveToken resolves the PAT even when the GitHub App is NOT configured', async () => {

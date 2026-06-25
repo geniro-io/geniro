@@ -191,6 +191,42 @@ export class GitUserPatService {
   }
 
   /**
+   * Persist the set of owner logins the PAT's last `/user/repos` sync reached
+   * (lowercased + de-duplicated), merged into the existing pointer row's
+   * metadata so the display fields (login / tokenType / validatedAt) are
+   * preserved. Read back by {@link getPatSyncedOwners} for per-owner resolution.
+   * A no-op when the PAT row is gone (removed mid-sync) — benign. Called from
+   * the per-user PAT sync; the token VALUE is never touched here (only the
+   * non-secret owner-login hint metadata).
+   */
+  async updateSyncedOwners(userId: string, owners: string[]): Promise<void> {
+    const row = await this.gitUserPatDao.getOne({ userId });
+    if (!row) {
+      return;
+    }
+    const syncedOwners = Array.from(
+      new Set(owners.map((o) => o.toLowerCase())),
+    );
+    await this.gitUserPatDao.upsertByUserId(userId, row.secretName, {
+      ...row.metadata,
+      syncedOwners,
+    });
+  }
+
+  /**
+   * The lowercased owner logins the PAT can reach (from its last sync), for
+   * per-owner token-resolution precedence. Returns an EMPTY set when there is
+   * no row or no recorded owners (a pre-sync / pre-existing row) — the resolver
+   * treats an empty set as "no per-owner hint" and keeps the PAT-wins default,
+   * so absence never silently downgrades a PAT-only owner to the App.
+   */
+  async getPatSyncedOwners(userId: string): Promise<Set<string>> {
+    const row = await this.gitUserPatDao.getOne({ userId });
+    const owners = row?.metadata.syncedOwners ?? [];
+    return new Set(owners.map((o) => o.toLowerCase()));
+  }
+
+  /**
    * Prove the token against GitHub `GET /user`. Resolves the account login and
    * the token class for display metadata; throws a `BadRequestException` (this
    * is the user-facing save path) when GitHub rejects or cannot validate it.

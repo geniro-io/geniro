@@ -821,6 +821,18 @@ export class GitRepositoriesService {
         userId,
         allGithubRepos.map((r) => ({ owner: r.owner, repo: r.repo })),
       );
+
+      // Record the owners this PAT can reach so the token resolver can apply
+      // PER-OWNER precedence: an owner the PAT lists here resolves via the PAT,
+      // while an owner it could NOT reach (e.g. an org the classic PAT is not
+      // SSO-authorized for) but a GitHub App installation covers falls back to
+      // the App instead of 403-ing on the PAT. Only updated on a non-empty
+      // listing (this block) so a transient empty/failed listing never wipes the
+      // hint and silently downgrades every owner to the App.
+      await this.gitUserPatService.updateSyncedOwners(
+        userId,
+        allGithubRepos.map((r) => r.owner),
+      );
     }
 
     // Per-user orphan-prune. Scoped to (createdBy = userId AND syncSource = Pat

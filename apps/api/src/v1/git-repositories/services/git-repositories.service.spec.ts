@@ -40,6 +40,7 @@ describe('GitRepositoriesService', () => {
   let logger: DefaultLogger;
   let gitUserPatMock: {
     resolvePatToken: ReturnType<typeof vi.fn>;
+    updateSyncedOwners: ReturnType<typeof vi.fn>;
   };
 
   const mockUserId = 'user-123';
@@ -165,6 +166,8 @@ describe('GitRepositoriesService', () => {
             // Default: the user has no stored PAT — these unit tests exercise the
             // App-mode path (createdBy = the requesting user).
             resolvePatToken: vi.fn().mockResolvedValue(null),
+            // PAT sync records the reachable owners for per-owner resolution.
+            updateSyncedOwners: vi.fn().mockResolvedValue(undefined),
           },
         },
       ],
@@ -1291,6 +1294,14 @@ describe('GitRepositoriesService', () => {
         installationId: null,
       });
       expect(dao.count).toHaveBeenCalledWith({ createdBy: mockUserId });
+
+      // The reachable owners from this listing are recorded against the PAT so
+      // the token resolver can apply per-owner precedence (App fallback for an
+      // owner the PAT can't reach). Lowercasing/dedupe happens inside the call.
+      expect(gitUserPatMock.updateSyncedOwners).toHaveBeenCalledWith(
+        mockUserId,
+        ['octo'],
+      );
 
       fetchSpy.mockRestore();
     });

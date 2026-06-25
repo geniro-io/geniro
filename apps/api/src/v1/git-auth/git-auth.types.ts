@@ -122,4 +122,15 @@ export interface GitUserPatMetadata {
   tokenType: GitPatType;
   /** ISO-8601 timestamp of the successful validate-on-save check. */
   validatedAt: string;
+  /**
+   * Lowercased owner logins the PAT's last `/user/repos` sync could reach.
+   * Powers PER-OWNER token-resolution precedence (`GitTokenResolverService`):
+   * the PAT wins for owners it can reach, but an owner it could NOT reach (so
+   * it is absent here) which a GitHub App installation DOES cover falls back to
+   * the App rather than using a PAT that 403s. A classic PAT that is not
+   * SSO-authorized for an org never lists that org's repos, so the org is
+   * absent here and resolves via the App. Absent on a pre-existing row or before
+   * the first PAT sync — treated as "no per-owner hint" (PAT-wins default).
+   */
+  syncedOwners?: string[];
 }

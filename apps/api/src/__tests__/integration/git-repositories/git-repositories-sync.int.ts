@@ -147,6 +147,16 @@ describe('GitRepositoriesService sync (integration)', () => {
       .execute(`DELETE FROM git_repositories WHERE created_by = ?`, [
         PAT_USER_B_ID,
       ]);
+    // Defensive: a leaked git_user_pat row for these users (whose secret lives
+    // only in another file's in-memory store) would make the App-mode tests'
+    // resolvePatToken throw fail-closed. Clear it so this file's preconditions
+    // hold regardless of co-located files / prior failed runs.
+    await em
+      .getConnection()
+      .execute(`DELETE FROM git_user_pat WHERE user_id IN (?, ?)`, [
+        TEST_USER_ID,
+        PAT_USER_B_ID,
+      ]);
   }, 360_000);
 
   beforeEach(() => {
