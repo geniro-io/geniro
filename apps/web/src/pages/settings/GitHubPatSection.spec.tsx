@@ -3,16 +3,20 @@ import '@testing-library/jest-dom/vitest';
 
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router';
+import { toast } from 'sonner';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { getStatus, setPat, deletePat } = vi.hoisted(() => ({
+const { getStatus, setPat, deletePat, syncRepositories } = vi.hoisted(() => ({
   getStatus: vi.fn(),
   setPat: vi.fn(),
   deletePat: vi.fn(),
+  syncRepositories: vi.fn(),
 }));
 
 vi.mock('../../api', () => ({
   gitAuthApi: { getStatus, setPat, deletePat },
+  gitRepositoriesApi: { syncRepositories },
 }));
 
 vi.mock('sonner', () => ({
@@ -48,6 +52,9 @@ describe('GitHubPatSection', () => {
       },
     });
     deletePat.mockResolvedValue({});
+    syncRepositories.mockResolvedValue({
+      data: { synced: 3, removed: 1, total: 12 },
+    });
   });
 
   afterEach(() => {
@@ -100,6 +107,37 @@ describe('GitHubPatSection', () => {
     // Still on the input form (no flip to connected state).
     expect(screen.getByLabelText('Token')).toBeInTheDocument();
     expect(screen.queryByText(/Connected as/)).not.toBeInTheDocument();
+  });
+
+  it('syncs repositories via the PAT and reports the count in a toast (not a silent no-op)', async () => {
+    getStatus.mockResolvedValue({ data: CONFIGURED });
+    const user = userEvent.setup();
+    render(<GitHubPatSection enabled hasAppInstallations={false} />);
+
+    await user.click(
+      await screen.findByRole('button', { name: /Sync repositories/i }),
+    );
+    await waitFor(() => expect(syncRepositories).toHaveBeenCalledTimes(1));
+    expect(toast.success).toHaveBeenCalledWith(
+      expect.stringContaining('3 added'),
+    );
+  });
+
+  it('links to the Repositories page (where PAT repos appear) when a project href is provided', async () => {
+    getStatus.mockResolvedValue({ data: CONFIGURED });
+    render(
+      <MemoryRouter>
+        <GitHubPatSection
+          enabled
+          hasAppInstallations={false}
+          repositoriesHref="/projects/p1/repositories"
+        />
+      </MemoryRouter>,
+    );
+    const link = await screen.findByRole('link', {
+      name: /Repositories page/i,
+    });
+    expect(link).toHaveAttribute('href', '/projects/p1/repositories');
   });
 
   it('shows the precedence hint when the user also has a GitHub App installation', async () => {

@@ -8,6 +8,7 @@ import {
   GitHubIntegrationCard,
 } from '@/components/ui/github-integration-card';
 
+import { useProjectContext } from '../../contexts/ProjectContext';
 import { useSystemSettings } from '../../hooks/useSystemSettings';
 import { extractApiErrorMessage } from '../../utils/errors';
 import type {
@@ -20,6 +21,7 @@ import { GitHubPatSection } from './GitHubPatSection';
 
 export const IntegrationsPage = () => {
   const { settings, loading: settingsLoading } = useSystemSettings();
+  const { currentProjectId } = useProjectContext();
   const [loading, setLoading] = useState(true);
   const [removingInstallationId, setRemovingInstallationId] = useState<
     number | null
@@ -149,7 +151,7 @@ export const IntegrationsPage = () => {
   const handleReload = useCallback(async () => {
     setReloading(true);
     try {
-      await githubAppInstallationsApi.syncRepos();
+      const { data: syncResult } = await githubAppInstallationsApi.syncRepos();
       await fetchData();
       // Re-fetch repos for the currently expanded installation
       if (expandedInstallationId) {
@@ -166,7 +168,9 @@ export const IntegrationsPage = () => {
           // Non-critical — user can re-expand to retry
         }
       }
-      toast.success('Repositories synced successfully.');
+      toast.success(
+        `Sync complete: ${syncResult.synced} added, ${syncResult.removed} removed, ${syncResult.total} total`,
+      );
     } catch (e: unknown) {
       const errorMessage = extractApiErrorMessage(
         e,
@@ -331,6 +335,11 @@ export const IntegrationsPage = () => {
         <GitHubPatSection
           enabled={settings.githubUserPatEnabled}
           hasAppInstallations={hasInstallations}
+          repositoriesHref={
+            currentProjectId
+              ? `/projects/${currentProjectId}/repositories`
+              : null
+          }
         />
       )}
     </div>
