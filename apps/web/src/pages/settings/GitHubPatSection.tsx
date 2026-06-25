@@ -176,7 +176,7 @@ export const GitHubPatSection = ({
 
   if (!enabled) {
     return (
-      <Card className="p-4 space-y-2 opacity-80">
+      <Card className="p-3 gap-2 opacity-80">
         {header}
         <p className="text-sm text-muted-foreground">
           Personal access tokens require a configured secrets store. Contact
@@ -188,7 +188,7 @@ export const GitHubPatSection = ({
 
   if (loading) {
     return (
-      <Card className="p-4 space-y-3">
+      <Card className="p-3 gap-2">
         {header}
         <Skeleton className="h-9 w-full" />
       </Card>
@@ -197,7 +197,7 @@ export const GitHubPatSection = ({
 
   if (statusError) {
     return (
-      <Card className="p-4 space-y-3">
+      <Card className="p-3 gap-2">
         {header}
         <Alert variant="destructive">
           <AlertDescription>{statusError}</AlertDescription>
@@ -323,7 +323,7 @@ export const GitHubPatSection = ({
 
   if (status.configured && !replacing) {
     return (
-      <Card className="p-4 space-y-3">
+      <Card className="p-3 gap-2">
         {header}
         <div className="flex items-center gap-2 text-sm">
           <CheckCircle2 className="h-4 w-4 text-green-600" />
@@ -337,12 +337,12 @@ export const GitHubPatSection = ({
           )}
         </div>
         {status.validatedAt && (
-          <p className="text-xs text-muted-foreground">
+          <p className="text-xs text-muted-foreground my-1.5">
             Validated {new Date(status.validatedAt).toLocaleString()}
           </p>
         )}
         {hasAppInstallations && (
-          <Alert>
+          <Alert className="my-1.5">
             <AlertDescription>
               Your personal access token takes precedence over the GitHub App
               for your GitHub operations. While it is set, App-synced
@@ -426,7 +426,7 @@ export const GitHubPatSection = ({
   }
 
   return (
-    <Card className="p-4 space-y-3">
+    <Card className="p-3 gap-2">
       {header}
       <p className="text-sm text-muted-foreground">
         Use your own GitHub personal access token for all your GitHub
