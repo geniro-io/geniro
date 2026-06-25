@@ -752,4 +752,34 @@ describe('LitellmService', () => {
       });
     });
   });
+
+  describe('getModelMaxInputTokens', () => {
+    it('returns max_input_tokens when present', async () => {
+      const svc = createSvc(buildModelInfo({ max_input_tokens: 8191 }));
+      await expect(
+        svc.getModelMaxInputTokens('text-embedding-3-small'),
+      ).resolves.toBe(8191);
+    });
+
+    it('falls back to max_tokens when max_input_tokens is absent', async () => {
+      const svc = createSvc(buildModelInfo({ max_tokens: 4096 }));
+      await expect(svc.getModelMaxInputTokens('some-model')).resolves.toBe(
+        4096,
+      );
+    });
+
+    it('returns null when the model is unknown to LiteLLM', async () => {
+      const svc = createSvc(null);
+      await expect(
+        svc.getModelMaxInputTokens('mystery-model'),
+      ).resolves.toBeNull();
+    });
+
+    it('returns null for a non-positive window', async () => {
+      const svc = createSvc(buildModelInfo({ max_input_tokens: 0 }));
+      await expect(
+        svc.getModelMaxInputTokens('weird-model'),
+      ).resolves.toBeNull();
+    });
+  });
 });

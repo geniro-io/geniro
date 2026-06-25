@@ -324,6 +324,28 @@ export class LitellmService {
       .toNumber();
   }
 
+  /**
+   * The input-token window LiteLLM resolves for a model, or null when unknown.
+   * LiteLLM auto-populates this from its built-in model cost/context map (and
+   * the deployment's `base_model`), so it covers models registered dynamically
+   * at runtime via the management API — not only those pinned in litellm.yaml.
+   * Prefers `max_input_tokens`, falling back to `max_tokens`.
+   */
+  async getModelMaxInputTokens(model: string): Promise<number | null> {
+    const info = await this.getLiteLLMModelInfo(model);
+    const modelInfo = info?.model_info;
+    if (!modelInfo) {
+      return null;
+    }
+    const candidate =
+      modelInfo.max_input_tokens ?? modelInfo.max_tokens ?? null;
+    return typeof candidate === 'number' &&
+      Number.isFinite(candidate) &&
+      candidate > 0
+      ? candidate
+      : null;
+  }
+
   private async getLiteLLMModelInfo(
     model: string,
   ): Promise<LiteLLMModelInfo | null> {

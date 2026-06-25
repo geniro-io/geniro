@@ -1049,7 +1049,9 @@ export class RepoIndexerService {
     const processedPaths = new Set<string>();
     const batch: ChunkBatchItem[] = [];
     let batchTokenCount = 0;
-    const maxTokens = environment.codebaseEmbeddingMaxTokens;
+    const maxTokens = await this.resolveEmbeddingBatchBudget(
+      params.embeddingModel,
+    );
     let filesInCurrentBatch = 0;
 
     // Read files in parallel batches to overlap I/O
@@ -2025,6 +2027,37 @@ export class RepoIndexerService {
       }
     }
     throw lastError;
+  }
+
+  /**
+   * Per-request token budget for embedding batches, clamped to the model's own
+   * input-token window when LiteLLM exposes it. Embedding models often accept
+   * far fewer tokens per request than the CODEBASE_EMBEDDING_MAX_TOKENS default
+   * (e.g. text-embedding-3-small = 8191). LiteLLM resolves each model's window
+   * from its built-in cost/context map — including models registered at runtime
+   * — so the window is never hardcoded; the env value is the fallback when the
+   * window is unknown.
+   *
+   * Note: this clamps to the model's per-input window and uses it as a
+   * conservative per-request ceiling. It does NOT model a provider's dynamic
+   * per-request cap (e.g. OpenRouter's credit-based prompt limit), which LiteLLM
+   * does not expose.
+   */
+  private async resolveEmbeddingBatchBudget(
+    embeddingModel: string,
+  ): Promise<number> {
+    const envBudget = environment.codebaseEmbeddingMaxTokens;
+    const modelMax =
+      await this.litellmService.getModelMaxInputTokens(embeddingModel);
+    if (modelMax !== null && modelMax < envBudget) {
+      this.logger.debug('Clamped embedding batch budget to model window', {
+        embeddingModel,
+        envBudget,
+        modelMax,
+      });
+      return modelMax;
+    }
+    return envBudget;
   }
 
   private buildEmbeddingBatches(

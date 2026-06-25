@@ -43,6 +43,7 @@ const mockLitellmService = {
     decode: vi.fn((tokens: number[]) => tokens.map(() => 'a').join('')),
   }),
   countTokens: vi.fn().mockResolvedValue(10),
+  getModelMaxInputTokens: vi.fn().mockResolvedValue(null),
 };
 
 const mockLlmModelsService = {
@@ -1826,6 +1827,38 @@ describe('RepoIndexerService', () => {
             }),
           ]),
         }),
+      );
+    });
+  });
+
+  describe('resolveEmbeddingBatchBudget', () => {
+    const callResolve = (model: string): Promise<number> =>
+      (
+        service as unknown as {
+          resolveEmbeddingBatchBudget: (m: string) => Promise<number>;
+        }
+      ).resolveEmbeddingBatchBudget(model);
+
+    it('clamps the env budget down to the model window when smaller', async () => {
+      mockLitellmService.getModelMaxInputTokens.mockResolvedValue(8191);
+
+      await expect(callResolve('text-embedding-3-small')).resolves.toBe(8191);
+      expect(8191).toBeLessThan(environment.codebaseEmbeddingMaxTokens);
+    });
+
+    it('keeps the env budget when the model window is larger', async () => {
+      mockLitellmService.getModelMaxInputTokens.mockResolvedValue(300_000);
+
+      await expect(callResolve('big-window-model')).resolves.toBe(
+        environment.codebaseEmbeddingMaxTokens,
+      );
+    });
+
+    it('falls back to the env budget when the model window is unknown', async () => {
+      mockLitellmService.getModelMaxInputTokens.mockResolvedValue(null);
+
+      await expect(callResolve('mystery-model')).resolves.toBe(
+        environment.codebaseEmbeddingMaxTokens,
       );
     });
   });

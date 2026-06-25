@@ -138,6 +138,8 @@ export type LiteLLMModelInfo = {
     key: string;
     mode?: string;
     litellm_provider?: string;
+    max_input_tokens?: number | null;
+    max_tokens?: number | null;
     input_cost_per_token?: number;
     input_cost_per_token_cache_hit?: number;
     cache_read_input_token_cost?: number;
