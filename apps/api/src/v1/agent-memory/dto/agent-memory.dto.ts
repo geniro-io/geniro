@@ -1,6 +1,7 @@
 import { createZodDto } from 'nestjs-zod';
 import { z } from 'zod';
 
+import { environment } from '../../../environments';
 import type { RequestTokenUsage } from '../../litellm/litellm.types';
 import {
   AGENT_MEMORY_MAX_KEY_LENGTH,
@@ -8,7 +9,6 @@ import {
   AGENT_MEMORY_MAX_TAG_LENGTH,
   AGENT_MEMORY_MAX_TAGS_COUNT,
   AGENT_MEMORY_MAX_TITLE_LENGTH,
-  AGENT_MEMORY_SEARCH_MAX_LIMIT,
   AgentMemoryEntryMode,
 } from '../agent-memory.types';
 
@@ -127,7 +127,7 @@ export const SearchMemoryQuerySchema = z.object({
     .number()
     .int()
     .min(1)
-    .max(AGENT_MEMORY_SEARCH_MAX_LIMIT)
+    .max(environment.agentMemorySearchMaxLimit)
     .optional(),
 });
 

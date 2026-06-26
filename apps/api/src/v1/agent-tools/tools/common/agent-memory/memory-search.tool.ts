@@ -3,10 +3,7 @@ import { Injectable } from '@nestjs/common';
 import dedent from 'dedent';
 import { z } from 'zod';
 
-import {
-  AGENT_MEMORY_SEARCH_DEFAULT_LIMIT,
-  AGENT_MEMORY_SEARCH_MAX_LIMIT,
-} from '../../../../agent-memory/agent-memory.types';
+import { environment } from '../../../../../environments';
 import { BaseAgentConfigurable } from '../../../../agents/agents.types';
 import {
   ExtendedLangGraphRunnableConfig,
@@ -29,10 +26,10 @@ export const MemorySearchToolSchema = z.object({
     .number()
     .int()
     .min(1)
-    .max(AGENT_MEMORY_SEARCH_MAX_LIMIT)
+    .max(environment.agentMemorySearchMaxLimit)
     .optional()
     .describe(
-      `Maximum number of matches to return (default ${AGENT_MEMORY_SEARCH_DEFAULT_LIMIT}, max ${AGENT_MEMORY_SEARCH_MAX_LIMIT}).`,
+      `Maximum number of matches to return (default ${environment.agentMemorySearchDefaultLimit}, max ${environment.agentMemorySearchMaxLimit}).`,
     ),
 });
 export type MemorySearchToolSchemaType = z.infer<typeof MemorySearchToolSchema>;
@@ -89,7 +86,7 @@ export class MemorySearchTool extends AgentMemoryBaseTool<
     const { entries, usage } = await this.agentMemoryService.searchForProject(
       projectId,
       args.query,
-      args.limit ?? AGENT_MEMORY_SEARCH_DEFAULT_LIMIT,
+      args.limit ?? environment.agentMemorySearchDefaultLimit,
     );
 
     // Attribute the query-embedding (M2) token cost to this tool call. Undefined

@@ -19,7 +19,7 @@ import { NotFoundException } from '@packages/common';
 import { CtxStorage, OnlyForAuthorized } from '@packages/http-server';
 
 import { AppContextStorage } from '../../../auth/app-context-storage';
-import { AGENT_MEMORY_SEARCH_DEFAULT_LIMIT } from '../agent-memory.types';
+import { environment } from '../../../environments';
 import {
   AgentMemoryEntryDto,
   keySchema,
@@ -83,7 +83,7 @@ export class AgentMemoryController {
     return this.agentMemoryService.searchEntries(
       ctx,
       query.query,
-      query.limit ?? AGENT_MEMORY_SEARCH_DEFAULT_LIMIT,
+      query.limit ?? environment.agentMemorySearchDefaultLimit,
     );
   }
 

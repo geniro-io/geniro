@@ -189,12 +189,14 @@ export const environment = () =>
     agentsInstructionsFile: getEnv('AGENTS_INSTRUCTIONS_FILE', 'AGENTS.md'),
 
     // --- Agent memory (durable project-scoped store) ---
-    // Operational caps only: per-entry value byte size and the per-namespace /
-    // per-project entry quotas that drive prune-oldest. Parsed via
+    // Operational caps: per-entry value byte size, the per-namespace / per-project
+    // entry quotas that drive prune-oldest, the M2 semantic-search result bounds,
+    // and the embed-input truncation budget (model-coupled — tune it alongside
+    // LLM_EMBEDDING_DIMENSIONS when the embedding model changes). All parsed via
     // getEnvPositiveInt so a typo'd or boolean-token override can't silently
-    // disable a cap (NaN fails OPEN under `> cap`) or zero it (prune-to-empty).
-    // The namespace/key/title LENGTH bounds are column-bound constants, not env
-    // knobs — see AGENT_MEMORY_MAX_*_LENGTH in agent-memory.types.ts.
+    // disable a cap (NaN fails OPEN under `> cap`) or zero it. The
+    // namespace/key/title LENGTH bounds stay column-bound constants, not env knobs
+    // — see AGENT_MEMORY_MAX_*_LENGTH in agent-memory.types.ts.
     agentMemoryMaxValueBytes: getEnvPositiveInt(
       'AGENT_MEMORY_MAX_VALUE_BYTES',
       32768,
@@ -206,6 +208,26 @@ export const environment = () =>
     agentMemoryMaxEntriesPerProject: getEnvPositiveInt(
       'AGENT_MEMORY_MAX_ENTRIES_PER_PROJECT',
       2000,
+    ),
+    // Default + hard cap on `memory_search` results (shared by the agent tool
+    // schema and the REST DTO so both paths bound `limit` identically).
+    agentMemorySearchDefaultLimit: getEnvPositiveInt(
+      'AGENT_MEMORY_SEARCH_DEFAULT_LIMIT',
+      10,
+    ),
+    agentMemorySearchMaxLimit: getEnvPositiveInt(
+      'AGENT_MEMORY_SEARCH_MAX_LIMIT',
+      50,
+    ),
+    // Embed-input truncation budget. `value` can be up to 32 KB, which can exceed
+    // the embedding model's per-request token limit; truncating the embed input
+    // keeps a single best-effort embed call within budget. Conservative on
+    // purpose (chars≠tokens; dense/CJK content tokenizes ~1–2 chars/token) so the
+    // call never 400s and leaves a memory unsearchable. The full value is still
+    // stored verbatim in Postgres — only the vector is built from the head.
+    agentMemoryEmbedMaxChars: getEnvPositiveInt(
+      'AGENT_MEMORY_EMBED_MAX_CHARS',
+      8000,
     ),
 
     // --- Versions ---

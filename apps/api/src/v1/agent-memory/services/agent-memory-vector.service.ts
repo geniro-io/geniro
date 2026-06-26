@@ -6,10 +6,7 @@ import type { RequestTokenUsage } from '../../litellm/litellm.types';
 import { LlmModelsService } from '../../litellm/services/llm-models.service';
 import { OpenaiService } from '../../openai/openai.service';
 import { QdrantService } from '../../qdrant/services/qdrant.service';
-import {
-  AGENT_MEMORY_EMBED_MAX_CHARS,
-  AgentMemorySearchMatch,
-} from '../agent-memory.types';
+import { AgentMemorySearchMatch } from '../agent-memory.types';
 
 /** Stable namespace for deterministic agent-memory point IDs (UUID v5). */
 const AGENT_MEMORY_POINT_UUID_NS = '8f2a1c64-3d7e-4b9a-9c1d-2e6f0a5b7c83';
@@ -82,7 +79,7 @@ export class AgentMemoryVectorService {
   private buildEmbedInput(title: string | null, value: unknown): string {
     const body = typeof value === 'string' ? value : JSON.stringify(value);
     const text = [title, body].filter(Boolean).join('\n\n');
-    return text.slice(0, AGENT_MEMORY_EMBED_MAX_CHARS);
+    return text.slice(0, environment.agentMemoryEmbedMaxChars);
   }
 
   /**

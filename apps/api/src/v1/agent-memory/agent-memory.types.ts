@@ -30,25 +30,11 @@ export const AGENT_MEMORY_MAX_TITLE_LENGTH = 256;
 export const AGENT_MEMORY_MAX_TAG_LENGTH = 64;
 export const AGENT_MEMORY_MAX_TAGS_COUNT = 16;
 
-/**
- * Semantic-search (M2) caps. Column-bound constants, not env-tunable — same
- * rationale as the length caps above (the tool schema and the REST DTO both read
- * them so the agent and human search paths bound `limit` identically). Kept as
- * constants rather than env vars to avoid the `+getEnv` NaN fail-open the M1
- * review closed (H1) — a search bound that silently vanished would let an agent
- * request an unbounded result set.
- */
-export const AGENT_MEMORY_SEARCH_DEFAULT_LIMIT = 10;
-export const AGENT_MEMORY_SEARCH_MAX_LIMIT = 50;
-
-/**
- * Upper bound on the characters embedded per entry. `value` can be up to 32 KB,
- * which can exceed the embedding model's per-request token limit; truncating the
- * embed input keeps a single best-effort embed call within budget. The full
- * value is still stored verbatim in Postgres — only the vector is built from the
- * truncated text.
- */
-export const AGENT_MEMORY_EMBED_MAX_CHARS = 8000;
+// The M2 semantic-search bounds (default / max result limit) and the embed-input
+// truncation budget are operational, model-coupled knobs — they live in the env
+// (agentMemorySearchDefaultLimit / agentMemorySearchMaxLimit / agentMemoryEmbedMaxChars
+// in environment.prod.ts, parsed via getEnvPositiveInt, fail-closed). Only the
+// column-bound LENGTH caps above are baked constants.
 
 /** A semantic-search hit: enough to locate the entry, no body. */
 export interface AgentMemorySearchMatch {
