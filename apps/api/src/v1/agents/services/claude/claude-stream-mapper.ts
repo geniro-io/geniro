@@ -61,6 +61,19 @@ export class ClaudeStreamMapper {
 
   private readonly collected: BaseMessage[] = [];
   private readonly pendingToolNames = new Map<string, string>();
+  /**
+   * Name-keyed FIFO of SDK `tool_use_id`s for FORWARDED Geniro tool calls
+   * awaiting host dispatch. The bridge's `tool_call_request` carries only the
+   * bridge correlation id (`request.id`) — a different id space from the SDK
+   * `tool_use_id` the parent AI message records (the same split documented on
+   * `pendingToolUsage` below). The dispatcher drains this by tool name
+   * (`resolveToolUseId`) to recover the `tool_use_id` and stamp it as
+   * `__toolCallId`, so a delegated agent's inner messages carry the SAME id the
+   * UI groups Communication blocks by. Only `mcp__geniro__`-prefixed tools are
+   * queued — built-in SDK tools (run in-sandbox, never dispatched to the host)
+   * are excluded so the queue stays balanced 1:1 with host dispatch.
+   */
+  private readonly pendingToolUseIds = new Map<string, string[]>();
   private answeredToolCallNames: string[] = [];
   /**
    * SDK assistant `message.id`s whose `usage` has already been stamped +
@@ -164,6 +177,32 @@ export class ClaudeStreamMapper {
     this.toolUsageTotals.totalPrice += usage.totalPrice ?? 0;
   }
 
+  /**
+   * Host-dispatcher hook: name-FIFO join from a dispatcher tool name to the SDK
+   * `tool_use_id` of the next pending forwarded call, consuming it. The bridge
+   * correlation id (`request.id`) and the SDK `tool_use_id` live in different id
+   * spaces, so name-FIFO is the only host-side join available. The dispatcher
+   * stamps the resolved id as `__toolCallId` so a delegated agent's inner
+   * messages carry the SAME id the parent AI message recorded for the
+   * `communication_exec` tool call — which is the id the UI groups Communication
+   * blocks by. Returns `undefined` when no pending id matches (the dispatcher
+   * falls back to its own `request.id`). Concurrent same-name calls can at worst
+   * swap attribution between siblings; every rollup above per-call granularity
+   * is unaffected (same caveat as the usage FIFO).
+   */
+  resolveToolUseId(toolName: string): string | undefined {
+    const name = this.normalizeToolName(toolName);
+    const ids = this.pendingToolUseIds.get(name);
+    if (!ids?.length) {
+      return undefined;
+    }
+    const id = ids.shift();
+    if (ids.length === 0) {
+      this.pendingToolUseIds.delete(name);
+    }
+    return id;
+  }
+
   /** Emit any buffered assistant batch. Call after the stream ends. */
   flush(): void {
     if (!this.pendingAssistant) {
@@ -251,8 +290,18 @@ export class ClaudeStreamMapper {
     const toolCalls: ToolCall[] = blocks
       .filter((block) => block.type === 'tool_use' && block.id && block.name)
       .map((block) => {
-        const name = this.normalizeToolName(block.name as string);
+        const rawName = block.name as string;
+        const name = this.normalizeToolName(rawName);
         this.pendingToolNames.set(block.id as string, name);
+        // Built-in SDK tools (Bash/Read/Edit) run in-sandbox and never produce
+        // a host `tool_call_request`, so only `mcp__geniro__`-forwarded tools
+        // are queued (under the bare name) — queuing a built-in would drift the
+        // FIFO vs host dispatch.
+        if (rawName.startsWith(GENIRO_MCP_PREFIX)) {
+          const ids = this.pendingToolUseIds.get(name) ?? [];
+          ids.push(block.id as string);
+          this.pendingToolUseIds.set(name, ids);
+        }
         return {
           id: block.id as string,
           name,

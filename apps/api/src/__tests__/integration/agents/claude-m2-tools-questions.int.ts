@@ -181,7 +181,10 @@ describe('Claude Agent M2 — tools & questions (integration)', () => {
             graph_project_id: projectId,
           } as BaseAgentConfigurable,
         },
-        mapper: { recordToolUsage } as unknown as ClaudeStreamMapper,
+        mapper: {
+          recordToolUsage,
+          resolveToolUseId: vi.fn().mockReturnValue(undefined),
+        } as unknown as ClaudeStreamMapper,
         logger: mockDeep<DefaultLogger>(),
         signal: new AbortController().signal,
         send: (command) => sent.push(command),
@@ -685,7 +688,10 @@ describe('Claude Agent M2 — tools & questions (integration)', () => {
               graph_project_id: projectId,
             } as BaseAgentConfigurable,
           },
-          mapper: { recordToolUsage } as unknown as ClaudeStreamMapper,
+          mapper: {
+            recordToolUsage,
+            resolveToolUseId: vi.fn().mockReturnValue(undefined),
+          } as unknown as ClaudeStreamMapper,
           logger: mockDeep<DefaultLogger>(),
           signal: new AbortController().signal,
           send: (command) => sent.push(command),

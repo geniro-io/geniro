@@ -1,11 +1,14 @@
 import type { DynamicStructuredTool } from '@langchain/core/tools';
-import type { BridgeCommand } from '@packages/claude-bridge';
+import type {
+  BridgeCommand,
+  SdkAssistantMessage,
+} from '@packages/claude-bridge';
 import type { DefaultLogger } from '@packages/common';
 import { describe, expect, it, vi } from 'vitest';
 import { mockDeep } from 'vitest-mock-extended';
 
 import type { BaseAgentConfigurable } from '../../agents.types';
-import type { ClaudeStreamMapper } from './claude-stream-mapper';
+import { ClaudeStreamMapper } from './claude-stream-mapper';
 import { ClaudeToolDispatcher } from './claude-tool-dispatcher';
 
 type InvokeMock = ReturnType<typeof vi.fn>;
@@ -16,7 +19,10 @@ const buildDispatcher = (overrides?: {
   shouldRefuse?: () => string | null;
 }) => {
   const sent: BridgeCommand[] = [];
-  const mapper = { recordToolUsage: vi.fn() };
+  const mapper = {
+    recordToolUsage: vi.fn(),
+    resolveToolUseId: vi.fn().mockReturnValue(undefined),
+  };
   const logger = mockDeep<DefaultLogger>();
   const dispatcher = new ClaudeToolDispatcher({
     tools: overrides?.tools ?? new Map(),
@@ -85,6 +91,133 @@ describe('ClaudeToolDispatcher', () => {
     expect(sent).toEqual([
       { type: 'tool_call_response', id: 'tool-7', result: 'plain result' },
     ]);
+  });
+
+  it('stamps the mapper-resolved SDK tool_use_id as __toolCallId (Communication-block join)', async () => {
+    const invoke = vi.fn().mockResolvedValue({ output: 'delegated' });
+    const tools = new Map([['communication_exec', buildTool(invoke)]]);
+    const { dispatcher, sent, mapper } = buildDispatcher({ tools });
+    mapper.resolveToolUseId.mockReturnValueOnce('toolu_comm_1');
+
+    dispatcher.dispatch({
+      id: 'tool-3-abc',
+      toolName: 'communication_exec',
+      args: { message: 'go' },
+    });
+    await flush();
+
+    expect(mapper.resolveToolUseId).toHaveBeenCalledWith('communication_exec');
+    expect(invoke).toHaveBeenCalledWith(
+      { message: 'go' },
+      expect.objectContaining({
+        configurable: expect.objectContaining({
+          // the SDK tool_use_id, NOT the bridge correlation request.id —
+          // this is what the UI groups Communication blocks by.
+          __toolCallId: 'toolu_comm_1',
+        }),
+      }),
+    );
+    // The bridge correlates its reply by request.id; that pairing is untouched.
+    expect(sent).toEqual([
+      { type: 'tool_call_response', id: 'tool-3-abc', result: 'delegated' },
+    ]);
+  });
+
+  it('falls back to request.id for __toolCallId when no tool_use_id is pending', async () => {
+    const invoke = vi.fn().mockResolvedValue({ output: 'ok' });
+    const tools = new Map([['search', buildTool(invoke)]]);
+    const { dispatcher, mapper } = buildDispatcher({ tools });
+    mapper.resolveToolUseId.mockReturnValueOnce(undefined);
+
+    dispatcher.dispatch({ id: 'tool-9', toolName: 'search', args: {} });
+    await flush();
+
+    expect(invoke).toHaveBeenCalledWith(
+      {},
+      expect.objectContaining({
+        configurable: expect.objectContaining({ __toolCallId: 'tool-9' }),
+      }),
+    );
+  });
+
+  it('does not inherit a cost-refused delegation tool_use_id on the next delegation (real mapper, FIFO not drained on refusal)', async () => {
+    // Real mapper wired to a real dispatcher — the production wiring. The parent
+    // stream makes TWO communication_exec calls with distinct SDK tool_use_ids.
+    const mapper = new ClaudeStreamMapper({
+      threadId: 'thread-1',
+      config: { configurable: { thread_id: 'thread-1' } as never },
+      model: 'claude-sonnet-4-6',
+      emit: () => {},
+    });
+    const commCall = (msgId: string, tuId: string): SdkAssistantMessage => ({
+      type: 'assistant',
+      session_id: 'sess-1',
+      parent_tool_use_id: null,
+      message: {
+        id: msgId,
+        model: 'claude-sonnet-4-6',
+        content: [
+          {
+            type: 'tool_use',
+            id: tuId,
+            name: 'mcp__geniro__communication_exec',
+            input: {},
+          },
+        ],
+        usage: { input_tokens: 1, output_tokens: 1 },
+      },
+    });
+    mapper.onSdkMessage(commCall('m-1', 'toolu_first'));
+    mapper.onSdkMessage(commCall('m-2', 'toolu_second'));
+
+    const captured: (string | undefined)[] = [];
+    const tool = {
+      invoke: async (
+        _a: unknown,
+        cfg: { configurable?: { __toolCallId?: string } },
+      ) => {
+        captured.push(cfg.configurable?.__toolCallId);
+        return { output: 'ok' };
+      },
+    } as unknown as DynamicStructuredTool;
+
+    // shouldRefuse trips on the FIRST dispatch only (e.g. a transient cost-limit
+    // / stop state), then clears — so the first call's tool_use_id is enqueued
+    // but never consumed (the dispatcher early-returns before the FIFO join).
+    let refuseNext = true;
+    const dispatcher = new ClaudeToolDispatcher({
+      tools: new Map([['communication_exec', tool]]),
+      config: { configurable: { thread_id: 'thread-1' } as never },
+      mapper,
+      logger: mockDeep<DefaultLogger>(),
+      signal: new AbortController().signal,
+      send: () => {},
+      shouldRefuse: () => {
+        if (refuseNext) {
+          refuseNext = false;
+          return 'Cost limit reached';
+        }
+        return null;
+      },
+    });
+
+    dispatcher.dispatch({
+      id: 'bridge-1',
+      toolName: 'communication_exec',
+      args: {},
+    });
+    await flush();
+    dispatcher.dispatch({
+      id: 'bridge-2',
+      toolName: 'communication_exec',
+      args: {},
+    });
+    await flush();
+
+    // Only the second call actually ran. It must carry ITS OWN tool_use_id —
+    // not the refused first call's, which would route this live delegation's
+    // inner messages under the dead delegation's Communication block.
+    expect(captured).toEqual(['toolu_second']);
   });
 
   it('formats object outputs as YAML (ToolExecutorNode parity)', async () => {
@@ -254,7 +387,10 @@ describe('ClaudeToolDispatcher', () => {
           node_id: 'node-1',
         } as BaseAgentConfigurable,
       },
-      mapper: { recordToolUsage: vi.fn() } as unknown as ClaudeStreamMapper,
+      mapper: {
+        recordToolUsage: vi.fn(),
+        resolveToolUseId: vi.fn().mockReturnValue(undefined),
+      } as unknown as ClaudeStreamMapper,
       logger: mockDeep<DefaultLogger>(),
       signal: new AbortController().signal,
       send: (command) => {

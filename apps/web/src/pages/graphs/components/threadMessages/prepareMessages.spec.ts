@@ -173,6 +173,250 @@ const findStreamingReasoning = (
       item.id === `reasoning-${reasoningId}`,
   );
 
+// ── Communication-block delegation grouping (Claude-path id-space fix) ─────────
+
+/** AI message that owns a single communication_exec tool call. */
+const makeCommCallMsg = (
+  id: string,
+  toolCallId: string,
+  agent: string,
+  session: string,
+  createdAt: string,
+): ThreadMessageDto => ({
+  id,
+  threadId: 'thread-1',
+  nodeId: 'manager',
+  externalThreadId: '',
+  createdAt,
+  updatedAt: createdAt,
+  message: {
+    id,
+    role: 'ai' as string,
+    content: '',
+    toolCalls: [
+      {
+        id: toolCallId,
+        name: 'communication_exec',
+        args: { agent, session, message: 'go', purpose: 'delegate' },
+      },
+    ],
+  } as ThreadMessageDto['message'],
+});
+
+/** A delegated agent's inner reply, stamped with the parent call id (or, for
+ *  the legacy case, a bridge correlation id that does NOT match any call). */
+const makeCommInnerMsg = (
+  id: string,
+  toolCallId: string | undefined,
+  content: string,
+  createdAt: string,
+  externalThreadId = '',
+): ThreadMessageDto => {
+  const kwargs: Record<string, unknown> = { __interAgentCommunication: true };
+  if (toolCallId) {
+    kwargs.__toolCallId = toolCallId;
+  }
+  return makeMsg(id, 'ai', content, kwargs, {
+    nodeId: 'engineer',
+    externalThreadId,
+    createdAt,
+    updatedAt: createdAt,
+  });
+};
+
+/** Tool result that closes a communication_exec call. */
+const makeCommResultMsg = (
+  id: string,
+  toolCallId: string,
+  createdAt: string,
+): ThreadMessageDto => ({
+  id,
+  threadId: 'thread-1',
+  nodeId: 'manager',
+  externalThreadId: '',
+  createdAt,
+  updatedAt: createdAt,
+  message: {
+    id,
+    role: 'tool' as string,
+    content: 'peer answered',
+    name: 'communication_exec',
+    toolCallId,
+  } as ThreadMessageDto['message'],
+});
+
+const findCommBlocks = (
+  items: PreparedMessage[],
+): (PreparedMessage & { type: 'communication' })[] =>
+  collectItems(
+    items,
+    (item) => item.type === 'communication',
+  ) as (PreparedMessage & {
+    type: 'communication';
+  })[];
+
+describe('Communication-block delegation grouping (Claude-path id-space fix)', () => {
+  it('renders two distinct same-agent delegations as two separate blocks keyed by the parent tool_use_id', () => {
+    // After the backend fix each delegation's inner messages carry the SDK
+    // tool_use_id of their parent communication_exec call, so the primary
+    // grouping key hits and the two delegations no longer fold into one block.
+    const msgs = [
+      makeCommCallMsg(
+        'p-a',
+        'toolu_A',
+        'Engineer',
+        'probe',
+        '2024-01-01T00:00:00.000Z',
+      ),
+      makeCommInnerMsg(
+        'inner-a',
+        'toolu_A',
+        'probe result',
+        '2024-01-01T00:00:05.000Z',
+      ),
+      makeCommResultMsg('r-a', 'toolu_A', '2024-01-01T00:00:06.000Z'),
+      makeCommCallMsg(
+        'p-b',
+        'toolu_B',
+        'Engineer',
+        'plan',
+        '2024-01-01T00:01:00.000Z',
+      ),
+      makeCommInnerMsg(
+        'inner-b',
+        'toolu_B',
+        'plan result',
+        '2024-01-01T00:01:05.000Z',
+      ),
+      makeCommResultMsg('r-b', 'toolu_B', '2024-01-01T00:01:06.000Z'),
+    ];
+
+    const prepared = prepareReadyMessages(msgs, defaultOptions);
+    const blocks = findCommBlocks(prepared);
+
+    expect(blocks).toHaveLength(2);
+    const byId = new Map(blocks.map((b) => [b.toolCallId, b]));
+    expect(byId.has('toolu_A')).toBe(true);
+    expect(byId.has('toolu_B')).toBe(true);
+
+    // The session label (badge) is preserved per delegation.
+    expect(byId.get('toolu_A')!.sessionLabel).toBe('probe');
+    expect(byId.get('toolu_B')!.sessionLabel).toBe('plan');
+
+    // Each block contains ONLY its own delegation's inner content — the second
+    // delegation must NOT be folded into the first, already-completed block.
+    const blockA = JSON.stringify(byId.get('toolu_A')!.innerMessages);
+    const blockB = JSON.stringify(byId.get('toolu_B')!.innerMessages);
+    expect(blockA).toContain('probe result');
+    expect(blockA).not.toContain('plan result');
+    expect(blockB).toContain('plan result');
+    expect(blockB).not.toContain('probe result');
+  });
+
+  it('still groups a legacy inner message via the single-call fallback when no __toolCallId or agent-name matches', () => {
+    // Pre-fix / SimpleAgent rows: the inner message carries a bridge correlation
+    // id that is NOT a known communication_exec call id, AND no externalThreadId
+    // agent-name match — so only the `communicationToolCallIds.size === 1`
+    // fallback can route it. This pins that the fallback is not removed.
+    const msgs = [
+      makeCommCallMsg(
+        'p-x',
+        'toolu_X',
+        'Engineer',
+        'solo',
+        '2024-01-01T00:00:00.000Z',
+      ),
+      makeCommInnerMsg(
+        'inner-x',
+        'bridge-tool-1', // not in communicationToolCallIds
+        'legacy result',
+        '2024-01-01T00:00:05.000Z',
+        '', // no externalThreadId agent-name match either
+      ),
+      makeCommResultMsg('r-x', 'toolu_X', '2024-01-01T00:00:06.000Z'),
+    ];
+
+    const prepared = prepareReadyMessages(msgs, defaultOptions);
+    const blocks = findCommBlocks(prepared);
+
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]!.toolCallId).toBe('toolu_X');
+    expect(JSON.stringify(blocks[0]!.innerMessages)).toContain('legacy result');
+  });
+});
+
+// ── Streaming-order fold reproduction (Claude-bridge parent-at-end timing) ─────
+//
+// The Claude bridge persists each communication_exec parent message at the END
+// of its delegation (usage stamped at turn end, insert-only), so a delegation's
+// inner messages carry a createdAt BEFORE their own parent call. With bridge
+// correlation ids (pre-fix) the inner messages miss the primary grouping key and
+// fall to resolveCommByTimestamp, which assigns them to the latest call created
+// at-or-before the message — i.e. the PREVIOUS delegation's call — folding
+// delegation 2 into delegation 1's block. (This is the user-reported bug; the
+// earlier grouping tests above used createdAt='' and an empty externalThreadId,
+// so they did NOT reproduce the fold.) The SDK tool_use_id fix routes the inner
+// messages via the primary path, keeping each delegation separate.
+describe('Communication-block streaming-order fold (Claude-bridge parent-at-end)', () => {
+  const build = (d1Id: string, d2Id: string): ThreadMessageDto[] => [
+    makeCommInnerMsg(
+      'i1',
+      d1Id,
+      'probe result',
+      '2024-01-01T00:00:05.000Z',
+      'b__Engineer__probe',
+    ),
+    makeCommCallMsg(
+      'p1',
+      'toolu_A',
+      'Engineer',
+      'probe',
+      '2024-01-01T00:00:10.000Z',
+    ),
+    makeCommResultMsg('r1', 'toolu_A', '2024-01-01T00:00:11.000Z'),
+    makeCommInnerMsg(
+      'i2',
+      d2Id,
+      'plan result',
+      '2024-01-01T00:00:15.000Z',
+      'b__Engineer__plan',
+    ),
+    makeCommCallMsg(
+      'p2',
+      'toolu_B',
+      'Engineer',
+      'plan',
+      '2024-01-01T00:00:20.000Z',
+    ),
+    makeCommResultMsg('r2', 'toolu_B', '2024-01-01T00:00:21.000Z'),
+  ];
+
+  const planLocation = (msgs: ThreadMessageDto[]) => {
+    const blocks = findCommBlocks(prepareReadyMessages(msgs, defaultOptions));
+    const byId = new Map(
+      blocks.map((b) => [b.toolCallId, JSON.stringify(b.innerMessages)]),
+    );
+    return {
+      inProbeBlock: Boolean(byId.get('toolu_A')?.includes('plan result')),
+      inPlanBlock: Boolean(byId.get('toolu_B')?.includes('plan result')),
+    };
+  };
+
+  it('reproduces the bug: bridge correlation ids fold the second delegation into the first block', () => {
+    expect(planLocation(build('bridge-tool-1', 'bridge-tool-2'))).toEqual({
+      inProbeBlock: true,
+      inPlanBlock: false,
+    });
+  });
+
+  it('the SDK tool_use_id fix keeps each delegation in its own block', () => {
+    expect(planLocation(build('toolu_A', 'toolu_B'))).toEqual({
+      inProbeBlock: false,
+      inPlanBlock: true,
+    });
+  });
+});
+
 // ── Scenario (a): orphan with __toolCallId routes into executed block ─────────
 
 describe('adoptOrphanStreamingReasoning — keyed by __toolCallId', () => {

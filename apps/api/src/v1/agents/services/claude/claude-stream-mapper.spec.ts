@@ -70,6 +70,72 @@ describe('ClaudeStreamMapper', () => {
       { type: 'stateUpdate' }
     >[];
 
+  const toolUse = (id: string, name: string) => ({
+    type: 'tool_use' as const,
+    id,
+    name,
+    input: {},
+  });
+
+  describe('resolveToolUseId (name-FIFO join for the Communication-block fix)', () => {
+    it('returns a forwarded tool call SDK tool_use_id by name, consuming it FIFO', () => {
+      mapper.onSdkMessage(
+        assistant({
+          content: [toolUse('toolu_comm_1', 'mcp__geniro__communication_exec')],
+        }),
+      );
+
+      // the mcp__geniro__ prefix is stripped — the dispatcher passes the bare name
+      expect(mapper.resolveToolUseId('communication_exec')).toBe(
+        'toolu_comm_1',
+      );
+      // consumed — a second resolve of the same name finds nothing pending
+      expect(mapper.resolveToolUseId('communication_exec')).toBeUndefined();
+    });
+
+    it('resolves two same-name forwarded calls in FIFO order', () => {
+      mapper.onSdkMessage(
+        assistant({
+          id: 'msg-a',
+          content: [toolUse('toolu_comm_1', 'mcp__geniro__communication_exec')],
+        }),
+      );
+      mapper.onSdkMessage(
+        assistant({
+          id: 'msg-b',
+          content: [toolUse('toolu_comm_2', 'mcp__geniro__communication_exec')],
+        }),
+      );
+
+      expect(mapper.resolveToolUseId('communication_exec')).toBe(
+        'toolu_comm_1',
+      );
+      expect(mapper.resolveToolUseId('communication_exec')).toBe(
+        'toolu_comm_2',
+      );
+      expect(mapper.resolveToolUseId('communication_exec')).toBeUndefined();
+    });
+
+    it('returns undefined when no forwarded call of that name is pending', () => {
+      expect(mapper.resolveToolUseId('communication_exec')).toBeUndefined();
+    });
+
+    it('does not enqueue built-in (non-forwardable) tools — they never dispatch to the host', () => {
+      // Built-in SDK tools (Bash/Read/Edit) run in-sandbox and never produce a
+      // host tool_call_request, so their tool_use_id must not be queued.
+      mapper.onSdkMessage(
+        assistant({ content: [toolUse('toolu_bash_1', 'Bash')] }),
+      );
+
+      expect(mapper.resolveToolUseId('Bash')).toBeUndefined();
+    });
+    // NOTE: the FIFO-drift-on-refused-dispatch case is owned by the dispatcher,
+    // not the mapper (the mapper has no knowledge of dispatch outcomes and its
+    // FIFO correctly returns the first enqueued id). It is covered end-to-end in
+    // claude-tool-dispatcher.spec.ts ("does not inherit a cost-refused
+    // delegation tool_use_id on the next delegation").
+  });
+
   it('maps an assistant text message to an AIMessage with __model and __requestUsage', () => {
     createMapper(() => 0.0123);
 
