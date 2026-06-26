@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
-import { extractErrorMessage } from './utils';
+import { extractErrorMessage, getEnvPositiveInt } from './utils';
 
 describe('extractErrorMessage', () => {
   it('returns the message from an Error instance', () => {
@@ -58,5 +58,53 @@ describe('extractErrorMessage', () => {
     expect(extractErrorMessage(wsErrorEvent)).toBe(
       'Unexpected server response: 403',
     );
+  });
+});
+
+describe('getEnvPositiveInt', () => {
+  const KEY = 'TEST_ENV_POSITIVE_INT';
+
+  afterEach(() => {
+    delete process.env[KEY];
+  });
+
+  it('parses a valid positive integer string', () => {
+    process.env[KEY] = '500';
+    expect(getEnvPositiveInt(KEY, 32768)).toBe(500);
+  });
+
+  it('falls back when the env var is unset', () => {
+    delete process.env[KEY];
+    expect(getEnvPositiveInt(KEY, 32768)).toBe(32768);
+  });
+
+  // The fail-open the guard exists to close: a non-numeric override must NOT
+  // become NaN (which would silently disable a `> cap` limit). A finite-only
+  // fixture would pass with or without the guard, so this case is load-bearing.
+  it('falls back on a non-numeric value instead of returning NaN', () => {
+    process.env[KEY] = 'not-a-number';
+    expect(getEnvPositiveInt(KEY, 500)).toBe(500);
+  });
+
+  // getEnv would coerce '0' to boolean false -> +false === 0 -> a zero cap
+  // prunes a namespace to empty on every write. The guard rejects it.
+  it("falls back on '0' rather than disabling/zeroing the cap", () => {
+    process.env[KEY] = '0';
+    expect(getEnvPositiveInt(KEY, 500)).toBe(500);
+  });
+
+  it('falls back on a boolean token that getEnv would coerce', () => {
+    process.env[KEY] = 'on';
+    expect(getEnvPositiveInt(KEY, 500)).toBe(500);
+  });
+
+  it('falls back on a negative value', () => {
+    process.env[KEY] = '-5';
+    expect(getEnvPositiveInt(KEY, 500)).toBe(500);
+  });
+
+  it('falls back on a non-integer value', () => {
+    process.env[KEY] = '500.5';
+    expect(getEnvPositiveInt(KEY, 500)).toBe(500);
   });
 });

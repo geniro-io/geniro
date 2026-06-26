@@ -32,6 +32,27 @@ export function getEnv(
 }
 
 /**
+ * Reads a numeric env var as a finite positive integer, falling back to
+ * `fallback` for a missing, non-numeric, non-integer, or non-positive value.
+ *
+ * Deliberately bypasses {@link getEnv} and parses `process.env` directly:
+ * `getEnv` boolean-coerces `'0'/'1'/'on'/'off'`, so `+getEnv('CAP', '500')`
+ * would return `NaN` for a typo'd override (and `0`/`1` for a boolean token).
+ * A `NaN` cap then silently fails OPEN — `x > NaN` is always `false`, so a
+ * limit guarded with `>` simply stops firing. Guarding with
+ * `Number.isInteger(n) && n > 0` keeps a misconfigured override from disabling
+ * a cap or pruning a store to empty (see `.claude/rules/cost-accounting.md`).
+ */
+export function getEnvPositiveInt(env: string, fallback: number): number {
+  const raw = process.env[env];
+  if (raw === undefined) {
+    return fallback;
+  }
+  const n = Number(raw);
+  return Number.isInteger(n) && n > 0 ? n : fallback;
+}
+
+/**
  * Extracts a human-readable message from an arbitrary thrown value.
  *
  * Avoids the `[object Object]` trap from `String(err)` when a library

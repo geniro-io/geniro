@@ -12,6 +12,7 @@ import { LoggerModule } from '@packages/common';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { BaseMcp } from '../../../agent-mcp/services/base-mcp';
+import { AgentMemoryToolGroup } from '../../../agent-tools/tools/common/agent-memory/agent-memory-tool-group';
 import { ThreadStoreToolGroup } from '../../../agent-tools/tools/common/thread-store/thread-store-tool-group';
 import { LitellmService } from '../../../litellm/services/litellm.service';
 import { LlmModelsService } from '../../../litellm/services/llm-models.service';
@@ -182,6 +183,14 @@ describe('SimpleAgent', () => {
         },
         {
           provide: ThreadStoreToolGroup,
+          useValue: {
+            buildTools: vi
+              .fn()
+              .mockReturnValue({ tools: [], instructions: undefined }),
+          },
+        },
+        {
+          provide: AgentMemoryToolGroup,
           useValue: {
             buildTools: vi
               .fn()
@@ -2463,6 +2472,12 @@ describe('SimpleAgent', () => {
           {
             provide: ThreadStoreToolGroup,
             useValue: { buildTools: buildToolsImpl },
+          },
+          {
+            provide: AgentMemoryToolGroup,
+            useValue: {
+              buildTools: vi.fn().mockReturnValue({ tools: [] }),
+            },
           },
         ],
       }).compile();

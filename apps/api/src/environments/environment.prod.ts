@@ -1,4 +1,4 @@
-import { getEnv } from '@packages/common';
+import { getEnv, getEnvPositiveInt } from '@packages/common';
 
 export const environment = () =>
   ({
@@ -187,6 +187,26 @@ export const environment = () =>
 
     // agents
     agentsInstructionsFile: getEnv('AGENTS_INSTRUCTIONS_FILE', 'AGENTS.md'),
+
+    // --- Agent memory (durable project-scoped store) ---
+    // Operational caps only: per-entry value byte size and the per-namespace /
+    // per-project entry quotas that drive prune-oldest. Parsed via
+    // getEnvPositiveInt so a typo'd or boolean-token override can't silently
+    // disable a cap (NaN fails OPEN under `> cap`) or zero it (prune-to-empty).
+    // The namespace/key/title LENGTH bounds are column-bound constants, not env
+    // knobs — see AGENT_MEMORY_MAX_*_LENGTH in agent-memory.types.ts.
+    agentMemoryMaxValueBytes: getEnvPositiveInt(
+      'AGENT_MEMORY_MAX_VALUE_BYTES',
+      32768,
+    ),
+    agentMemoryMaxEntriesPerNamespace: getEnvPositiveInt(
+      'AGENT_MEMORY_MAX_ENTRIES_PER_NAMESPACE',
+      500,
+    ),
+    agentMemoryMaxEntriesPerProject: getEnvPositiveInt(
+      'AGENT_MEMORY_MAX_ENTRIES_PER_PROJECT',
+      2000,
+    ),
 
     // --- Versions ---
     apiVersion: getEnv('API_VERSION', 'dev'),

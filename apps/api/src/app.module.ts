@@ -4,6 +4,7 @@ import { EventEmitterModule } from '@nestjs/event-emitter';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 
 import { environment } from './environments';
+import { AgentMemoryModule } from './v1/agent-memory/agent-memory.module';
 import { AgentsModule } from './v1/agents/agents.module';
 import { AiSuggestionsModule } from './v1/ai-suggestions/ai-suggestions.module';
 import { AnalyticsModule } from './v1/analytics/analytics.module';
@@ -36,6 +37,7 @@ import { UserPreferencesModule } from './v1/user-preferences/user-preferences.mo
     ]),
     CacheModule,
     RuntimeModule,
+    AgentMemoryModule,
     AgentsModule,
     AiSuggestionsModule,
     AnalyticsModule,

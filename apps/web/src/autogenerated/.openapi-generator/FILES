@@ -4,6 +4,8 @@ api.ts
 base.ts
 common.ts
 configuration.ts
+docs/AgentMemoryApi.md
+docs/AgentMemoryEntryDto.md
 docs/AnalyticsApi.md
 docs/AnalyticsByGraphResponseDto.md
 docs/AnalyticsByGraphResponseDtoGraphsInner.md
@@ -74,6 +76,7 @@ docs/RuntimeHealthDto.md
 docs/RuntimeInstanceDto.md
 docs/RuntimeInstanceStateDto.md
 docs/RuntimesApi.md
+docs/SaveEntryBodyDto.md
 docs/SecretResponseDto.md
 docs/SecretsApi.md
 docs/SetThreadMetadataDto.md

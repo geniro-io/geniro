@@ -1,5 +1,6 @@
 import {
   BookOpen,
+  Brain,
   ChevronLeft,
   ChevronsLeft,
   ChevronsRight,
@@ -80,6 +81,9 @@ function resolvePageTitle(
   if (projectId && pathname.startsWith(`/projects/${projectId}/knowledge`)) {
     return { label: 'Knowledge' };
   }
+  if (projectId && pathname.startsWith(`/projects/${projectId}/memory`)) {
+    return { label: 'Memory' };
+  }
   if (pathname.startsWith('/storybook')) {
     return { label: 'Storybook' };
   }
@@ -133,6 +137,11 @@ export function Layout({ children }: { children?: React.ReactNode }) {
           path: `/projects/${projectId}/knowledge`,
           icon: BookOpen,
           label: 'Knowledge',
+        },
+        {
+          path: `/projects/${projectId}/memory`,
+          icon: Brain,
+          label: 'Memory',
         },
       );
     }
