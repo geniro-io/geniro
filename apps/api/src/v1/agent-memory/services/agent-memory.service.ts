@@ -6,6 +6,7 @@ import { BadRequestException, NotFoundException } from '@packages/common';
 
 import { AppContextStorage } from '../../../auth/app-context-storage';
 import { environment } from '../../../environments';
+import type { RequestTokenUsage } from '../../litellm/litellm.types';
 import {
   AgentMemoryEntryMode,
   AppendEntryInput,
@@ -14,11 +15,13 @@ import {
 import { AgentMemoryDao } from '../dao/agent-memory.dao';
 import {
   AgentMemoryEntry,
+  AgentMemoryWriteResult,
   ListEntriesQuery,
   NamespaceSummary,
   ProjectMemoryIndexEntry,
 } from '../dto/agent-memory.dto';
 import { AgentMemoryEntryEntity } from '../entity/agent-memory-entry.entity';
+import { AgentMemoryVectorService } from './agent-memory-vector.service';
 
 /**
  * Durable, project-scoped agent memory. Every agent that runs in a project shares
@@ -34,6 +37,7 @@ export class AgentMemoryService {
   constructor(
     private readonly em: EntityManager,
     private readonly agentMemoryDao: AgentMemoryDao,
+    private readonly vectorService: AgentMemoryVectorService,
   ) {}
 
   // ---- HTTP entry points (REST controller; ctx carries the validated user/project) ----
@@ -42,22 +46,38 @@ export class AgentMemoryService {
     ctx: AppContextStorage,
     input: PutEntryInput,
   ): Promise<AgentMemoryEntry> {
-    return await this.putForProject(
+    const { entry } = await this.putForProject(
       ctx.checkSub(),
       ctx.checkProjectId(),
       input,
     );
+    return entry;
   }
 
   async append(
     ctx: AppContextStorage,
     input: AppendEntryInput,
   ): Promise<AgentMemoryEntry> {
-    return await this.appendForProject(
+    const { entry } = await this.appendForProject(
       ctx.checkSub(),
       ctx.checkProjectId(),
       input,
     );
+    return entry;
+  }
+
+  /** Semantic memory search from the Project Memory UI (project from ctx header). */
+  async searchEntries(
+    ctx: AppContextStorage,
+    query: string,
+    limit: number,
+  ): Promise<AgentMemoryEntry[]> {
+    const { entries } = await this.searchForProject(
+      ctx.checkProjectId(),
+      query,
+      limit,
+    );
+    return entries;
   }
 
   async get(
@@ -106,7 +126,7 @@ export class AgentMemoryService {
     userId: string,
     projectId: string,
     input: PutEntryInput,
-  ): Promise<AgentMemoryEntry> {
+  ): Promise<AgentMemoryWriteResult> {
     this.assertValue(input.value);
 
     // Agent tools call this outside an HTTP request, so `this.em` is the shared
@@ -114,6 +134,7 @@ export class AgentMemoryService {
     // `transactional()` opens a fresh BEGIN, not a SAVEPOINT nested in some
     // unrelated outer tx. Mirrors ThreadStoreService.putForUser.
     let entry!: AgentMemoryEntryEntity;
+    let victims: AgentMemoryEntryEntity[] = [];
     await this.em.fork().transactional(async (txEm) => {
       entry = await this.agentMemoryDao.upsertKvEntry(
         {
@@ -131,17 +152,18 @@ export class AgentMemoryService {
         },
         txEm,
       );
-      await this.pruneToCapacity(projectId, input.namespace, txEm);
+      victims = await this.pruneToCapacity(projectId, input.namespace, txEm);
     });
 
-    return this.toDto(entry);
+    const embedUsage = await this.embedAndReconcileVectors(entry, victims);
+    return { entry: this.toDto(entry), embedUsage };
   }
 
   async appendForProject(
     userId: string,
     projectId: string,
     input: AppendEntryInput,
-  ): Promise<AgentMemoryEntry> {
+  ): Promise<AgentMemoryWriteResult> {
     this.assertValue(input.value);
 
     // Full UUID (not a slice) so rapid same-millisecond appends never collide on
@@ -149,6 +171,7 @@ export class AgentMemoryService {
     const generatedKey = `${new Date().toISOString()}-${randomUUID()}`;
 
     let entry!: AgentMemoryEntryEntity;
+    let victims: AgentMemoryEntryEntity[] = [];
     await this.em.fork().transactional(async (txEm) => {
       entry = await this.agentMemoryDao.create(
         {
@@ -164,10 +187,81 @@ export class AgentMemoryService {
         },
         txEm,
       );
-      await this.pruneToCapacity(projectId, input.namespace, txEm);
+      victims = await this.pruneToCapacity(projectId, input.namespace, txEm);
     });
 
-    return this.toDto(entry);
+    const embedUsage = await this.embedAndReconcileVectors(entry, victims);
+    return { entry: this.toDto(entry), embedUsage };
+  }
+
+  /**
+   * After a write commits, embed the new row's value into the vector store
+   * (best-effort, returning the embed usage for cost attribution) and drop the
+   * vectors of any rows pruned in the same write. Both steps run AFTER the
+   * transaction so an embed/Qdrant failure can never roll back the persisted
+   * row — the Postgres row is the source of truth, the vector is a derived index.
+   */
+  private async embedAndReconcileVectors(
+    entry: AgentMemoryEntryEntity,
+    victims: AgentMemoryEntryEntity[],
+  ): Promise<RequestTokenUsage | undefined> {
+    const embedUsage = await this.vectorService.embedEntry({
+      projectId: entry.projectId,
+      namespace: entry.namespace,
+      key: entry.key,
+      title: entry.title ?? null,
+      value: entry.value,
+    });
+
+    if (victims.length > 0) {
+      await this.vectorService.deleteEntries(
+        victims.map((victim) => ({
+          projectId: victim.projectId,
+          namespace: victim.namespace,
+          key: victim.key,
+        })),
+      );
+    }
+
+    return embedUsage;
+  }
+
+  /** Semantic search hydrated to full entries; drops vectors whose row is gone. */
+  async searchForProject(
+    projectId: string,
+    query: string,
+    limit: number,
+  ): Promise<{ entries: AgentMemoryEntry[]; usage?: RequestTokenUsage }> {
+    const { matches, usage } = await this.vectorService.search(
+      projectId,
+      query,
+      limit,
+    );
+    if (matches.length === 0) {
+      return { entries: [], usage };
+    }
+
+    // One batched read instead of an N+1 getByKey loop. A vector can outlive its
+    // row (a failed best-effort delete, a race), so absent rows are dropped —
+    // search never returns a (namespace, key) that memory_get would 404 on.
+    const rows = await this.agentMemoryDao.getByKeys(
+      projectId,
+      matches.map((match) => ({ namespace: match.namespace, key: match.key })),
+    );
+    const rowByKey = new Map(
+      rows.map((row) => [JSON.stringify([row.namespace, row.key]), row]),
+    );
+
+    // Re-order the hydrated rows back into the vector store's relevance order.
+    const entries: AgentMemoryEntry[] = [];
+    for (const match of matches) {
+      const row = rowByKey.get(JSON.stringify([match.namespace, match.key]));
+      if (row) {
+        entries.push(this.toDto(row));
+      }
+    }
+
+    return { entries, usage };
   }
 
   async getForProject(
@@ -260,6 +354,7 @@ export class AgentMemoryService {
       );
     }
     await this.agentMemoryDao.deleteById(entity.id);
+    await this.vectorService.deleteEntry({ projectId, namespace, key });
   }
 
   private assertValue(value: unknown): void {
@@ -290,12 +385,15 @@ export class AgentMemoryService {
    * timestamp and so is never selected. Append entries CAN be pruned here (unlike
    * user delete, which refuses them) — capacity maintenance is system-level.
    * Every prune is logged: pruning silently could drop a still-relevant memory.
+   * Returns the pruned rows so the caller can drop their vectors after commit.
    */
   private async pruneToCapacity(
     projectId: string,
     namespace: string,
     txEm: EntityManager,
-  ): Promise<void> {
+  ): Promise<AgentMemoryEntryEntity[]> {
+    const pruned: AgentMemoryEntryEntity[] = [];
+
     const nsCount = await this.agentMemoryDao.countForNamespace(
       projectId,
       namespace,
@@ -308,6 +406,7 @@ export class AgentMemoryService {
         txEm,
       );
       await this.pruneEntries(projectId, victims, 'namespace', txEm);
+      pruned.push(...victims);
     }
 
     const projectCount = await this.agentMemoryDao.countForProject(
@@ -321,7 +420,10 @@ export class AgentMemoryService {
         txEm,
       );
       await this.pruneEntries(projectId, victims, 'project', txEm);
+      pruned.push(...victims);
     }
+
+    return pruned;
   }
 
   private async pruneEntries(

@@ -5618,6 +5618,63 @@ export const AgentMemoryApiAxiosParamCreator = function (
         options: localVarRequestOptions,
       };
     },
+    /**
+     *
+     * @summary
+     * @param {string} query
+     * @param {number} [limit]
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
+    searchMemoryEntries: async (
+      query: string,
+      limit?: number,
+      options: RawAxiosRequestConfig = {},
+    ): Promise<RequestArgs> => {
+      // verify required parameter 'query' is not null or undefined
+      assertParamExists('searchMemoryEntries', 'query', query);
+      const localVarPath = `/api/v1/memory/search`;
+      // use dummy base URL string because the URL constructor only accepts absolute URLs.
+      const localVarUrlObj = new URL(localVarPath, DUMMY_BASE_URL);
+      let baseOptions;
+      if (configuration) {
+        baseOptions = configuration.baseOptions;
+      }
+
+      const localVarRequestOptions = {
+        method: 'GET',
+        ...baseOptions,
+        ...options,
+      };
+      const localVarHeaderParameter = {} as any;
+      const localVarQueryParameter = {} as any;
+
+      // authentication bearer required
+      // http bearer authentication required
+      await setBearerAuthToObject(localVarHeaderParameter, configuration);
+
+      if (query !== undefined) {
+        localVarQueryParameter['query'] = query;
+      }
+
+      if (limit !== undefined) {
+        localVarQueryParameter['limit'] = limit;
+      }
+
+      setSearchParams(localVarUrlObj, localVarQueryParameter);
+      let headersFromBaseOptions =
+        baseOptions && baseOptions.headers ? baseOptions.headers : {};
+      localVarRequestOptions.headers = {
+        ...localVarHeaderParameter,
+        ...headersFromBaseOptions,
+        ...options.headers,
+      };
+
+      return {
+        url: toPathString(localVarUrlObj),
+        options: localVarRequestOptions,
+      };
+    },
   };
 };
 
@@ -5801,6 +5858,43 @@ export const AgentMemoryApiFp = function (configuration?: Configuration) {
           configuration,
         )(axios, localVarOperationServerBasePath || basePath);
     },
+    /**
+     *
+     * @summary
+     * @param {string} query
+     * @param {number} [limit]
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
+    async searchMemoryEntries(
+      query: string,
+      limit?: number,
+      options?: RawAxiosRequestConfig,
+    ): Promise<
+      (
+        axios?: AxiosInstance,
+        basePath?: string,
+      ) => AxiosPromise<Array<AgentMemoryEntryDto>>
+    > {
+      const localVarAxiosArgs =
+        await localVarAxiosParamCreator.searchMemoryEntries(
+          query,
+          limit,
+          options,
+        );
+      const localVarOperationServerIndex = configuration?.serverIndex ?? 0;
+      const localVarOperationServerBasePath =
+        operationServerMap['AgentMemoryApi.searchMemoryEntries']?.[
+          localVarOperationServerIndex
+        ]?.url;
+      return (axios, basePath) =>
+        createRequestFunction(
+          localVarAxiosArgs,
+          globalAxios,
+          BASE_PATH,
+          configuration,
+        )(axios, localVarOperationServerBasePath || basePath);
+    },
   };
 };
 
@@ -5894,6 +5988,23 @@ export const AgentMemoryApiFactory = function (
     ): AxiosPromise<AgentMemoryEntryDto> {
       return localVarFp
         .saveMemoryEntry(saveEntryBodyDto, options)
+        .then((request) => request(axios, basePath));
+    },
+    /**
+     *
+     * @summary
+     * @param {string} query
+     * @param {number} [limit]
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
+    searchMemoryEntries(
+      query: string,
+      limit?: number,
+      options?: RawAxiosRequestConfig,
+    ): AxiosPromise<Array<AgentMemoryEntryDto>> {
+      return localVarFp
+        .searchMemoryEntries(query, limit, options)
         .then((request) => request(axios, basePath));
     },
   };
@@ -5992,6 +6103,25 @@ export class AgentMemoryApi extends BaseAPI {
   ) {
     return AgentMemoryApiFp(this.configuration)
       .saveMemoryEntry(saveEntryBodyDto, options)
+      .then((request) => request(this.axios, this.basePath));
+  }
+
+  /**
+   *
+   * @summary
+   * @param {string} query
+   * @param {number} [limit]
+   * @param {*} [options] Override http request option.
+   * @throws {RequiredError}
+   * @memberof AgentMemoryApi
+   */
+  public searchMemoryEntries(
+    query: string,
+    limit?: number,
+    options?: RawAxiosRequestConfig,
+  ) {
+    return AgentMemoryApiFp(this.configuration)
+      .searchMemoryEntries(query, limit, options)
       .then((request) => request(this.axios, this.basePath));
   }
 }

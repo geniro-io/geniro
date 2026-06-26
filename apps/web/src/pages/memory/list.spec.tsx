@@ -24,11 +24,13 @@ const {
   listMemoryEntries,
   saveMemoryEntry,
   deleteMemoryEntry,
+  searchMemoryEntries,
 } = vi.hoisted(() => ({
   listMemoryNamespaces: vi.fn(),
   listMemoryEntries: vi.fn(),
   saveMemoryEntry: vi.fn(),
   deleteMemoryEntry: vi.fn(),
+  searchMemoryEntries: vi.fn(),
 }));
 
 vi.mock('../../api', () => ({
@@ -37,6 +39,7 @@ vi.mock('../../api', () => ({
     listMemoryEntries,
     saveMemoryEntry,
     deleteMemoryEntry,
+    searchMemoryEntries,
   },
 }));
 
@@ -96,6 +99,7 @@ describe('MemoryListPage', () => {
     listMemoryEntries.mockReset();
     saveMemoryEntry.mockReset();
     deleteMemoryEntry.mockReset();
+    searchMemoryEntries.mockReset();
   });
 
   afterEach(() => cleanup());
@@ -311,5 +315,48 @@ describe('MemoryListPage', () => {
     await waitFor(() =>
       expect(deleteMemoryEntry).toHaveBeenCalledWith('facts', 'pm'),
     );
+  });
+
+  it('runs a semantic search and clears back to namespace browse', async () => {
+    listMemoryNamespaces.mockResolvedValue({
+      data: [
+        {
+          namespace: 'facts',
+          mode: 'kv',
+          entryCount: 1,
+          lastUpdatedAt: '2026-01-01T00:00:00.000Z',
+        },
+      ],
+    });
+    listMemoryEntries.mockResolvedValue({ data: [entry] });
+    const hit = { ...entry, id: 'h1', key: 'searched', title: 'Search hit' };
+    searchMemoryEntries.mockResolvedValue({ data: [hit] });
+
+    const user = userEvent.setup();
+    renderPage();
+
+    await waitFor(() =>
+      expect(screen.getByText('Package manager')).toBeInTheDocument(),
+    );
+
+    // Typing a query and submitting calls the semantic search endpoint and
+    // swaps the table over to the results (the browse entry is gone).
+    await user.type(
+      screen.getByRole('textbox', { name: 'Search memories' }),
+      'how do we build',
+    );
+    await user.click(screen.getByRole('button', { name: /Search/i }));
+
+    await waitFor(() =>
+      expect(searchMemoryEntries).toHaveBeenCalledWith('how do we build'),
+    );
+    expect(await screen.findByText('Search hit')).toBeInTheDocument();
+    expect(screen.getByText(/1 result for/i)).toBeInTheDocument();
+    expect(screen.queryByText('Package manager')).not.toBeInTheDocument();
+
+    // Clearing returns to namespace browse — the original entry is back.
+    await user.click(screen.getByRole('button', { name: 'Clear' }));
+    expect(await screen.findByText('Package manager')).toBeInTheDocument();
+    expect(screen.queryByText('Search hit')).not.toBeInTheDocument();
   });
 });

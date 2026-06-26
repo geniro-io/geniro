@@ -1,12 +1,14 @@
 import { createZodDto } from 'nestjs-zod';
 import { z } from 'zod';
 
+import type { RequestTokenUsage } from '../../litellm/litellm.types';
 import {
   AGENT_MEMORY_MAX_KEY_LENGTH,
   AGENT_MEMORY_MAX_NAMESPACE_LENGTH,
   AGENT_MEMORY_MAX_TAG_LENGTH,
   AGENT_MEMORY_MAX_TAGS_COUNT,
   AGENT_MEMORY_MAX_TITLE_LENGTH,
+  AGENT_MEMORY_SEARCH_MAX_LIMIT,
   AgentMemoryEntryMode,
 } from '../agent-memory.types';
 
@@ -54,6 +56,20 @@ export class AgentMemoryEntryDto extends createZodDto(
   AgentMemoryEntryDtoSchema,
 ) {}
 export type AgentMemoryEntry = z.infer<typeof AgentMemoryEntryDtoSchema>;
+
+/**
+ * Result of a project-scoped write (`putForProject` / `appendForProject`). The
+ * entry is the persisted row; `embedUsage` is the token usage of the best-effort
+ * embed-on-write call (M2), which the calling agent tool attaches to its
+ * `ToolInvokeResult.toolRequestUsage` so the embedding spend is attributed. It is
+ * `undefined` when the embeddings call failed (nothing billed) or produced no
+ * usage — never coerce a missing usage to a zeroed object, or an unpriced embed
+ * reads as a priced $0.
+ */
+export interface AgentMemoryWriteResult {
+  entry: AgentMemoryEntry;
+  embedUsage?: RequestTokenUsage;
+}
 
 export const NamespaceSummaryDtoSchema = z.object({
   namespace: z.string(),
@@ -103,3 +119,19 @@ export const SaveEntryBodySchema = z.object({
 
 export class SaveEntryBodyDto extends createZodDto(SaveEntryBodySchema) {}
 export type SaveEntryBody = z.infer<typeof SaveEntryBodySchema>;
+
+/** Query params for the semantic memory search endpoint (M2). */
+export const SearchMemoryQuerySchema = z.object({
+  query: z.string().min(1).max(2048),
+  limit: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(AGENT_MEMORY_SEARCH_MAX_LIMIT)
+    .optional(),
+});
+
+export class SearchMemoryQueryDto extends createZodDto(
+  SearchMemoryQuerySchema,
+) {}
+export type SearchMemoryQuery = z.infer<typeof SearchMemoryQuerySchema>;

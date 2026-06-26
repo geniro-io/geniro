@@ -11,6 +11,7 @@ import { MemoryDeleteTool } from './memory-delete.tool';
 import { MemoryGetTool } from './memory-get.tool';
 import { MemoryListTool } from './memory-list.tool';
 import { MemorySaveTool } from './memory-save.tool';
+import { MemorySearchTool } from './memory-search.tool';
 
 @Injectable()
 export class AgentMemoryToolGroup extends BaseToolGroup<AgentMemoryBaseToolConfig> {
@@ -20,6 +21,7 @@ export class AgentMemoryToolGroup extends BaseToolGroup<AgentMemoryBaseToolConfi
     private readonly getTool: MemoryGetTool,
     private readonly listTool: MemoryListTool,
     private readonly deleteTool: MemoryDeleteTool,
+    private readonly searchTool: MemorySearchTool,
   ) {
     super();
   }
@@ -37,6 +39,7 @@ export class AgentMemoryToolGroup extends BaseToolGroup<AgentMemoryBaseToolConfi
     const tools: BuiltAgentTool[] = [
       this.getTool.build(config, lgConfig),
       this.listTool.build(config, lgConfig),
+      this.searchTool.build(config, lgConfig),
     ];
 
     if (!config.readOnly) {

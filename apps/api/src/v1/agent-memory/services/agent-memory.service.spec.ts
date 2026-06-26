@@ -7,6 +7,7 @@ import { AgentMemoryEntryMode } from '../agent-memory.types';
 import { AgentMemoryDao } from '../dao/agent-memory.dao';
 import { AgentMemoryEntryEntity } from '../entity/agent-memory-entry.entity';
 import { AgentMemoryService } from './agent-memory.service';
+import { AgentMemoryVectorService } from './agent-memory-vector.service';
 
 const PROJECT = 'project-1';
 
@@ -38,6 +39,11 @@ describe('AgentMemoryService prune-to-capacity', () => {
     findOldest: Mock;
     hardDeleteById: Mock;
   };
+  let vectorService: {
+    embedEntry: Mock;
+    deleteEntries: Mock;
+    deleteEntry: Mock;
+  };
   let warnSpy: Mock;
 
   const txEm = {} as EntityManager;
@@ -56,7 +62,16 @@ describe('AgentMemoryService prune-to-capacity', () => {
       findOldest: vi.fn().mockResolvedValue([]),
       hardDeleteById: vi.fn().mockResolvedValue(undefined),
     };
-    service = new AgentMemoryService(em, dao as unknown as AgentMemoryDao);
+    vectorService = {
+      embedEntry: vi.fn().mockResolvedValue(undefined),
+      deleteEntries: vi.fn().mockResolvedValue(undefined),
+      deleteEntry: vi.fn().mockResolvedValue(undefined),
+    };
+    service = new AgentMemoryService(
+      em,
+      dao as unknown as AgentMemoryDao,
+      vectorService as unknown as AgentMemoryVectorService,
+    );
     warnSpy = vi.spyOn(Logger.prototype, 'warn') as unknown as Mock;
     warnSpy.mockClear();
   });
