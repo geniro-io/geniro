@@ -98,6 +98,26 @@ export class AgentMemoryDao extends BaseDao<AgentMemoryEntryEntity> {
     return await this.getOne({ projectId, namespace, key }, undefined, txEm);
   }
 
+  /**
+   * The mode of a namespace. A namespace's mode is established by convention
+   * (save → kv, append → append) and is not constrained at the DB level, so a
+   * single-row projection answers it far more cheaply than
+   * {@link getNamespaceSummaries} (a full-project `GROUP BY`). A hypothetically
+   * mixed-mode namespace yields an arbitrary row's mode — exactly as the prior
+   * `getNamespaceSummaries().find()` path it replaces. Returns `null` for an
+   * empty/unknown namespace.
+   */
+  async getNamespaceMode(
+    projectId: string,
+    namespace: string,
+  ): Promise<AgentMemoryEntryMode | null> {
+    const row = await this.getOne(
+      { projectId, namespace },
+      { fields: ['mode'] },
+    );
+    return row?.mode ?? null;
+  }
+
   async getNamespaceSummaries(
     projectId: string,
   ): Promise<NamespaceSummaryRow[]> {

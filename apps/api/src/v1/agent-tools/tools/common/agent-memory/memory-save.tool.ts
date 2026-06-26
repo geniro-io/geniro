@@ -6,6 +6,8 @@ import { z } from 'zod';
 import {
   keySchema,
   namespaceSchema,
+  tagsSchema,
+  titleSchema,
 } from '../../../../agent-memory/dto/agent-memory.dto';
 import { BaseAgentConfigurable } from '../../../../agents/agents.types';
 import {
@@ -25,9 +27,7 @@ export const MemorySaveToolSchema = z.object({
   key: keySchema.describe(
     'Stable key for this memory inside the namespace. Saving the same key again overwrites the previous value.',
   ),
-  title: z
-    .string()
-    .max(256)
+  title: titleSchema
     .optional()
     .describe(
       'Short human-readable label shown in the memory index (memory_list) so it is recognizable without fetching the full body.',
@@ -37,9 +37,7 @@ export const MemorySaveToolSchema = z.object({
     .describe(
       'The content to remember. A string or any JSON-serializable object. Serialized size must be <= 32 KB.',
     ),
-  tags: z
-    .array(z.string().min(1).max(64))
-    .max(16)
+  tags: tagsSchema
     .optional()
     .describe('Optional short labels to make the memory easier to find later.'),
 });
@@ -89,7 +87,7 @@ export class MemorySaveTool extends AgentMemoryBaseTool<
 
       ### Example
       \`\`\`json
-      {"namespace": "conventions", "key": "package-manager", "title": "Package manager", "value": "Repo uses pnpm, never npm.", "tags": ["build"]}
+      {"namespace": "conventions", "key": "package-manager", "title": "<short label>", "value": "<a durable project convention worth remembering>", "tags": ["<topic>"]}
       \`\`\`
     `;
   }

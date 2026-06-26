@@ -1,13 +1,19 @@
 import { createZodDto } from 'nestjs-zod';
 import { z } from 'zod';
 
-import { environment } from '../../../environments';
-import { AgentMemoryEntryMode } from '../agent-memory.types';
+import {
+  AGENT_MEMORY_MAX_KEY_LENGTH,
+  AGENT_MEMORY_MAX_NAMESPACE_LENGTH,
+  AGENT_MEMORY_MAX_TAG_LENGTH,
+  AGENT_MEMORY_MAX_TAGS_COUNT,
+  AGENT_MEMORY_MAX_TITLE_LENGTH,
+  AgentMemoryEntryMode,
+} from '../agent-memory.types';
 
 export const namespaceSchema = z
   .string()
   .min(1)
-  .max(environment.agentMemoryMaxNamespaceLength)
+  .max(AGENT_MEMORY_MAX_NAMESPACE_LENGTH)
   .regex(
     /^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/,
     'namespace must start with an alphanumeric character and contain only letters, digits, underscores, dashes, or dots',
@@ -16,11 +22,19 @@ export const namespaceSchema = z
 export const keySchema = z
   .string()
   .min(1)
-  .max(environment.agentMemoryMaxKeyLength)
+  .max(AGENT_MEMORY_MAX_KEY_LENGTH)
   .regex(
     /^[^\s/\\]+$/,
     'key must not contain whitespace, forward slashes, or backslashes',
   );
+
+/** Optional short label. Shared by the DTO and the agent memory tool schemas. */
+export const titleSchema = z.string().max(AGENT_MEMORY_MAX_TITLE_LENGTH);
+
+/** Optional freeform labels. Shared by the DTO and the agent memory tool schemas. */
+export const tagsSchema = z
+  .array(z.string().min(1).max(AGENT_MEMORY_MAX_TAG_LENGTH))
+  .max(AGENT_MEMORY_MAX_TAGS_COUNT);
 
 export const AgentMemoryEntryDtoSchema = z.object({
   id: z.string().uuid(),
@@ -82,9 +96,9 @@ export type ListEntriesQuery = z.infer<typeof ListEntriesQuerySchema>;
 export const SaveEntryBodySchema = z.object({
   namespace: namespaceSchema,
   key: keySchema,
-  title: z.string().max(environment.agentMemoryMaxTitleLength).nullish(),
+  title: titleSchema.nullish(),
   value: z.unknown(),
-  tags: z.array(z.string().min(1).max(64)).max(16).nullish(),
+  tags: tagsSchema.nullish(),
 });
 
 export class SaveEntryBodyDto extends createZodDto(SaveEntryBodySchema) {}

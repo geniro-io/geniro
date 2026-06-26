@@ -3,6 +3,8 @@ import { INestApplication } from '@nestjs/common';
 import { BadRequestException } from '@packages/common';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
+import { environment } from '../../../environments';
+import { AgentMemoryEntryMode } from '../../../v1/agent-memory/agent-memory.types';
 import { AgentMemoryDao } from '../../../v1/agent-memory/dao/agent-memory.dao';
 import { AgentMemoryService } from '../../../v1/agent-memory/services/agent-memory.service';
 import { MemoryAppendTool } from '../../../v1/agent-tools/tools/common/agent-memory/memory-append.tool';
@@ -199,6 +201,62 @@ describe('Agent memory integration', () => {
         value: huge,
       }),
     ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('prunes the oldest entries over the namespace cap, keeping the newest', async () => {
+    // Drive a small cap so the prune fires on a handful of rows instead of 500.
+    // `environment` is the shared resolved singleton the service reads at call
+    // time. Its properties are `as const` (compile-time readonly) but the
+    // resolved object is a plain, non-frozen literal at runtime, so a mutable
+    // view lets the test override one cap and restore it in finally — the
+    // override never bleeds into later tests in this file.
+    const mutableEnv = environment as {
+      agentMemoryMaxEntriesPerNamespace: number;
+    };
+    const originalCap = mutableEnv.agentMemoryMaxEntriesPerNamespace;
+    mutableEnv.agentMemoryMaxEntriesPerNamespace = 2;
+    try {
+      // Seed three KV rows with distinct, increasing updatedAt straight through
+      // the DAO. DAO writes do NOT trigger prune, so the namespace can sit
+      // over-cap until the next *service* write. Oldest -> newest: a, b, c.
+      const seedAt = async (key: string, updatedAt: Date): Promise<void> => {
+        await dao.upsertKvEntry({
+          projectId: projectA,
+          namespace: 'capped',
+          key,
+          value: key,
+          mode: AgentMemoryEntryMode.Kv,
+          createdBy: TEST_USER_ID,
+          updatedAt,
+        });
+      };
+      await seedAt('a', new Date('2020-01-01T00:00:00Z'));
+      await seedAt('b', new Date('2020-01-02T00:00:00Z'));
+      await seedAt('c', new Date('2020-01-03T00:00:00Z'));
+
+      // A service put runs pruneToCapacity. After inserting 'd' (freshest, its
+      // updatedAt is now) the namespace holds 4 > cap 2, so the 2 oldest by
+      // updatedAt (a, b) are pruned and the 2 newest (c, d) survive — proving
+      // findOldest's `updatedAt ASC` victim ordering against a real DB and that
+      // the just-written entry is never selected.
+      await service.putForProject(TEST_USER_ID, projectA, {
+        namespace: 'capped',
+        key: 'd',
+        value: 'd',
+      });
+
+      expect(await dao.countForNamespace(projectA, 'capped')).toBe(2);
+      expect(await service.getForProject(projectA, 'capped', 'a')).toBeNull();
+      expect(await service.getForProject(projectA, 'capped', 'b')).toBeNull();
+      expect(
+        await service.getForProject(projectA, 'capped', 'c'),
+      ).not.toBeNull();
+      expect(
+        await service.getForProject(projectA, 'capped', 'd'),
+      ).not.toBeNull();
+    } finally {
+      mutableEnv.agentMemoryMaxEntriesPerNamespace = originalCap;
+    }
   });
 
   it('writes from an agent tool WITHOUT a thread (project scope only)', async () => {

@@ -141,6 +141,7 @@ import {
   KnowledgeAiSuggestionModal,
   type KnowledgeSuggestionState,
 } from '../knowledge/components/KnowledgeAiSuggestionModal';
+import { MemorySection } from './MemorySection';
 import { RjsfArrayTemplatesSection } from './RjsfArrayTemplatesSection';
 import { WSReplayHarnessSection } from './ws-replay/WSReplayHarnessSection';
 
@@ -245,6 +246,7 @@ const SECTIONS = [
   { id: 'node-ai-suggestion', label: 'Node AI Suggestion' },
   { id: 'github-integration', label: 'GitHub Integration' },
   { id: 'date-range-filter', label: 'Date Range Filter' },
+  { id: 'project-memory', label: 'Project Memory' },
 ] as const;
 
 /* -------------------------------------------------------------------------- */
@@ -4400,6 +4402,7 @@ export function StorybookPage() {
         <NodeAiSuggestionSection />
         <GitHubIntegrationSection />
         <DateRangeFilterSection />
+        <MemorySection />
       </div>
     </div>
   );

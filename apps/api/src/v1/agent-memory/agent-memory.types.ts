@@ -12,6 +12,24 @@ export enum AgentMemoryAction {
   Prune = 'prune',
 }
 
+/**
+ * Per-field length caps, bound to the `agent_memory_entries` column widths
+ * (varchar(N)). These are NOT operator-tunable: the DTO and the agent tool
+ * schemas both read them, so the human and agent write paths reject an
+ * over-long value identically — before the DB would otherwise truncate or
+ * 500 on insert. A length cap can only change together with a column-widening
+ * migration, which is why it lives here as a constant rather than in the env.
+ * The genuinely operational caps (value byte size and the per-namespace /
+ * per-project entry quotas) stay env-configurable in environment.prod.ts.
+ */
+export const AGENT_MEMORY_MAX_NAMESPACE_LENGTH = 128;
+export const AGENT_MEMORY_MAX_KEY_LENGTH = 256;
+export const AGENT_MEMORY_MAX_TITLE_LENGTH = 256;
+
+/** Tag caps shared by the DTO and the agent tool schemas (`tags` is text[]). */
+export const AGENT_MEMORY_MAX_TAG_LENGTH = 64;
+export const AGENT_MEMORY_MAX_TAGS_COUNT = 16;
+
 export interface NamespaceSummaryRow {
   namespace: string;
   mode: AgentMemoryEntryMode;

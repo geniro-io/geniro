@@ -201,14 +201,15 @@ export class AgentMemoryService {
     namespace: string,
     query?: ListEntriesQuery,
   ): Promise<AgentMemoryEntry[]> {
-    const summaries =
-      await this.agentMemoryDao.getNamespaceSummaries(projectId);
-    const summary = summaries.find((s) => s.namespace === namespace);
+    const mode = await this.agentMemoryDao.getNamespaceMode(
+      projectId,
+      namespace,
+    );
     // Append logs read oldest-first by createdAt (chronological). KV reads
     // newest-first by updatedAt so an overwritten entry floats to the top — the
     // same ordering the live index (getProjectIndex) uses, keeping the two read
     // surfaces consistent.
-    const isAppend = summary?.mode === AgentMemoryEntryMode.Append;
+    const isAppend = mode === AgentMemoryEntryMode.Append;
 
     const entities = await this.agentMemoryDao.listInNamespace(
       projectId,

@@ -3,7 +3,11 @@ import { Injectable } from '@nestjs/common';
 import dedent from 'dedent';
 import { z } from 'zod';
 
-import { namespaceSchema } from '../../../../agent-memory/dto/agent-memory.dto';
+import {
+  namespaceSchema,
+  tagsSchema,
+  titleSchema,
+} from '../../../../agent-memory/dto/agent-memory.dto';
 import { BaseAgentConfigurable } from '../../../../agents/agents.types';
 import {
   ExtendedLangGraphRunnableConfig,
@@ -19,9 +23,7 @@ export const MemoryAppendToolSchema = z.object({
   namespace: namespaceSchema.describe(
     'Namespace for this log (e.g. "learnings", "progress"). Append entries accumulate under an auto-generated key.',
   ),
-  title: z
-    .string()
-    .max(256)
+  title: titleSchema
     .optional()
     .describe('Short human-readable label shown in the memory index.'),
   value: z
@@ -29,9 +31,7 @@ export const MemoryAppendToolSchema = z.object({
     .describe(
       'The content to append. A string or any JSON-serializable object. Serialized size must be <= 32 KB.',
     ),
-  tags: z
-    .array(z.string().min(1).max(64))
-    .max(16)
+  tags: tagsSchema
     .optional()
     .describe('Optional short labels to make the memory easier to find later.'),
 });
@@ -81,7 +81,7 @@ export class MemoryAppendTool extends AgentMemoryBaseTool<
 
       ### Example
       \`\`\`json
-      {"namespace": "learnings", "title": "Migration gotcha", "value": "Strip runtime_instances DDL from generated migrations.", "tags": ["db"]}
+      {"namespace": "learnings", "title": "<short label>", "value": "<a project-specific learning worth remembering>", "tags": ["<topic>"]}
       \`\`\`
     `;
   }
