@@ -16,6 +16,7 @@ import { GraphPage } from './pages/graphs/details';
 import { GraphsListPage } from './pages/graphs/list';
 import { KnowledgeListPage } from './pages/knowledge/list';
 import { MainPage } from './pages/main/page';
+import { MemoryListPage } from './pages/memory/list';
 import { OAuthCallbackPage } from './pages/oauth/components/OAuthCallbackPage';
 import { ConnectionsPage } from './pages/oauth/ConnectionsPage';
 import { CreateProjectPage } from './pages/projects/create';
@@ -168,6 +169,10 @@ function App({ authModule }: { authModule: AuthModule }) {
             <Route
               path="/projects/:projectId/knowledge"
               element={<KnowledgeListPage />}
+            />
+            <Route
+              path="/projects/:projectId/memory"
+              element={<MemoryListPage />}
             />
             {/* Connections moved into Settings; redirect the legacy route. */}
             <Route

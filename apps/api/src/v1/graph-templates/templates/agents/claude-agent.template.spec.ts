@@ -3,6 +3,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { BuiltAgentTool } from '../../../agent-tools/tools/base-tool';
+import { AgentMemoryToolGroup } from '../../../agent-tools/tools/common/agent-memory/agent-memory-tool-group';
 import { ClaudeAgent } from '../../../agents/services/agents/claude-agent';
 import {
   CompiledGraphNode,
@@ -79,6 +80,10 @@ describe('ClaudeAgentTemplate', () => {
         ClaudeAgentTemplate,
         { provide: ModuleRef, useValue: mockModuleRef },
         { provide: GraphRegistry, useValue: mockGraphRegistry },
+        {
+          provide: AgentMemoryToolGroup,
+          useValue: { buildTools: vi.fn().mockReturnValue({ tools: [] }) },
+        },
       ],
     }).compile();
 

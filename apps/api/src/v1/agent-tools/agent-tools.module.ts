@@ -1,5 +1,6 @@
 import { forwardRef, Module } from '@nestjs/common';
 
+import { AgentMemoryModule } from '../agent-memory/agent-memory.module';
 import { GitRepositoriesModule } from '../git-repositories/git-repositories.module';
 import { KnowledgeModule } from '../knowledge/knowledge.module';
 import { LitellmModule } from '../litellm/litellm.module';
@@ -7,6 +8,12 @@ import { OpenaiModule } from '../openai/openai.module';
 import { QdrantModule } from '../qdrant/qdrant.module';
 import { SubagentsModule } from '../subagents/subagents.module';
 import { ThreadStoreModule } from '../thread-store/thread-store.module';
+import { AgentMemoryToolGroup } from './tools/common/agent-memory/agent-memory-tool-group';
+import { MemoryAppendTool } from './tools/common/agent-memory/memory-append.tool';
+import { MemoryDeleteTool } from './tools/common/agent-memory/memory-delete.tool';
+import { MemoryGetTool } from './tools/common/agent-memory/memory-get.tool';
+import { MemoryListTool } from './tools/common/agent-memory/memory-list.tool';
+import { MemorySaveTool } from './tools/common/agent-memory/memory-save.tool';
 import { CommunicationExecTool } from './tools/common/communication/communication-exec.tool';
 import { CommunicationToolGroup } from './tools/common/communication/communication-tool-group';
 import { FilesApplyChangesTool } from './tools/common/files/files-apply-changes.tool';
@@ -56,6 +63,7 @@ import { WaitForTool } from './tools/core/wait-for.tool';
     KnowledgeModule,
     QdrantModule,
     SubagentsModule,
+    AgentMemoryModule,
     forwardRef(() => ThreadStoreModule),
   ],
   controllers: [],
@@ -100,6 +108,12 @@ import { WaitForTool } from './tools/core/wait-for.tool';
     ThreadStoreListTool,
     ThreadStoreDeleteTool,
     ThreadStoreToolGroup,
+    MemorySaveTool,
+    MemoryAppendTool,
+    MemoryGetTool,
+    MemoryListTool,
+    MemoryDeleteTool,
+    AgentMemoryToolGroup,
   ],
   exports: [
     ShellTool,
@@ -142,6 +156,12 @@ import { WaitForTool } from './tools/core/wait-for.tool';
     ThreadStoreListTool,
     ThreadStoreDeleteTool,
     ThreadStoreToolGroup,
+    MemorySaveTool,
+    MemoryAppendTool,
+    MemoryGetTool,
+    MemoryListTool,
+    MemoryDeleteTool,
+    AgentMemoryToolGroup,
   ],
 })
 export class AgentToolsModule {}

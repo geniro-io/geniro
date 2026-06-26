@@ -22,6 +22,7 @@ import { ZodSchema } from 'zod';
 import { BaseMcp } from '../../../agent-mcp/services/base-mcp';
 import { zodToAjvSchema } from '../../../agent-tools/agent-tools.utils';
 import type { BuiltAgentTool } from '../../../agent-tools/tools/base-tool';
+import { AgentMemoryToolGroup } from '../../../agent-tools/tools/common/agent-memory/agent-memory-tool-group';
 import { ThreadStoreToolGroup } from '../../../agent-tools/tools/common/thread-store/thread-store-tool-group';
 import {
   DeferredToolEntry,
@@ -102,6 +103,7 @@ export class SimpleAgent
     private readonly logger: DefaultLogger,
     private readonly llmModelsService: LlmModelsService,
     private readonly threadStoreToolGroup: ThreadStoreToolGroup,
+    private readonly agentMemoryToolGroup: AgentMemoryToolGroup,
   ) {
     super();
   }
@@ -133,6 +135,21 @@ export class SimpleAgent
     }
     if (threadStoreResult.instructions) {
       builtInToolGroupInstructions.push(threadStoreResult.instructions);
+    }
+
+    // ----- agent memory (deferred: discoverable via tool_search, NOT pinned) -----
+    // Built here so it is always available, but intentionally left OUT of
+    // `coreToolNames` below — the move-to-deferred pass then relocates these into
+    // the deferred registry, so they surface in <available-tools> and load on
+    // demand. The group overview is deliberately NOT pushed into
+    // `builtInToolGroupInstructions`: project memory must not sit in the baked
+    // system prompt (it would be a deploy-time snapshot). The live `memory_list`
+    // tool is the always-fresh discovery path instead.
+    const agentMemoryResult = this.agentMemoryToolGroup.buildTools({});
+    for (const tool of agentMemoryResult.tools) {
+      if (!this.tools.has(tool.name)) {
+        this.addTool(tool);
+      }
     }
 
     // ----- mcp -----

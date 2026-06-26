@@ -1,6 +1,7 @@
 import axios from 'axios';
 
 import {
+  AgentMemoryApi,
   AnalyticsApi,
   Configuration,
   GitRepositoriesApi,
@@ -52,3 +53,4 @@ export const systemAgentsApi = new SystemAgentsApi(configuration);
 export const userPreferencesApi = new UserPreferencesApi(configuration);
 export const secretsApi = new SecretsApi(configuration);
 export const threadStoreApi = new ThreadStoreApi(configuration);
+export const agentMemoryApi = new AgentMemoryApi(configuration);

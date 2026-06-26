@@ -42,6 +42,88 @@ import {
 /**
  *
  * @export
+ * @interface AgentMemoryEntryDto
+ */
+export interface AgentMemoryEntryDto {
+  /**
+   *
+   * @type {string}
+   * @memberof AgentMemoryEntryDto
+   */
+  'id': string;
+  /**
+   *
+   * @type {string}
+   * @memberof AgentMemoryEntryDto
+   */
+  'projectId': string;
+  /**
+   *
+   * @type {string}
+   * @memberof AgentMemoryEntryDto
+   */
+  'namespace': string;
+  /**
+   *
+   * @type {string}
+   * @memberof AgentMemoryEntryDto
+   */
+  'key': string;
+  /**
+   *
+   * @type {string}
+   * @memberof AgentMemoryEntryDto
+   */
+  'title': string | null;
+  /**
+   *
+   * @type {any}
+   * @memberof AgentMemoryEntryDto
+   */
+  'value': any;
+  /**
+   *
+   * @type {string}
+   * @memberof AgentMemoryEntryDto
+   */
+  'mode': AgentMemoryEntryDtoModeEnum;
+  /**
+   *
+   * @type {string}
+   * @memberof AgentMemoryEntryDto
+   */
+  'authorAgentId': string | null;
+  /**
+   *
+   * @type {Array<string>}
+   * @memberof AgentMemoryEntryDto
+   */
+  'tags': Array<string> | null;
+  /**
+   *
+   * @type {string}
+   * @memberof AgentMemoryEntryDto
+   */
+  'createdAt': string;
+  /**
+   *
+   * @type {string}
+   * @memberof AgentMemoryEntryDto
+   */
+  'updatedAt': string;
+}
+
+export const AgentMemoryEntryDtoModeEnum = {
+  Kv: 'kv',
+  Append: 'append',
+} as const;
+
+export type AgentMemoryEntryDtoModeEnum =
+  (typeof AgentMemoryEntryDtoModeEnum)[keyof typeof AgentMemoryEntryDtoModeEnum];
+
+/**
+ *
+ * @export
  * @interface AnalyticsByGraphResponseDto
  */
 export interface AnalyticsByGraphResponseDto {
@@ -2478,6 +2560,43 @@ export const RuntimeInstanceStateDtoErrorCodeEnum = {
 export type RuntimeInstanceStateDtoErrorCodeEnum =
   (typeof RuntimeInstanceStateDtoErrorCodeEnum)[keyof typeof RuntimeInstanceStateDtoErrorCodeEnum];
 
+/**
+ *
+ * @export
+ * @interface SaveEntryBodyDto
+ */
+export interface SaveEntryBodyDto {
+  /**
+   *
+   * @type {string}
+   * @memberof SaveEntryBodyDto
+   */
+  'namespace': string;
+  /**
+   *
+   * @type {string}
+   * @memberof SaveEntryBodyDto
+   */
+  'key': string;
+  /**
+   *
+   * @type {string}
+   * @memberof SaveEntryBodyDto
+   */
+  'title'?: string | null;
+  /**
+   *
+   * @type {any}
+   * @memberof SaveEntryBodyDto
+   */
+  'value': any;
+  /**
+   *
+   * @type {Array<string>}
+   * @memberof SaveEntryBodyDto
+   */
+  'tags'?: Array<string> | null;
+}
 /**
  *
  * @export
@@ -5220,6 +5339,661 @@ export interface UserPreferencesDtoPreferencesModels {
    * @memberof UserPreferencesDtoPreferencesModels
    */
   'llmEmbeddingModel'?: string | null;
+}
+
+/**
+ * AgentMemoryApi - axios parameter creator
+ * @export
+ */
+export const AgentMemoryApiAxiosParamCreator = function (
+  configuration?: Configuration,
+) {
+  return {
+    /**
+     *
+     * @summary
+     * @param {string} namespace
+     * @param {string} key
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
+    deleteMemoryEntry: async (
+      namespace: string,
+      key: string,
+      options: RawAxiosRequestConfig = {},
+    ): Promise<RequestArgs> => {
+      // verify required parameter 'namespace' is not null or undefined
+      assertParamExists('deleteMemoryEntry', 'namespace', namespace);
+      // verify required parameter 'key' is not null or undefined
+      assertParamExists('deleteMemoryEntry', 'key', key);
+      const localVarPath = `/api/v1/memory/{namespace}/{key}`
+        .replace(`{${'namespace'}}`, encodeURIComponent(String(namespace)))
+        .replace(`{${'key'}}`, encodeURIComponent(String(key)));
+      // use dummy base URL string because the URL constructor only accepts absolute URLs.
+      const localVarUrlObj = new URL(localVarPath, DUMMY_BASE_URL);
+      let baseOptions;
+      if (configuration) {
+        baseOptions = configuration.baseOptions;
+      }
+
+      const localVarRequestOptions = {
+        method: 'DELETE',
+        ...baseOptions,
+        ...options,
+      };
+      const localVarHeaderParameter = {} as any;
+      const localVarQueryParameter = {} as any;
+
+      // authentication bearer required
+      // http bearer authentication required
+      await setBearerAuthToObject(localVarHeaderParameter, configuration);
+
+      setSearchParams(localVarUrlObj, localVarQueryParameter);
+      let headersFromBaseOptions =
+        baseOptions && baseOptions.headers ? baseOptions.headers : {};
+      localVarRequestOptions.headers = {
+        ...localVarHeaderParameter,
+        ...headersFromBaseOptions,
+        ...options.headers,
+      };
+
+      return {
+        url: toPathString(localVarUrlObj),
+        options: localVarRequestOptions,
+      };
+    },
+    /**
+     *
+     * @summary
+     * @param {string} namespace
+     * @param {string} key
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
+    getMemoryEntry: async (
+      namespace: string,
+      key: string,
+      options: RawAxiosRequestConfig = {},
+    ): Promise<RequestArgs> => {
+      // verify required parameter 'namespace' is not null or undefined
+      assertParamExists('getMemoryEntry', 'namespace', namespace);
+      // verify required parameter 'key' is not null or undefined
+      assertParamExists('getMemoryEntry', 'key', key);
+      const localVarPath = `/api/v1/memory/{namespace}/{key}`
+        .replace(`{${'namespace'}}`, encodeURIComponent(String(namespace)))
+        .replace(`{${'key'}}`, encodeURIComponent(String(key)));
+      // use dummy base URL string because the URL constructor only accepts absolute URLs.
+      const localVarUrlObj = new URL(localVarPath, DUMMY_BASE_URL);
+      let baseOptions;
+      if (configuration) {
+        baseOptions = configuration.baseOptions;
+      }
+
+      const localVarRequestOptions = {
+        method: 'GET',
+        ...baseOptions,
+        ...options,
+      };
+      const localVarHeaderParameter = {} as any;
+      const localVarQueryParameter = {} as any;
+
+      // authentication bearer required
+      // http bearer authentication required
+      await setBearerAuthToObject(localVarHeaderParameter, configuration);
+
+      setSearchParams(localVarUrlObj, localVarQueryParameter);
+      let headersFromBaseOptions =
+        baseOptions && baseOptions.headers ? baseOptions.headers : {};
+      localVarRequestOptions.headers = {
+        ...localVarHeaderParameter,
+        ...headersFromBaseOptions,
+        ...options.headers,
+      };
+
+      return {
+        url: toPathString(localVarUrlObj),
+        options: localVarRequestOptions,
+      };
+    },
+    /**
+     *
+     * @summary
+     * @param {string} namespace
+     * @param {number} [limit]
+     * @param {number} [offset]
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
+    listMemoryEntries: async (
+      namespace: string,
+      limit?: number,
+      offset?: number,
+      options: RawAxiosRequestConfig = {},
+    ): Promise<RequestArgs> => {
+      // verify required parameter 'namespace' is not null or undefined
+      assertParamExists('listMemoryEntries', 'namespace', namespace);
+      const localVarPath = `/api/v1/memory/{namespace}`.replace(
+        `{${'namespace'}}`,
+        encodeURIComponent(String(namespace)),
+      );
+      // use dummy base URL string because the URL constructor only accepts absolute URLs.
+      const localVarUrlObj = new URL(localVarPath, DUMMY_BASE_URL);
+      let baseOptions;
+      if (configuration) {
+        baseOptions = configuration.baseOptions;
+      }
+
+      const localVarRequestOptions = {
+        method: 'GET',
+        ...baseOptions,
+        ...options,
+      };
+      const localVarHeaderParameter = {} as any;
+      const localVarQueryParameter = {} as any;
+
+      // authentication bearer required
+      // http bearer authentication required
+      await setBearerAuthToObject(localVarHeaderParameter, configuration);
+
+      if (limit !== undefined) {
+        localVarQueryParameter['limit'] = limit;
+      }
+
+      if (offset !== undefined) {
+        localVarQueryParameter['offset'] = offset;
+      }
+
+      setSearchParams(localVarUrlObj, localVarQueryParameter);
+      let headersFromBaseOptions =
+        baseOptions && baseOptions.headers ? baseOptions.headers : {};
+      localVarRequestOptions.headers = {
+        ...localVarHeaderParameter,
+        ...headersFromBaseOptions,
+        ...options.headers,
+      };
+
+      return {
+        url: toPathString(localVarUrlObj),
+        options: localVarRequestOptions,
+      };
+    },
+    /**
+     *
+     * @summary
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
+    listMemoryNamespaces: async (
+      options: RawAxiosRequestConfig = {},
+    ): Promise<RequestArgs> => {
+      const localVarPath = `/api/v1/memory`;
+      // use dummy base URL string because the URL constructor only accepts absolute URLs.
+      const localVarUrlObj = new URL(localVarPath, DUMMY_BASE_URL);
+      let baseOptions;
+      if (configuration) {
+        baseOptions = configuration.baseOptions;
+      }
+
+      const localVarRequestOptions = {
+        method: 'GET',
+        ...baseOptions,
+        ...options,
+      };
+      const localVarHeaderParameter = {} as any;
+      const localVarQueryParameter = {} as any;
+
+      // authentication bearer required
+      // http bearer authentication required
+      await setBearerAuthToObject(localVarHeaderParameter, configuration);
+
+      setSearchParams(localVarUrlObj, localVarQueryParameter);
+      let headersFromBaseOptions =
+        baseOptions && baseOptions.headers ? baseOptions.headers : {};
+      localVarRequestOptions.headers = {
+        ...localVarHeaderParameter,
+        ...headersFromBaseOptions,
+        ...options.headers,
+      };
+
+      return {
+        url: toPathString(localVarUrlObj),
+        options: localVarRequestOptions,
+      };
+    },
+    /**
+     *
+     * @summary
+     * @param {SaveEntryBodyDto} saveEntryBodyDto
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
+    saveMemoryEntry: async (
+      saveEntryBodyDto: SaveEntryBodyDto,
+      options: RawAxiosRequestConfig = {},
+    ): Promise<RequestArgs> => {
+      // verify required parameter 'saveEntryBodyDto' is not null or undefined
+      assertParamExists(
+        'saveMemoryEntry',
+        'saveEntryBodyDto',
+        saveEntryBodyDto,
+      );
+      const localVarPath = `/api/v1/memory`;
+      // use dummy base URL string because the URL constructor only accepts absolute URLs.
+      const localVarUrlObj = new URL(localVarPath, DUMMY_BASE_URL);
+      let baseOptions;
+      if (configuration) {
+        baseOptions = configuration.baseOptions;
+      }
+
+      const localVarRequestOptions = {
+        method: 'PUT',
+        ...baseOptions,
+        ...options,
+      };
+      const localVarHeaderParameter = {} as any;
+      const localVarQueryParameter = {} as any;
+
+      // authentication bearer required
+      // http bearer authentication required
+      await setBearerAuthToObject(localVarHeaderParameter, configuration);
+
+      localVarHeaderParameter['Content-Type'] = 'application/json';
+
+      setSearchParams(localVarUrlObj, localVarQueryParameter);
+      let headersFromBaseOptions =
+        baseOptions && baseOptions.headers ? baseOptions.headers : {};
+      localVarRequestOptions.headers = {
+        ...localVarHeaderParameter,
+        ...headersFromBaseOptions,
+        ...options.headers,
+      };
+      localVarRequestOptions.data = serializeDataIfNeeded(
+        saveEntryBodyDto,
+        localVarRequestOptions,
+        configuration,
+      );
+
+      return {
+        url: toPathString(localVarUrlObj),
+        options: localVarRequestOptions,
+      };
+    },
+  };
+};
+
+/**
+ * AgentMemoryApi - functional programming interface
+ * @export
+ */
+export const AgentMemoryApiFp = function (configuration?: Configuration) {
+  const localVarAxiosParamCreator =
+    AgentMemoryApiAxiosParamCreator(configuration);
+  return {
+    /**
+     *
+     * @summary
+     * @param {string} namespace
+     * @param {string} key
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
+    async deleteMemoryEntry(
+      namespace: string,
+      key: string,
+      options?: RawAxiosRequestConfig,
+    ): Promise<
+      (axios?: AxiosInstance, basePath?: string) => AxiosPromise<void>
+    > {
+      const localVarAxiosArgs =
+        await localVarAxiosParamCreator.deleteMemoryEntry(
+          namespace,
+          key,
+          options,
+        );
+      const localVarOperationServerIndex = configuration?.serverIndex ?? 0;
+      const localVarOperationServerBasePath =
+        operationServerMap['AgentMemoryApi.deleteMemoryEntry']?.[
+          localVarOperationServerIndex
+        ]?.url;
+      return (axios, basePath) =>
+        createRequestFunction(
+          localVarAxiosArgs,
+          globalAxios,
+          BASE_PATH,
+          configuration,
+        )(axios, localVarOperationServerBasePath || basePath);
+    },
+    /**
+     *
+     * @summary
+     * @param {string} namespace
+     * @param {string} key
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
+    async getMemoryEntry(
+      namespace: string,
+      key: string,
+      options?: RawAxiosRequestConfig,
+    ): Promise<
+      (
+        axios?: AxiosInstance,
+        basePath?: string,
+      ) => AxiosPromise<AgentMemoryEntryDto>
+    > {
+      const localVarAxiosArgs = await localVarAxiosParamCreator.getMemoryEntry(
+        namespace,
+        key,
+        options,
+      );
+      const localVarOperationServerIndex = configuration?.serverIndex ?? 0;
+      const localVarOperationServerBasePath =
+        operationServerMap['AgentMemoryApi.getMemoryEntry']?.[
+          localVarOperationServerIndex
+        ]?.url;
+      return (axios, basePath) =>
+        createRequestFunction(
+          localVarAxiosArgs,
+          globalAxios,
+          BASE_PATH,
+          configuration,
+        )(axios, localVarOperationServerBasePath || basePath);
+    },
+    /**
+     *
+     * @summary
+     * @param {string} namespace
+     * @param {number} [limit]
+     * @param {number} [offset]
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
+    async listMemoryEntries(
+      namespace: string,
+      limit?: number,
+      offset?: number,
+      options?: RawAxiosRequestConfig,
+    ): Promise<
+      (
+        axios?: AxiosInstance,
+        basePath?: string,
+      ) => AxiosPromise<Array<AgentMemoryEntryDto>>
+    > {
+      const localVarAxiosArgs =
+        await localVarAxiosParamCreator.listMemoryEntries(
+          namespace,
+          limit,
+          offset,
+          options,
+        );
+      const localVarOperationServerIndex = configuration?.serverIndex ?? 0;
+      const localVarOperationServerBasePath =
+        operationServerMap['AgentMemoryApi.listMemoryEntries']?.[
+          localVarOperationServerIndex
+        ]?.url;
+      return (axios, basePath) =>
+        createRequestFunction(
+          localVarAxiosArgs,
+          globalAxios,
+          BASE_PATH,
+          configuration,
+        )(axios, localVarOperationServerBasePath || basePath);
+    },
+    /**
+     *
+     * @summary
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
+    async listMemoryNamespaces(
+      options?: RawAxiosRequestConfig,
+    ): Promise<
+      (
+        axios?: AxiosInstance,
+        basePath?: string,
+      ) => AxiosPromise<Array<NamespaceSummaryDto>>
+    > {
+      const localVarAxiosArgs =
+        await localVarAxiosParamCreator.listMemoryNamespaces(options);
+      const localVarOperationServerIndex = configuration?.serverIndex ?? 0;
+      const localVarOperationServerBasePath =
+        operationServerMap['AgentMemoryApi.listMemoryNamespaces']?.[
+          localVarOperationServerIndex
+        ]?.url;
+      return (axios, basePath) =>
+        createRequestFunction(
+          localVarAxiosArgs,
+          globalAxios,
+          BASE_PATH,
+          configuration,
+        )(axios, localVarOperationServerBasePath || basePath);
+    },
+    /**
+     *
+     * @summary
+     * @param {SaveEntryBodyDto} saveEntryBodyDto
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
+    async saveMemoryEntry(
+      saveEntryBodyDto: SaveEntryBodyDto,
+      options?: RawAxiosRequestConfig,
+    ): Promise<
+      (
+        axios?: AxiosInstance,
+        basePath?: string,
+      ) => AxiosPromise<AgentMemoryEntryDto>
+    > {
+      const localVarAxiosArgs = await localVarAxiosParamCreator.saveMemoryEntry(
+        saveEntryBodyDto,
+        options,
+      );
+      const localVarOperationServerIndex = configuration?.serverIndex ?? 0;
+      const localVarOperationServerBasePath =
+        operationServerMap['AgentMemoryApi.saveMemoryEntry']?.[
+          localVarOperationServerIndex
+        ]?.url;
+      return (axios, basePath) =>
+        createRequestFunction(
+          localVarAxiosArgs,
+          globalAxios,
+          BASE_PATH,
+          configuration,
+        )(axios, localVarOperationServerBasePath || basePath);
+    },
+  };
+};
+
+/**
+ * AgentMemoryApi - factory interface
+ * @export
+ */
+export const AgentMemoryApiFactory = function (
+  configuration?: Configuration,
+  basePath?: string,
+  axios?: AxiosInstance,
+) {
+  const localVarFp = AgentMemoryApiFp(configuration);
+  return {
+    /**
+     *
+     * @summary
+     * @param {string} namespace
+     * @param {string} key
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
+    deleteMemoryEntry(
+      namespace: string,
+      key: string,
+      options?: RawAxiosRequestConfig,
+    ): AxiosPromise<void> {
+      return localVarFp
+        .deleteMemoryEntry(namespace, key, options)
+        .then((request) => request(axios, basePath));
+    },
+    /**
+     *
+     * @summary
+     * @param {string} namespace
+     * @param {string} key
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
+    getMemoryEntry(
+      namespace: string,
+      key: string,
+      options?: RawAxiosRequestConfig,
+    ): AxiosPromise<AgentMemoryEntryDto> {
+      return localVarFp
+        .getMemoryEntry(namespace, key, options)
+        .then((request) => request(axios, basePath));
+    },
+    /**
+     *
+     * @summary
+     * @param {string} namespace
+     * @param {number} [limit]
+     * @param {number} [offset]
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
+    listMemoryEntries(
+      namespace: string,
+      limit?: number,
+      offset?: number,
+      options?: RawAxiosRequestConfig,
+    ): AxiosPromise<Array<AgentMemoryEntryDto>> {
+      return localVarFp
+        .listMemoryEntries(namespace, limit, offset, options)
+        .then((request) => request(axios, basePath));
+    },
+    /**
+     *
+     * @summary
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
+    listMemoryNamespaces(
+      options?: RawAxiosRequestConfig,
+    ): AxiosPromise<Array<NamespaceSummaryDto>> {
+      return localVarFp
+        .listMemoryNamespaces(options)
+        .then((request) => request(axios, basePath));
+    },
+    /**
+     *
+     * @summary
+     * @param {SaveEntryBodyDto} saveEntryBodyDto
+     * @param {*} [options] Override http request option.
+     * @throws {RequiredError}
+     */
+    saveMemoryEntry(
+      saveEntryBodyDto: SaveEntryBodyDto,
+      options?: RawAxiosRequestConfig,
+    ): AxiosPromise<AgentMemoryEntryDto> {
+      return localVarFp
+        .saveMemoryEntry(saveEntryBodyDto, options)
+        .then((request) => request(axios, basePath));
+    },
+  };
+};
+
+/**
+ * AgentMemoryApi - object-oriented interface
+ * @export
+ * @class AgentMemoryApi
+ * @extends {BaseAPI}
+ */
+export class AgentMemoryApi extends BaseAPI {
+  /**
+   *
+   * @summary
+   * @param {string} namespace
+   * @param {string} key
+   * @param {*} [options] Override http request option.
+   * @throws {RequiredError}
+   * @memberof AgentMemoryApi
+   */
+  public deleteMemoryEntry(
+    namespace: string,
+    key: string,
+    options?: RawAxiosRequestConfig,
+  ) {
+    return AgentMemoryApiFp(this.configuration)
+      .deleteMemoryEntry(namespace, key, options)
+      .then((request) => request(this.axios, this.basePath));
+  }
+
+  /**
+   *
+   * @summary
+   * @param {string} namespace
+   * @param {string} key
+   * @param {*} [options] Override http request option.
+   * @throws {RequiredError}
+   * @memberof AgentMemoryApi
+   */
+  public getMemoryEntry(
+    namespace: string,
+    key: string,
+    options?: RawAxiosRequestConfig,
+  ) {
+    return AgentMemoryApiFp(this.configuration)
+      .getMemoryEntry(namespace, key, options)
+      .then((request) => request(this.axios, this.basePath));
+  }
+
+  /**
+   *
+   * @summary
+   * @param {string} namespace
+   * @param {number} [limit]
+   * @param {number} [offset]
+   * @param {*} [options] Override http request option.
+   * @throws {RequiredError}
+   * @memberof AgentMemoryApi
+   */
+  public listMemoryEntries(
+    namespace: string,
+    limit?: number,
+    offset?: number,
+    options?: RawAxiosRequestConfig,
+  ) {
+    return AgentMemoryApiFp(this.configuration)
+      .listMemoryEntries(namespace, limit, offset, options)
+      .then((request) => request(this.axios, this.basePath));
+  }
+
+  /**
+   *
+   * @summary
+   * @param {*} [options] Override http request option.
+   * @throws {RequiredError}
+   * @memberof AgentMemoryApi
+   */
+  public listMemoryNamespaces(options?: RawAxiosRequestConfig) {
+    return AgentMemoryApiFp(this.configuration)
+      .listMemoryNamespaces(options)
+      .then((request) => request(this.axios, this.basePath));
+  }
+
+  /**
+   *
+   * @summary
+   * @param {SaveEntryBodyDto} saveEntryBodyDto
+   * @param {*} [options] Override http request option.
+   * @throws {RequiredError}
+   * @memberof AgentMemoryApi
+   */
+  public saveMemoryEntry(
+    saveEntryBodyDto: SaveEntryBodyDto,
+    options?: RawAxiosRequestConfig,
+  ) {
+    return AgentMemoryApiFp(this.configuration)
+      .saveMemoryEntry(saveEntryBodyDto, options)
+      .then((request) => request(this.axios, this.basePath));
+  }
 }
 
 /**

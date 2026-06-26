@@ -5,6 +5,7 @@ import { z } from 'zod';
 
 import type { BaseMcp } from '../../../agent-mcp/services/base-mcp';
 import type { BuiltAgentTool } from '../../../agent-tools/tools/base-tool';
+import { AgentMemoryToolGroup } from '../../../agent-tools/tools/common/agent-memory/agent-memory-tool-group';
 import { ClaudeAgent } from '../../../agents/services/agents/claude-agent';
 import type {
   ConnectedGithubResource,
@@ -207,6 +208,7 @@ export class ClaudeAgentTemplate extends ClaudeAgentNodeBaseTemplate<
   constructor(
     private readonly moduleRef: ModuleRef,
     private readonly graphRegistry: GraphRegistry,
+    private readonly agentMemoryToolGroup: AgentMemoryToolGroup,
   ) {
     super();
   }
@@ -281,6 +283,14 @@ export class ClaudeAgentTemplate extends ClaudeAgentNodeBaseTemplate<
         }
         instance.resetTools();
         forwardableTools.forEach((tool) => instance.addTool(tool));
+
+        // Project memory is available to every Claude agent automatically (not
+        // via a connected node), mirroring the SimpleAgent built-in path. The
+        // bridge re-passes tool definitions per session and memory_list reads
+        // live, so recall stays fresh without anything in the system prompt.
+        this.agentMemoryToolGroup
+          .buildTools({})
+          .tools.forEach((tool) => instance.addTool(tool));
 
         // Connected MCP blocks (custom/filesystem/playwright/jira) reused on the
         // Claude node: collected here, then at run() each block's launch config
