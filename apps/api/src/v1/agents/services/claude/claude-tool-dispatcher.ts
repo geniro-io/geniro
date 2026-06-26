@@ -100,6 +100,19 @@ export class ClaudeToolDispatcher {
   }
 
   private async execute(request: ClaudeToolCallRequest): Promise<void> {
+    // Drain the name-FIFO join for THIS dispatch up front — on EVERY path,
+    // before the early returns below. The mapper enqueues a forwarded tool's
+    // SDK `tool_use_id` at parse time; consuming it here keeps the FIFO balanced
+    // 1:1 with the enqueue. Draining only on the happy path would leave a
+    // refused/aborted call's id at the head of the queue, so the next same-name
+    // delegation would inherit a dead call's id — the exact Communication-block
+    // mis-grouping this id stamp fixes. It is stamped as the delegated agent's
+    // `__toolCallId` (the key the UI groups Communication blocks by) and falls
+    // back to the bridge `request.id` when nothing is pending. `request.id`
+    // stays the `tool_call_response` correlation id — that pairing is unchanged.
+    const toolCallId =
+      this.params.mapper.resolveToolUseId(request.toolName) ?? request.id;
+
     if (this.params.signal.aborted) {
       this.respond({
         type: 'tool_call_response',
@@ -144,7 +157,7 @@ export class ClaudeToolDispatcher {
         configurable: {
           ...(this.params.config.configurable ?? {}),
           ...(toolMetadata !== undefined && { toolMetadata }),
-          __toolCallId: request.id,
+          __toolCallId: toolCallId,
         },
         signal: this.params.signal,
       };

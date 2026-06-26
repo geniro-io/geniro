@@ -1,13 +1,17 @@
+import type { DynamicStructuredTool } from '@langchain/core/tools';
 import { INestApplication } from '@nestjs/common';
 import type {
   SdkAssistantMessage,
   SdkUserMessage,
 } from '@packages/claude-bridge';
+import type { DefaultLogger } from '@packages/common';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { mockDeep } from 'vitest-mock-extended';
 
 import { AgentEventType } from '../../../v1/agents/services/agents/base-agent';
 import { CheckpointStateService } from '../../../v1/agents/services/checkpoint-state.service';
 import { ClaudeStreamMapper } from '../../../v1/agents/services/claude/claude-stream-mapper';
+import { ClaudeToolDispatcher } from '../../../v1/agents/services/claude/claude-tool-dispatcher';
 import { GraphDao } from '../../../v1/graphs/dao/graph.dao';
 import { GraphStatus, MessageRole } from '../../../v1/graphs/graphs.types';
 import { RequestTokenUsage } from '../../../v1/litellm/litellm.types';
@@ -670,6 +674,166 @@ describe('Claude Agent cost invariant (checkpoint-less threads)', () => {
         groundTruthRequest + groundTruthTool,
         10,
       );
+    },
+  );
+
+  it(
+    'stamps each forwarded communication_exec delegation with its own parent tool_use_id (Communication-block join) without disturbing byNode',
+    { timeout: 30000 },
+    async () => {
+      // The parent (Manager) Claude stream makes TWO distinct communication_exec
+      // calls; each records a DISTINCT SDK tool_use_id on its parent AI message.
+      const events: AgentEventType[] = [];
+      const mapper = new ClaudeStreamMapper({
+        threadId: externalThreadId,
+        config: {
+          configurable: {
+            thread_id: externalThreadId,
+            graph_id: graphId,
+            node_id: NODE_ID,
+            run_id: 'run-int-join',
+          },
+        },
+        model: 'claude-sonnet-4-6',
+        emit: (event) => events.push(event),
+        calculatePriceUsd: () => PRICE_PER_CALL,
+      });
+
+      const commCall = (msgId: string, tuId: string): SdkAssistantMessage => ({
+        ...assistantMessage(msgId, 'delegating to a peer'),
+        message: {
+          ...assistantMessage(msgId, 'delegating to a peer').message,
+          content: [
+            { type: 'text', text: 'delegating to a peer' },
+            {
+              type: 'tool_use',
+              id: tuId,
+              name: 'mcp__geniro__communication_exec',
+              input: { agent: 'Engineer', message: 'go', purpose: 'delegate' },
+            },
+          ],
+        },
+      });
+
+      mapper.onSdkMessage(commCall('m40', 'tu-comm-A'));
+      mapper.onSdkMessage(commCall('m41', 'tu-comm-B'));
+
+      // A REAL dispatcher wired to that mapper. The stub communication_exec tool
+      // captures the __toolCallId the dispatcher synthesizes into its config —
+      // the id a delegated agent's inner messages inherit (agents.utils) and the
+      // id the UI groups Communication blocks by.
+      const capturedToolCallIds: (string | undefined)[] = [];
+      const commTool = {
+        invoke: async (
+          _args: unknown,
+          cfg: { configurable?: { __toolCallId?: string } },
+        ) => {
+          capturedToolCallIds.push(cfg.configurable?.__toolCallId);
+          return { output: 'peer answered' };
+        },
+      };
+      const dispatcher = new ClaudeToolDispatcher({
+        tools: new Map([
+          ['communication_exec', commTool as unknown as DynamicStructuredTool],
+        ]),
+        config: {
+          configurable: {
+            thread_id: externalThreadId,
+            thread_created_by: TEST_USER_ID,
+            node_id: NODE_ID,
+          },
+        },
+        mapper,
+        logger: mockDeep<DefaultLogger>(),
+        signal: new AbortController().signal,
+        send: () => {},
+      });
+
+      // Bridge correlation ids (tool-bridge-*) are a DIFFERENT id space from the
+      // SDK tool_use_ids; the dispatcher must recover the latter by name (FIFO).
+      dispatcher.dispatch({
+        id: 'tool-bridge-1',
+        toolName: 'communication_exec',
+        args: {},
+      });
+      dispatcher.dispatch({
+        id: 'tool-bridge-2',
+        toolName: 'communication_exec',
+        args: {},
+      });
+      await new Promise((resolve) => setImmediate(resolve));
+
+      // Each delegation gets ITS OWN parent tool_use_id (FIFO) — so distinct
+      // delegations render as distinct Communication blocks instead of folding
+      // into one. The bridge ids never leak into __toolCallId.
+      expect(capturedToolCallIds).toEqual(['tu-comm-A', 'tu-comm-B']);
+
+      // A third call with no pending tool_use_id falls back to the bridge id —
+      // never throws, never mis-attributes to a sibling.
+      dispatcher.dispatch({
+        id: 'tool-bridge-3',
+        toolName: 'communication_exec',
+        args: {},
+      });
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(capturedToolCallIds[2]).toBe('tool-bridge-3');
+
+      // Cost-by-node is unaffected: persist the parent comm stream through the
+      // real handler; both parent AI rows key by the plain node id (no ::sub::
+      // surrogate — communication_exec is __interAgentCommunication, not
+      // __subagentCommunication), and byNode still reconciles with the scan.
+      mapper.flush();
+      for (const event of events) {
+        if (event.type !== 'message') {
+          continue;
+        }
+        await messageHandler.handle({
+          type: NotificationEvent.AgentMessage,
+          graphId,
+          nodeId: NODE_ID,
+          threadId: externalThreadId,
+          parentThreadId: externalThreadId,
+          data: { messages: event.data.messages },
+        });
+      }
+
+      // NOTE: on the checkpoint-less path getThreadTokenUsage reads via the same
+      // aggregateUsageByNodeId scan, so this loop pins byNode SHAPE parity, not a
+      // writer/reader regression (the genuine cost-by-node regression guard, with
+      // distinct per-surrogate token values, lives in the first test of this
+      // file). The load-bearing assertion FOR THIS FIX is capturedToolCallIds
+      // above; the nodeId === NODE_ID check below pins that the changed
+      // __toolCallId never shifts an inter-agent message into a ::sub:: bucket.
+      const usage = await checkpointState.getThreadTokenUsage(externalThreadId);
+      const directBuckets =
+        await messagesDao.aggregateUsageByNodeId(internalThreadId);
+      for (const [nodeId, direct] of directBuckets) {
+        expect(usage!.byNode![nodeId]).toMatchObject({
+          inputTokens: direct.inputTokens,
+          outputTokens: direct.outputTokens,
+          totalTokens: direct.totalTokens,
+          totalPrice: direct.totalPrice,
+        });
+      }
+
+      // The two communication_exec calls created NO ::sub:: surrogate rows —
+      // changing __toolCallId on the inter-agent path must not shift a bucket.
+      const rows = await messagesDao.getAll(
+        { threadId: internalThreadId },
+        { orderBy: { createdAt: 'ASC' } },
+      );
+      // Rows that MADE a communication_exec call (denormalized toolCallNames) —
+      // NOT rows that merely answered one (__answeredToolCallNames), which a
+      // ::sub:: subagent row from a sibling test legitimately carries.
+      const commAiRows = rows.filter(
+        (r) =>
+          r.role === MessageRole.AI &&
+          (r.toolCallNames ?? []).includes('communication_exec'),
+      );
+      expect(commAiRows.length).toBeGreaterThanOrEqual(2);
+      for (const row of commAiRows) {
+        expect(row.nodeId).toBe(NODE_ID);
+      }
     },
   );
 });
