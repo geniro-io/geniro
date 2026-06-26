@@ -5,10 +5,8 @@ import { Injectable, Logger } from '@nestjs/common';
 import { BadRequestException, NotFoundException } from '@packages/common';
 
 import { AppContextStorage } from '../../../auth/app-context-storage';
+import { environment } from '../../../environments';
 import {
-  AGENT_MEMORY_MAX_ENTRIES_PER_NAMESPACE,
-  AGENT_MEMORY_MAX_ENTRIES_PER_PROJECT,
-  AGENT_MEMORY_MAX_VALUE_BYTES,
   AgentMemoryEntryMode,
   AppendEntryInput,
   PutEntryInput,
@@ -275,10 +273,10 @@ export class AgentMemoryService {
     }
     const serialized = JSON.stringify(value);
     const byteLength = Buffer.byteLength(serialized, 'utf8');
-    if (byteLength > AGENT_MEMORY_MAX_VALUE_BYTES) {
+    if (byteLength > environment.agentMemoryMaxValueBytes) {
       throw new BadRequestException(
         'AGENT_MEMORY_VALUE_TOO_LARGE',
-        `Value exceeds the ${AGENT_MEMORY_MAX_VALUE_BYTES}-byte limit (${byteLength} bytes).`,
+        `Value exceeds the ${environment.agentMemoryMaxValueBytes}-byte limit (${byteLength} bytes).`,
       );
     }
   }
@@ -302,10 +300,10 @@ export class AgentMemoryService {
       namespace,
       txEm,
     );
-    if (nsCount > AGENT_MEMORY_MAX_ENTRIES_PER_NAMESPACE) {
+    if (nsCount > environment.agentMemoryMaxEntriesPerNamespace) {
       const victims = await this.agentMemoryDao.findOldest(
         { projectId, namespace },
-        nsCount - AGENT_MEMORY_MAX_ENTRIES_PER_NAMESPACE,
+        nsCount - environment.agentMemoryMaxEntriesPerNamespace,
         txEm,
       );
       await this.pruneEntries(projectId, victims, 'namespace', txEm);
@@ -315,10 +313,10 @@ export class AgentMemoryService {
       projectId,
       txEm,
     );
-    if (projectCount > AGENT_MEMORY_MAX_ENTRIES_PER_PROJECT) {
+    if (projectCount > environment.agentMemoryMaxEntriesPerProject) {
       const victims = await this.agentMemoryDao.findOldest(
         { projectId },
-        projectCount - AGENT_MEMORY_MAX_ENTRIES_PER_PROJECT,
+        projectCount - environment.agentMemoryMaxEntriesPerProject,
         txEm,
       );
       await this.pruneEntries(projectId, victims, 'project', txEm);

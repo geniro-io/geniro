@@ -2,11 +2,8 @@ import { EntityManager } from '@mikro-orm/postgresql';
 import { Logger } from '@nestjs/common';
 import { beforeEach, describe, expect, it, Mock, vi } from 'vitest';
 
-import {
-  AGENT_MEMORY_MAX_ENTRIES_PER_NAMESPACE,
-  AGENT_MEMORY_MAX_ENTRIES_PER_PROJECT,
-  AgentMemoryEntryMode,
-} from '../agent-memory.types';
+import { environment } from '../../../environments';
+import { AgentMemoryEntryMode } from '../agent-memory.types';
 import { AgentMemoryDao } from '../dao/agent-memory.dao';
 import { AgentMemoryEntryEntity } from '../entity/agent-memory-entry.entity';
 import { AgentMemoryService } from './agent-memory.service';
@@ -84,7 +81,7 @@ describe('AgentMemoryService prune-to-capacity', () => {
 
   it('prunes the oldest entries over the namespace cap and logs each', async () => {
     dao.countForNamespace.mockResolvedValue(
-      AGENT_MEMORY_MAX_ENTRIES_PER_NAMESPACE + 2,
+      environment.agentMemoryMaxEntriesPerNamespace + 2,
     );
     dao.countForProject.mockResolvedValue(10);
     dao.findOldest.mockResolvedValue([
@@ -109,7 +106,7 @@ describe('AgentMemoryService prune-to-capacity', () => {
   it('prunes over the project cap and logs each', async () => {
     dao.countForNamespace.mockResolvedValue(10);
     dao.countForProject.mockResolvedValue(
-      AGENT_MEMORY_MAX_ENTRIES_PER_PROJECT + 1,
+      environment.agentMemoryMaxEntriesPerProject + 1,
     );
     dao.findOldest.mockResolvedValue([fakeEntity({ id: 'old-x', key: 'x' })]);
 

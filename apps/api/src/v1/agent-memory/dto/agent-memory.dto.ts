@@ -1,17 +1,13 @@
 import { createZodDto } from 'nestjs-zod';
 import { z } from 'zod';
 
-import {
-  AGENT_MEMORY_MAX_KEY_LENGTH,
-  AGENT_MEMORY_MAX_NAMESPACE_LENGTH,
-  AGENT_MEMORY_MAX_TITLE_LENGTH,
-  AgentMemoryEntryMode,
-} from '../agent-memory.types';
+import { environment } from '../../../environments';
+import { AgentMemoryEntryMode } from '../agent-memory.types';
 
 export const namespaceSchema = z
   .string()
   .min(1)
-  .max(AGENT_MEMORY_MAX_NAMESPACE_LENGTH)
+  .max(environment.agentMemoryMaxNamespaceLength)
   .regex(
     /^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/,
     'namespace must start with an alphanumeric character and contain only letters, digits, underscores, dashes, or dots',
@@ -20,10 +16,10 @@ export const namespaceSchema = z
 export const keySchema = z
   .string()
   .min(1)
-  .max(AGENT_MEMORY_MAX_KEY_LENGTH)
+  .max(environment.agentMemoryMaxKeyLength)
   .regex(
-    /^[^\s/\\]{1,256}$/,
-    'key must not contain whitespace, forward slashes, or backslashes and must be 1-256 characters',
+    /^[^\s/\\]+$/,
+    'key must not contain whitespace, forward slashes, or backslashes',
   );
 
 export const AgentMemoryEntryDtoSchema = z.object({
@@ -86,7 +82,7 @@ export type ListEntriesQuery = z.infer<typeof ListEntriesQuerySchema>;
 export const SaveEntryBodySchema = z.object({
   namespace: namespaceSchema,
   key: keySchema,
-  title: z.string().max(AGENT_MEMORY_MAX_TITLE_LENGTH).nullish(),
+  title: z.string().max(environment.agentMemoryMaxTitleLength).nullish(),
   value: z.unknown(),
   tags: z.array(z.string().min(1).max(64)).max(16).nullish(),
 });

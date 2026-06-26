@@ -188,6 +188,25 @@ export const environment = () =>
     // agents
     agentsInstructionsFile: getEnv('AGENTS_INSTRUCTIONS_FILE', 'AGENTS.md'),
 
+    // --- Agent memory (durable project-scoped store) ---
+    // Per-entry value-size cap and the namespace/project entry quotas that drive
+    // prune-oldest, plus the namespace/key/title length bounds the DTO enforces.
+    agentMemoryMaxValueBytes: +getEnv('AGENT_MEMORY_MAX_VALUE_BYTES', '32768'),
+    agentMemoryMaxEntriesPerNamespace: +getEnv(
+      'AGENT_MEMORY_MAX_ENTRIES_PER_NAMESPACE',
+      '500',
+    ),
+    agentMemoryMaxEntriesPerProject: +getEnv(
+      'AGENT_MEMORY_MAX_ENTRIES_PER_PROJECT',
+      '2000',
+    ),
+    agentMemoryMaxNamespaceLength: +getEnv(
+      'AGENT_MEMORY_MAX_NAMESPACE_LENGTH',
+      '128',
+    ),
+    agentMemoryMaxKeyLength: +getEnv('AGENT_MEMORY_MAX_KEY_LENGTH', '256'),
+    agentMemoryMaxTitleLength: +getEnv('AGENT_MEMORY_MAX_TITLE_LENGTH', '256'),
+
     // --- Versions ---
     apiVersion: getEnv('API_VERSION', 'dev'),
     webVersion: getEnv('WEB_VERSION', 'dev'),
