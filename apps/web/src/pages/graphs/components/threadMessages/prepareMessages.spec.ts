@@ -345,6 +345,66 @@ describe('Communication-block delegation grouping (Claude-path id-space fix)', (
   });
 });
 
+// ── Streaming-order fold reproduction (Claude-bridge parent-at-end timing) ─────
+//
+// The Claude bridge persists each communication_exec parent message at the END
+// of its delegation (usage stamped at turn end, insert-only), so a delegation's
+// inner messages carry a createdAt BEFORE their own parent call. With bridge
+// correlation ids (pre-fix) the inner messages miss the primary grouping key and
+// fall to resolveCommByTimestamp, which assigns them to the latest call created
+// at-or-before the message — i.e. the PREVIOUS delegation's call — folding
+// delegation 2 into delegation 1's block. (This is the user-reported bug; the
+// earlier grouping tests above used createdAt='' and an empty externalThreadId,
+// so they did NOT reproduce the fold.) The SDK tool_use_id fix routes the inner
+// messages via the primary path, keeping each delegation separate.
+describe('Communication-block streaming-order fold (Claude-bridge parent-at-end)', () => {
+  const build = (d1Id: string, d2Id: string): ThreadMessageDto[] => [
+    makeCommInnerMsg(
+      'i1',
+      d1Id,
+      'probe result',
+      '2024-01-01T00:00:05.000Z',
+      'b__Engineer__probe',
+    ),
+    makeCommCallMsg('p1', 'toolu_A', 'Engineer', 'probe', '2024-01-01T00:00:10.000Z'),
+    makeCommResultMsg('r1', 'toolu_A', '2024-01-01T00:00:11.000Z'),
+    makeCommInnerMsg(
+      'i2',
+      d2Id,
+      'plan result',
+      '2024-01-01T00:00:15.000Z',
+      'b__Engineer__plan',
+    ),
+    makeCommCallMsg('p2', 'toolu_B', 'Engineer', 'plan', '2024-01-01T00:00:20.000Z'),
+    makeCommResultMsg('r2', 'toolu_B', '2024-01-01T00:00:21.000Z'),
+  ];
+
+  const planLocation = (msgs: ThreadMessageDto[]) => {
+    const blocks = findCommBlocks(prepareReadyMessages(msgs, defaultOptions));
+    const byId = new Map(
+      blocks.map((b) => [b.toolCallId, JSON.stringify(b.innerMessages)]),
+    );
+    return {
+      inProbeBlock: Boolean(byId.get('toolu_A')?.includes('plan result')),
+      inPlanBlock: Boolean(byId.get('toolu_B')?.includes('plan result')),
+    };
+  };
+
+  it('reproduces the bug: bridge correlation ids fold the second delegation into the first block', () => {
+    expect(planLocation(build('bridge-tool-1', 'bridge-tool-2'))).toEqual({
+      inProbeBlock: true,
+      inPlanBlock: false,
+    });
+  });
+
+  it('the SDK tool_use_id fix keeps each delegation in its own block', () => {
+    expect(planLocation(build('toolu_A', 'toolu_B'))).toEqual({
+      inProbeBlock: false,
+      inPlanBlock: true,
+    });
+  });
+});
+
 // ── Scenario (a): orphan with __toolCallId routes into executed block ─────────
 
 describe('adoptOrphanStreamingReasoning — keyed by __toolCallId', () => {
