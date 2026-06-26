@@ -366,7 +366,13 @@ describe('Communication-block streaming-order fold (Claude-bridge parent-at-end)
       '2024-01-01T00:00:05.000Z',
       'b__Engineer__probe',
     ),
-    makeCommCallMsg('p1', 'toolu_A', 'Engineer', 'probe', '2024-01-01T00:00:10.000Z'),
+    makeCommCallMsg(
+      'p1',
+      'toolu_A',
+      'Engineer',
+      'probe',
+      '2024-01-01T00:00:10.000Z',
+    ),
     makeCommResultMsg('r1', 'toolu_A', '2024-01-01T00:00:11.000Z'),
     makeCommInnerMsg(
       'i2',
@@ -375,7 +381,13 @@ describe('Communication-block streaming-order fold (Claude-bridge parent-at-end)
       '2024-01-01T00:00:15.000Z',
       'b__Engineer__plan',
     ),
-    makeCommCallMsg('p2', 'toolu_B', 'Engineer', 'plan', '2024-01-01T00:00:20.000Z'),
+    makeCommCallMsg(
+      'p2',
+      'toolu_B',
+      'Engineer',
+      'plan',
+      '2024-01-01T00:00:20.000Z',
+    ),
     makeCommResultMsg('r2', 'toolu_B', '2024-01-01T00:00:21.000Z'),
   ];
 
