@@ -19,6 +19,11 @@ export const MemorySearchToolSchema = z.object({
   query: z
     .string()
     .min(1)
+    // Bounded to mirror the REST search DTO (agent-memory.dto.ts) so both read
+    // entry points are capped — an unbounded query reaches the (fail-loud) embed
+    // call and a value over the model's token limit would 400 the agent instead
+    // of a graceful result.
+    .max(2048)
     .describe(
       'Natural-language description of what you are trying to recall. Matched by meaning against stored memories, so phrase it as the idea you want, not an exact key.',
     ),

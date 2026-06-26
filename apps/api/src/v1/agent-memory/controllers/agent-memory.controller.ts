@@ -75,6 +75,8 @@ export class AgentMemoryController {
   @ApiOperation({ operationId: 'searchMemoryEntries' })
   @ApiOkResponse({ type: AgentMemoryEntryDto, isArray: true })
   // Declared before `:namespace` so the static `search` path is unambiguous.
+  // `search` is also reserved in `namespaceSchema`, so no namespace can be created
+  // that this static route would otherwise shadow.
   @Get('search')
   async searchEntries(
     @Query() query: SearchMemoryQueryDto,

@@ -12,6 +12,16 @@ import {
   AgentMemoryEntryMode,
 } from '../agent-memory.types';
 
+/**
+ * Static GET segments under `/memory` that would shadow a same-named namespace:
+ * `GET /memory/search` always routes to semantic search, so a namespace literally
+ * named `search` would be unreachable via `GET /memory/:namespace`. Reserved here
+ * (at the shared namespace schema, so save/append and the agent tools all enforce
+ * it) so such an unreachable namespace can never be created. Compared
+ * case-insensitively to stay correct regardless of the router's case-sensitivity.
+ */
+const RESERVED_NAMESPACES = new Set(['search']);
+
 export const namespaceSchema = z
   .string()
   .min(1)
@@ -19,7 +29,11 @@ export const namespaceSchema = z
   .regex(
     /^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/,
     'namespace must start with an alphanumeric character and contain only letters, digits, underscores, dashes, or dots',
-  );
+  )
+  .refine((ns) => !RESERVED_NAMESPACES.has(ns.toLowerCase()), {
+    message:
+      'namespace "search" is reserved (it would be shadowed by the GET /memory/search route)',
+  });
 
 export const keySchema = z
   .string()

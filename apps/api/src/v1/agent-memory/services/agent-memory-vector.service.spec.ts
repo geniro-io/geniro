@@ -100,4 +100,54 @@ describe('AgentMemoryVectorService embed-on-write cost attribution', () => {
     expect(usage?.totalPrice).toBe(0.00042);
     expect(qdrant.upsertPoints).not.toHaveBeenCalled();
   });
+
+  it('search() returns empty and still attributes the billed query embed when there are no hits (e.g. a not-yet-created collection)', async () => {
+    // The cold-collection guard lives in QdrantService.searchPoints (it returns []
+    // for a collection that does not exist yet — see qdrant.service.spec.ts), so a
+    // brand-new project / fresh M2 deploy / pre-M2-only project simply yields no
+    // hits here. search() must still attribute the query embed LiteLLM already
+    // billed on this empty path (cost-accounting.md: usage survives every exit).
+    qdrant.searchPoints.mockResolvedValue([]);
+
+    const result = await service.search('project-1', 'database', 5);
+
+    expect(result.matches).toEqual([]);
+    expect(result.usage?.totalPrice).toBe(0.00042);
+  });
+
+  it('search() propagates a non-cold Qdrant failure (fail-loud recall)', async () => {
+    // Any failure that is NOT a missing collection is a genuine degradation; the
+    // read stays fail-loud so a broken backend surfaces as an explicit error
+    // rather than masquerading as "nothing matched".
+    qdrant.searchPoints.mockRejectedValue(new Error('connection refused'));
+
+    await expect(service.search('project-1', 'database', 5)).rejects.toThrow(
+      'connection refused',
+    );
+  });
+
+  it('search() propagates a missing-payload-index 400 instead of swallowing it as empty', async () => {
+    // search() always filters on the `projectId` payload field, which Qdrant
+    // requires a keyword index for. ensurePayloadIndex is best-effort, so a
+    // project whose index creation failed makes EVERY search 400 with a body that
+    // names the field AND the collection — the collection EXISTS, recall is
+    // genuinely degraded. Qdrant's REST client embeds that server body verbatim in
+    // error.message, and the message contains both "not found" and "collection",
+    // which the not-cold-collection carve-out must NOT treat as the legitimate
+    // empty state. Swallowing it returns zero memories for every search while the
+    // backend is misconfigured — the silent-degraded-recall failure
+    // database-queries.md's fail-loud read rule exists to prevent.
+    qdrant.searchPoints.mockRejectedValue(
+      new Error(
+        'Unexpected Response: 400 (Bad Request)\nRaw response content:\n' +
+          '{"status":{"error":"Index required but not found for \\"projectId\\" ' +
+          'of one of the following types: [keyword, uuid]. Help: Create an index ' +
+          'for this key. Collection agent_memory_1536"}}',
+      ),
+    );
+
+    await expect(service.search('project-1', 'database', 5)).rejects.toThrow(
+      /Index required but not found/,
+    );
+  });
 });

@@ -3,6 +3,7 @@ import { INestApplication } from '@nestjs/common';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { environment } from '../../../environments';
+import { AgentMemoryDao } from '../../../v1/agent-memory/dao/agent-memory.dao';
 import { AgentMemoryService } from '../../../v1/agent-memory/services/agent-memory.service';
 import { MemoryAppendTool } from '../../../v1/agent-tools/tools/common/agent-memory/memory-append.tool';
 import { MemorySaveTool } from '../../../v1/agent-tools/tools/common/agent-memory/memory-save.tool';
@@ -54,6 +55,7 @@ const cfgFor = (
 describe('Agent memory semantic recall (M2)', () => {
   let app: INestApplication;
   let service: AgentMemoryService;
+  let agentMemoryDao: AgentMemoryDao;
   let projectsDao: ProjectsDao;
   let saveTool: MemorySaveTool;
   let appendTool: MemoryAppendTool;
@@ -92,6 +94,7 @@ describe('Agent memory semantic recall (M2)', () => {
   beforeAll(async () => {
     app = await createTestModule();
     service = app.get(AgentMemoryService);
+    agentMemoryDao = app.get(AgentMemoryDao);
     projectsDao = app.get(ProjectsDao);
     saveTool = app.get(MemorySaveTool);
     appendTool = app.get(MemoryAppendTool);
@@ -311,6 +314,59 @@ describe('Agent memory semantic recall (M2)', () => {
     } finally {
       mutableEnv.agentMemoryMaxEntriesPerNamespace = originalCap;
     }
+  });
+
+  it('drops an orphan vector whose Postgres row was hard-deleted (vector outlived its row)', async () => {
+    // database-queries.md requires search to DROP hits whose row is gone, so it
+    // never returns a (namespace, key) that memory_get would 404 on. The
+    // "deleted"/"pruned" tests above remove BOTH the row and the vector, so Qdrant
+    // returns no hit and the `if (row)` orphan-drop guard in searchForProject is
+    // never exercised. Here we orphan the vector directly: save (row + vector),
+    // then permanently delete ONLY the Postgres row (no vectorService.deleteEntry),
+    // leaving the vector to still rank — search must omit it via the orphan-drop.
+    // Two entries that both rank for the query; only 'db' will be orphaned, so the
+    // co-located 'db2' must still be returned afterwards — that guards against a
+    // regression where the hydration drops ALL rows rather than just the orphan.
+    await saveTool.invoke(
+      { namespace: 'facts', key: 'db', value: 'Postgres is the database' },
+      {},
+      cfgFor(projectA),
+    );
+    await saveTool.invoke(
+      {
+        namespace: 'facts',
+        key: 'db2',
+        value: 'The database also runs Postgres',
+      },
+      {},
+      cfgFor(projectA),
+    );
+    const before = await searchTool.invoke(
+      { query: 'database', limit: 50 },
+      {},
+      cfgFor(projectA),
+    );
+    expect(before.output.results.map((r) => r.key)).toEqual(
+      expect.arrayContaining(['db', 'db2']),
+    );
+
+    // Permanently remove ONLY the 'db' row — its Qdrant vector is intentionally
+    // left intact, producing a true orphan vector that still matches the query.
+    await agentMemoryDao.hardDelete({
+      projectId: projectA,
+      namespace: 'facts',
+      key: 'db',
+    });
+    expect(await service.getForProject(projectA, 'facts', 'db')).toBeNull();
+
+    const after = await searchTool.invoke(
+      { query: 'database', limit: 50 },
+      {},
+      cfgFor(projectA),
+    );
+    const keys = after.output.results.map((r) => r.key);
+    expect(keys).not.toContain('db');
+    expect(keys).toContain('db2');
   });
 
   it('persists the row and attributes no cost when the embed best-effort fails', async () => {

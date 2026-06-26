@@ -165,6 +165,12 @@ export function MemoryListPage() {
 
   useEffect(() => {
     void loadNamespaces();
+    // This page stays mounted across a project switch (same
+    // /projects/:projectId/memory route), so clear any active search — otherwise
+    // the previous project's hits keep rendering as "N results for <old query>"
+    // under the new project until manually cleared.
+    setSearchResults(null);
+    setSearchQuery('');
   }, [loadNamespaces, projectId]);
 
   useEffect(() => {
@@ -311,6 +317,7 @@ export function MemoryListPage() {
               <MemoryEntriesTable
                 entries={searchResults}
                 loading={searching}
+                showNamespace
                 onEdit={openEdit}
                 onDelete={setDeleting}
               />

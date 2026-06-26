@@ -265,6 +265,20 @@ export class QdrantService {
       return [];
     }
 
+    // Mirror the other reads (deleteByFilter/retrievePoints/scrollAll): a
+    // not-yet-created collection is the legitimate empty state, returned as [].
+    // This was the ONLY read lacking the guard, which forced callers to
+    // string-match the thrown "not found" — and that heuristic ALSO matches a
+    // different failure on a collection that DOES exist (a missing payload index
+    // returns a 400 naming both the field and the collection), so a genuinely
+    // degraded backend was indistinguishable from cold-start. Checking existence
+    // up front keeps such real search failures fail-loud — they still throw from
+    // the client.search call below.
+    const exists = await this.collectionExists(collection);
+    if (!exists) {
+      return [];
+    }
+
     return this.client.search(collection, {
       vector,
       limit,

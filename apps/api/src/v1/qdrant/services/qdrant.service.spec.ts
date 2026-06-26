@@ -117,6 +117,20 @@ describe('QdrantService', () => {
     ]);
   });
 
+  it('searchPoints returns empty without searching when the collection does not exist', async () => {
+    // Cold-collection guard: a not-yet-created collection is the legitimate empty
+    // state (mirrors retrievePoints/scrollAll/deleteByFilter). A genuine failure on
+    // an EXISTING collection still throws from client.search, so it stays fail-loud.
+    mockClient.getCollection.mockRejectedValue(
+      new Error('Collection `missing` not found'),
+    );
+
+    const results = await service.searchPoints('missing', [0.1, 0.2], 5);
+
+    expect(results).toEqual([]);
+    expect(mockClient.search).not.toHaveBeenCalled();
+  });
+
   it('returns raw batch results', async () => {
     mockClient.searchBatch.mockResolvedValue([
       [{ id: 'chunk-1', score: 0.9 }],

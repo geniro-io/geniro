@@ -160,6 +160,17 @@ export class AgentMemoryVectorService {
    * reason about, rather than a silent empty result that looks like "nothing
    * matched" — the write must not block the user's save, but a failed recall
    * should not masquerade as no-matches.
+   *
+   * A not-yet-created collection is not a failure: it is the legitimate empty
+   * state for a project with no successful embed-on-write yet (a brand-new
+   * project, a fresh M2 deploy, or a project holding only pre-M2 rows — no
+   * backfill, see milestone-2 §3). `searchPoints` returns no hits for it (it
+   * guards collection existence like the other Qdrant reads), so this method
+   * returns empty (still attributing the billed query embed) with no special case
+   * here — and crucially WITHOUT a broad `isCollectionNotFoundError` catch, which
+   * would also swallow a genuine degradation on an EXISTING collection (e.g. a
+   * missing payload index) as a false empty. A real failure still throws and
+   * propagates.
    */
   async search(
     projectId: string,

@@ -47,7 +47,7 @@ vi.mock('sonner', () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));
 
-import { MemoryRouter, Route, Routes } from 'react-router';
+import { Link, MemoryRouter, Route, Routes } from 'react-router';
 
 import { MemoryListPage } from './list';
 
@@ -358,5 +358,107 @@ describe('MemoryListPage', () => {
     await user.click(screen.getByRole('button', { name: 'Clear' }));
     expect(await screen.findByText('Package manager')).toBeInTheDocument();
     expect(screen.queryByText('Search hit')).not.toBeInTheDocument();
+  });
+
+  it('shows the namespace column for cross-namespace search results', async () => {
+    listMemoryNamespaces.mockResolvedValue({
+      data: [
+        {
+          namespace: 'facts',
+          mode: 'kv',
+          entryCount: 1,
+          lastUpdatedAt: '2026-01-01T00:00:00.000Z',
+        },
+      ],
+    });
+    listMemoryEntries.mockResolvedValue({ data: [entry] });
+    // A hit from a DIFFERENT namespace than the browsed one — the namespace must
+    // render so a same-key hit elsewhere is not indistinguishable.
+    const hit = {
+      ...entry,
+      id: 'h1',
+      namespace: 'conventions',
+      key: 'pm',
+      title: 'Search hit',
+    };
+    searchMemoryEntries.mockResolvedValue({ data: [hit] });
+
+    const user = userEvent.setup();
+    renderPage();
+
+    await waitFor(() =>
+      expect(screen.getByText('Package manager')).toBeInTheDocument(),
+    );
+    // Browse mode (namespace implied by the selector) has no Namespace column.
+    expect(
+      screen.queryByRole('columnheader', { name: 'Namespace' }),
+    ).not.toBeInTheDocument();
+
+    await user.type(
+      screen.getByRole('textbox', { name: 'Search memories' }),
+      'package manager',
+    );
+    await user.click(screen.getByRole('button', { name: /Search/i }));
+
+    expect(await screen.findByText('Search hit')).toBeInTheDocument();
+    // Search results span namespaces, so the column appears and the hit's
+    // namespace is shown.
+    expect(
+      screen.getByRole('columnheader', { name: 'Namespace' }),
+    ).toBeInTheDocument();
+    expect(screen.getByText('conventions')).toBeInTheDocument();
+  });
+
+  it('clears stale search results when the project changes', async () => {
+    listMemoryNamespaces.mockResolvedValue({
+      data: [
+        {
+          namespace: 'facts',
+          mode: 'kv',
+          entryCount: 1,
+          lastUpdatedAt: '2026-01-01T00:00:00.000Z',
+        },
+      ],
+    });
+    listMemoryEntries.mockResolvedValue({ data: [entry] });
+    const hit = { ...entry, id: 'h1', key: 'searched', title: 'Search hit' };
+    searchMemoryEntries.mockResolvedValue({ data: [hit] });
+
+    const user = userEvent.setup();
+    // A project switch navigates to the SAME route with a different :projectId, so
+    // React Router keeps MemoryListPage mounted (no remount) — without the
+    // projectId-effect reset, the previous project's search results would persist.
+    render(
+      <MemoryRouter initialEntries={['/projects/p1/memory']}>
+        <Link to="/projects/p2/memory">switch-project</Link>
+        <Routes>
+          <Route
+            path="/projects/:projectId/memory"
+            element={<MemoryListPage />}
+          />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByText('Package manager')).toBeInTheDocument(),
+    );
+
+    await user.type(
+      screen.getByRole('textbox', { name: 'Search memories' }),
+      'how do we build',
+    );
+    await user.click(screen.getByRole('button', { name: /Search/i }));
+    expect(await screen.findByText('Search hit')).toBeInTheDocument();
+    expect(screen.getByText(/result for/i)).toBeInTheDocument();
+
+    // Switching project must drop the stale search and return to browse mode.
+    await user.click(screen.getByRole('link', { name: 'switch-project' }));
+
+    await waitFor(() =>
+      expect(screen.queryByText('Search hit')).not.toBeInTheDocument(),
+    );
+    expect(screen.queryByText(/result for/i)).not.toBeInTheDocument();
+    expect(await screen.findByText('Package manager')).toBeInTheDocument();
   });
 });
