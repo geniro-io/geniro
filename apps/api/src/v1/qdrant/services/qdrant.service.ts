@@ -295,6 +295,15 @@ export class QdrantService {
     if (!searches.length) {
       return [];
     }
+    // Cold-collection guard, matching searchPoints and the other reads: a
+    // not-yet-created collection yields no results rather than throwing, so
+    // callers need not string-match the error (which also matches a missing-index
+    // 400 on a collection that DOES exist — see searchPoints). A genuine search
+    // failure still throws from searchBatch below.
+    const exists = await this.collectionExists(collection);
+    if (!exists) {
+      return [];
+    }
     return this.client.searchBatch(collection, { searches });
   }
 

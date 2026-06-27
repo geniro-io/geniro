@@ -148,6 +148,22 @@ describe('QdrantService', () => {
     ]);
   });
 
+  it('searchMany returns empty without searching when the collection does not exist', async () => {
+    // Same cold-collection guard as searchPoints — the batch read also returns
+    // empty for a missing collection rather than throwing, while a genuine failure
+    // still propagates from client.searchBatch.
+    mockClient.getCollection.mockRejectedValue(
+      new Error('Collection `missing` not found'),
+    );
+
+    const results = await service.searchMany('missing', [
+      { vector: [0.1, 0.2], limit: 2 },
+    ]);
+
+    expect(results).toEqual([]);
+    expect(mockClient.searchBatch).not.toHaveBeenCalled();
+  });
+
   it('returns raw retrieve results', async () => {
     mockClient.retrieve.mockResolvedValue([{ id: 'chunk-1' }]);
 

@@ -727,53 +727,48 @@ export class RepoIndexService implements OnModuleInit {
     const searchLimit = topK * factor;
     const repoFilter = this.repoIndexerService.buildRepoFilter(repoId);
 
-    // Search Qdrant — return empty if collection was deleted between indexing and search
+    // Search Qdrant. searchPoints/searchMany guard collection existence, so a
+    // collection that was deleted (or never created) between indexing and search
+    // yields no matches rather than throwing — no special-casing needed here. A
+    // genuine search failure (a degraded backend, or a missing payload index on an
+    // existing collection — both of which a broad "not found" string-match would
+    // misread as cold-start) propagates fail-loud instead of looking like
+    // "no results".
     type SearchResultItem = Awaited<
       ReturnType<QdrantService['searchPoints']>
     >[number];
     let allMatches: SearchResultItem[];
-    try {
-      if (embeddings.length === 1) {
-        allMatches = await this.qdrantService.searchPoints(
-          collection,
-          embeddings[0]!,
-          searchLimit,
-          { filter: repoFilter, with_payload: true },
-        );
-      } else {
-        const batchResults = await this.qdrantService.searchMany(
-          collection,
-          embeddings.map((vector) => ({
-            vector,
-            limit: searchLimit,
-            filter: repoFilter,
-            with_payload: true,
-            with_vector: false,
-          })),
-        );
-        // Deduplicate by point ID, keeping the highest score
-        const bestByPointId = new Map<string | number, SearchResultItem>();
-        for (const results of batchResults) {
-          for (const match of results) {
-            const existing = bestByPointId.get(match.id);
-            if (!existing || match.score > existing.score) {
-              bestByPointId.set(match.id, match);
-            }
+    if (embeddings.length === 1) {
+      allMatches = await this.qdrantService.searchPoints(
+        collection,
+        embeddings[0]!,
+        searchLimit,
+        { filter: repoFilter, with_payload: true },
+      );
+    } else {
+      const batchResults = await this.qdrantService.searchMany(
+        collection,
+        embeddings.map((vector) => ({
+          vector,
+          limit: searchLimit,
+          filter: repoFilter,
+          with_payload: true,
+          with_vector: false,
+        })),
+      );
+      // Deduplicate by point ID, keeping the highest score
+      const bestByPointId = new Map<string | number, SearchResultItem>();
+      for (const results of batchResults) {
+        for (const match of results) {
+          const existing = bestByPointId.get(match.id);
+          if (!existing || match.score > existing.score) {
+            bestByPointId.set(match.id, match);
           }
         }
-        allMatches = Array.from(bestByPointId.values()).sort(
-          (a, b) => b.score - a.score,
-        );
       }
-    } catch (error) {
-      if (QdrantService.isCollectionNotFoundError(error)) {
-        this.logger.warn('Qdrant collection not found during search', {
-          collection,
-          repoId,
-        });
-        return [];
-      }
-      throw error;
+      allMatches = Array.from(bestByPointId.values()).sort(
+        (a, b) => b.score - a.score,
+      );
     }
 
     // Parse and filter results
