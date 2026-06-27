@@ -36,3 +36,14 @@ export type AgentMemoryDeleteOutput = {
   key: string;
   deleted: true;
 };
+
+/** One semantic-search hit returned to the agent (no body — fetch via memory_get). */
+export type AgentMemorySearchHitOutput = {
+  namespace: string;
+  key: string;
+  title: string | null;
+};
+
+export type AgentMemorySearchOutput = {
+  results: AgentMemorySearchHitOutput[];
+};

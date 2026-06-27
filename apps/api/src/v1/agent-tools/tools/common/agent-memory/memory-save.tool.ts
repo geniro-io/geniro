@@ -100,7 +100,7 @@ export class MemorySaveTool extends AgentMemoryBaseTool<
     this.assertWritable(config);
     const { userId, projectId, authorAgentId } = this.resolveContext(cfg);
 
-    const entry = await this.agentMemoryService.putForProject(
+    const { entry, embedUsage } = await this.agentMemoryService.putForProject(
       userId,
       projectId,
       {
@@ -113,8 +113,11 @@ export class MemorySaveTool extends AgentMemoryBaseTool<
       },
     );
 
+    // Attribute the embed-on-write (M2) token cost to this tool call so the
+    // thread's totalPrice accounts for it. Undefined when no embed ran.
     return {
       output: { id: entry.id, namespace: entry.namespace, key: entry.key },
+      ...(embedUsage ? { toolRequestUsage: embedUsage } : {}),
     };
   }
 }

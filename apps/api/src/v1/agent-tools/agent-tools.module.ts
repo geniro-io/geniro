@@ -14,6 +14,7 @@ import { MemoryDeleteTool } from './tools/common/agent-memory/memory-delete.tool
 import { MemoryGetTool } from './tools/common/agent-memory/memory-get.tool';
 import { MemoryListTool } from './tools/common/agent-memory/memory-list.tool';
 import { MemorySaveTool } from './tools/common/agent-memory/memory-save.tool';
+import { MemorySearchTool } from './tools/common/agent-memory/memory-search.tool';
 import { CommunicationExecTool } from './tools/common/communication/communication-exec.tool';
 import { CommunicationToolGroup } from './tools/common/communication/communication-tool-group';
 import { FilesApplyChangesTool } from './tools/common/files/files-apply-changes.tool';
@@ -113,6 +114,7 @@ import { WaitForTool } from './tools/core/wait-for.tool';
     MemoryGetTool,
     MemoryListTool,
     MemoryDeleteTool,
+    MemorySearchTool,
     AgentMemoryToolGroup,
   ],
   exports: [
@@ -161,6 +163,7 @@ import { WaitForTool } from './tools/core/wait-for.tool';
     MemoryGetTool,
     MemoryListTool,
     MemoryDeleteTool,
+    MemorySearchTool,
     AgentMemoryToolGroup,
   ],
 })

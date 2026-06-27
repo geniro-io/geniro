@@ -621,31 +621,36 @@ describe('RepoIndexService', () => {
       );
     });
 
-    it('returns empty array when Qdrant collection does not exist', async () => {
+    it('returns empty array when the collection is missing (the guarded read yields no hits)', async () => {
+      // A collection deleted (or never created) between indexing and search is now
+      // handled by the guarded searchPoints/searchMany returning [] — repo-index no
+      // longer catches the error itself, so the read simply produces no matches.
       (mockQdrantService as Record<string, unknown>).searchPoints = vi
         .fn()
-        .mockRejectedValue(new Error('Collection not found'));
+        .mockResolvedValue([]);
 
       const results = await service.searchCodebase(baseSearchParams);
 
       expect(results).toEqual([]);
-      expect(mockLogger.warn).toHaveBeenCalledWith(
-        'Qdrant collection not found during search',
-        expect.objectContaining({
-          collection: 'codebase_my_repo_main_1536',
-          repoId: 'https://github.com/owner/repo',
-        }),
-      );
     });
 
-    it('returns empty array when Qdrant collection "does not exist"', async () => {
+    it('propagates a not-found-shaped failure on an existing collection instead of swallowing it as empty', async () => {
+      // A missing payload index on an EXISTING collection returns a 400 whose
+      // message contains both "not found" and the collection name, so the old broad
+      // isCollectionNotFoundError catch swallowed this genuine degradation as "no
+      // results" (silent recall loss). It must now propagate fail-loud.
       (mockQdrantService as Record<string, unknown>).searchPoints = vi
         .fn()
-        .mockRejectedValue(new Error('Collection does not exist'));
+        .mockRejectedValue(
+          new Error(
+            'Index required but not found for "repo_id". ' +
+              'Collection codebase_my_repo_main_1536',
+          ),
+        );
 
-      const results = await service.searchCodebase(baseSearchParams);
-
-      expect(results).toEqual([]);
+      await expect(service.searchCodebase(baseSearchParams)).rejects.toThrow(
+        /Index required but not found/,
+      );
     });
 
     it('rethrows non-"not found" errors from Qdrant', async () => {

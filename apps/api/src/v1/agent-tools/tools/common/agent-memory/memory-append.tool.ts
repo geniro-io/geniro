@@ -94,20 +94,20 @@ export class MemoryAppendTool extends AgentMemoryBaseTool<
     this.assertWritable(config);
     const { userId, projectId, authorAgentId } = this.resolveContext(cfg);
 
-    const entry = await this.agentMemoryService.appendForProject(
-      userId,
-      projectId,
-      {
+    const { entry, embedUsage } =
+      await this.agentMemoryService.appendForProject(userId, projectId, {
         namespace: args.namespace,
         title: args.title ?? null,
         value: args.value,
         authorAgentId,
         tags: args.tags ?? null,
-      },
-    );
+      });
 
+    // Attribute the embed-on-write (M2) token cost to this tool call so the
+    // thread's totalPrice accounts for it. Undefined when no embed ran.
     return {
       output: { id: entry.id, namespace: entry.namespace, key: entry.key },
+      ...(embedUsage ? { toolRequestUsage: embedUsage } : {}),
     };
   }
 }

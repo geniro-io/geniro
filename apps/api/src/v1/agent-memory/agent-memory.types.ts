@@ -30,6 +30,19 @@ export const AGENT_MEMORY_MAX_TITLE_LENGTH = 256;
 export const AGENT_MEMORY_MAX_TAG_LENGTH = 64;
 export const AGENT_MEMORY_MAX_TAGS_COUNT = 16;
 
+// The M2 semantic-search bounds (default / max result limit) and the embed-input
+// truncation budget are operational, model-coupled knobs — they live in the env
+// (agentMemorySearchDefaultLimit / agentMemorySearchMaxLimit / agentMemoryEmbedMaxChars
+// in environment.prod.ts, parsed via getEnvPositiveInt, fail-closed). Only the
+// column-bound LENGTH caps above are baked constants.
+
+/** A semantic-search hit: enough to locate the entry, no body. */
+export interface AgentMemorySearchMatch {
+  namespace: string;
+  key: string;
+  title: string | null;
+}
+
 export interface NamespaceSummaryRow {
   namespace: string;
   mode: AgentMemoryEntryMode;

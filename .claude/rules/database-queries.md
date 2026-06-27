@@ -101,3 +101,14 @@ Raw SQL via `em.getConnection().execute()` is only acceptable for PostgreSQL-spe
 - **Pagination**: use `limit`, `offset`, `orderBy` in FindOptions. Always include `orderBy` with pagination.
 - **Transactions**: use `em.transactional()` in services. Pass the transactional EM to DAO methods via `txEm` parameter. Never create standalone transactions in DAOs.
 - **Naming**: MikroORM uses `UnderscoreNamingStrategy` -- camelCase in code maps to snake_case in DB automatically.
+
+## Derived indexes (Qdrant / secondary stores)
+
+When a feature mirrors a Postgres row into a Qdrant collection (or any secondary index), the Postgres row is the **source of truth** and the vector/index entry is a **derived index**. Handle the two paths with deliberately ASYMMETRIC failure semantics:
+
+- **Write path is best-effort and must NEVER throw into the caller's transaction.** Embed/index-on-write (and index deletion) run AFTER the row commits; a vector/index failure must not roll back or block the committed row. Swallow + log (coordinates only, never the row's user content), and accept that the derived entry may lag — it is rebuilt on the next overwrite. (Document any row class that is never re-indexed, e.g. immutable append rows, as permanently index-invisible after a failed write.)
+- **Read path is fail-loud and must propagate a backend failure.** A swallowed read that returns empty is indistinguishable from a genuine "no matches" and silently degrades recall — let the search throw so a degraded backend surfaces as an explicit error the caller can reason about.
+- **Hydrate index hits with a single batched DAO read** keyed on the index payload (`getByKeys`-style, one `$or`/`$in` query — not an N+1 `getByKey` loop), re-order the rows back into the index's relevance order, and **drop hits whose row is gone** (a vector can outlive its row after a failed best-effort delete) so search never returns a key that `get` would 404 on.
+- Cost: an index-on-write that embeds via a billed LLM call must attribute that cost even when the index write fails — see `.claude/rules/cost-accounting.md` (capture billed usage before the side-effect).
+
+Exemplar: `AgentMemoryVectorService` (`embedEntry` best-effort write, `search` fail-loud read) + `AgentMemoryService.searchForProject` / `AgentMemoryDao.getByKeys` (batched hydration + orphan-drop).

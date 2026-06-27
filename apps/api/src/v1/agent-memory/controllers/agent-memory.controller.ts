@@ -19,6 +19,7 @@ import { NotFoundException } from '@packages/common';
 import { CtxStorage, OnlyForAuthorized } from '@packages/http-server';
 
 import { AppContextStorage } from '../../../auth/app-context-storage';
+import { environment } from '../../../environments';
 import {
   AgentMemoryEntryDto,
   keySchema,
@@ -26,6 +27,7 @@ import {
   namespaceSchema,
   NamespaceSummaryDto,
   SaveEntryBodyDto,
+  SearchMemoryQueryDto,
 } from '../dto/agent-memory.dto';
 import { AgentMemoryService } from '../services/agent-memory.service';
 
@@ -67,6 +69,24 @@ export class AgentMemoryController {
       value: body.value,
       tags: body.tags ?? null,
     });
+  }
+
+  @Throttle({ default: { ttl: 60000, limit: 50 } })
+  @ApiOperation({ operationId: 'searchMemoryEntries' })
+  @ApiOkResponse({ type: AgentMemoryEntryDto, isArray: true })
+  // Declared before `:namespace` so the static `search` path is unambiguous.
+  // `search` is also reserved in `namespaceSchema`, so no namespace can be created
+  // that this static route would otherwise shadow.
+  @Get('search')
+  async searchEntries(
+    @Query() query: SearchMemoryQueryDto,
+    @CtxStorage() ctx: AppContextStorage,
+  ): Promise<AgentMemoryEntryDto[]> {
+    return this.agentMemoryService.searchEntries(
+      ctx,
+      query.query,
+      query.limit ?? environment.agentMemorySearchDefaultLimit,
+    );
   }
 
   @Throttle({ default: { ttl: 60000, limit: 50 } })

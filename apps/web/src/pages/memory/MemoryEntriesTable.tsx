@@ -24,6 +24,13 @@ type MemoryEntriesTableProps = {
   loading: boolean;
   onEdit: (entry: AgentMemoryEntryDto) => void;
   onDelete: (entry: AgentMemoryEntryDto) => void;
+  /**
+   * Show a Namespace column. Off in single-namespace browse mode (the selector
+   * already implies the namespace); on for cross-namespace search results, where
+   * two hits can share the same key in different namespaces and would otherwise
+   * render as indistinguishable rows.
+   */
+  showNamespace?: boolean;
 };
 
 /**
@@ -37,12 +44,17 @@ export function MemoryEntriesTable({
   loading,
   onEdit,
   onDelete,
+  showNamespace = false,
 }: MemoryEntriesTableProps) {
+  // 6 base columns (Key, Title, Mode, Tags, Updated, Actions) + the optional
+  // Namespace column — kept as base+delta so adding a column touches one place.
+  const columnCount = 6 + (showNamespace ? 1 : 0);
   return (
     <Card className="overflow-hidden">
       <Table>
         <TableHeader>
           <TableRow>
+            {showNamespace && <TableHead>Namespace</TableHead>}
             <TableHead>Key</TableHead>
             <TableHead>Title</TableHead>
             <TableHead>Mode</TableHead>
@@ -54,14 +66,14 @@ export function MemoryEntriesTable({
         <TableBody>
           {loading ? (
             <TableRow>
-              <TableCell colSpan={6}>
+              <TableCell colSpan={columnCount}>
                 <Skeleton className="h-6 w-full" />
               </TableCell>
             </TableRow>
           ) : entries.length === 0 ? (
             <TableRow>
               <TableCell
-                colSpan={6}
+                colSpan={columnCount}
                 className="text-muted-foreground text-center">
                 No entries in this namespace.
               </TableCell>
@@ -69,6 +81,11 @@ export function MemoryEntriesTable({
           ) : (
             entries.map((entry) => (
               <TableRow key={entry.id}>
+                {showNamespace && (
+                  <TableCell className="font-mono text-xs">
+                    {entry.namespace}
+                  </TableCell>
+                )}
                 <TableCell className="font-mono text-xs">{entry.key}</TableCell>
                 <TableCell>{entry.title ?? '—'}</TableCell>
                 <TableCell>

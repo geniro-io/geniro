@@ -142,12 +142,16 @@ describe('Agent memory integration', () => {
       value: 'draft',
       authorAgentId: 'Engineer',
     });
-    const updated = await service.putForProject(TEST_USER_ID, projectA, {
-      namespace: 'plan',
-      key: 'root',
-      value: 'revised',
-      authorAgentId: 'Reviewer',
-    });
+    const { entry: updated } = await service.putForProject(
+      TEST_USER_ID,
+      projectA,
+      {
+        namespace: 'plan',
+        key: 'root',
+        value: 'revised',
+        authorAgentId: 'Reviewer',
+      },
+    );
 
     expect(updated.value).toBe('revised');
     expect(updated.authorAgentId).toBe('Reviewer');
@@ -183,10 +187,14 @@ describe('Agent memory integration', () => {
     await service.deleteForProject(projectA, 'facts', 'pm');
     expect(await service.getForProject(projectA, 'facts', 'pm')).toBeNull();
 
-    const appended = await service.appendForProject(TEST_USER_ID, projectA, {
-      namespace: 'learnings',
-      value: 'immutable',
-    });
+    const { entry: appended } = await service.appendForProject(
+      TEST_USER_ID,
+      projectA,
+      {
+        namespace: 'learnings',
+        value: 'immutable',
+      },
+    );
     await expect(
       service.deleteForProject(projectA, 'learnings', appended.key),
     ).rejects.toBeInstanceOf(BadRequestException);

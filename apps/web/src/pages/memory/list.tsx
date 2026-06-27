@@ -1,4 +1,4 @@
-import { Plus } from 'lucide-react';
+import { Plus, Search } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router';
 import { toast } from 'sonner';
@@ -93,6 +93,13 @@ export function MemoryListPage() {
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState<AgentMemoryEntryDto | null>(null);
   const [deletePending, setDeletePending] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  // null = browse mode (show the selected namespace); an array = showing the
+  // results of the last semantic search instead.
+  const [searchResults, setSearchResults] = useState<
+    AgentMemoryEntryDto[] | null
+  >(null);
+  const [searching, setSearching] = useState(false);
   // Guards against an out-of-order entries response from a previous namespace
   // overwriting the currently-selected namespace's entries.
   const latestNamespaceRef = useRef<string | null>(null);
@@ -132,8 +139,38 @@ export function MemoryListPage() {
     }
   }, []);
 
+  const runSearch = useCallback(async (rawQuery: string) => {
+    const query = rawQuery.trim();
+    if (!query) {
+      setSearchResults(null);
+      return;
+    }
+    setSearching(true);
+    try {
+      // The server applies its default result limit; the UI intentionally does
+      // not expose a limit control.
+      const { data } = await agentMemoryApi.searchMemoryEntries(query);
+      setSearchResults(data);
+    } catch (err) {
+      toast.error(extractApiErrorMessage(err, 'Search failed'));
+    } finally {
+      setSearching(false);
+    }
+  }, []);
+
+  const clearSearch = () => {
+    setSearchQuery('');
+    setSearchResults(null);
+  };
+
   useEffect(() => {
     void loadNamespaces();
+    // This page stays mounted across a project switch (same
+    // /projects/:projectId/memory route), so clear any active search — otherwise
+    // the previous project's hits keep rendering as "N results for <old query>"
+    // under the new project until manually cleared.
+    setSearchResults(null);
+    setSearchQuery('');
   }, [loadNamespaces, projectId]);
 
   useEffect(() => {
@@ -207,7 +244,9 @@ export function MemoryListPage() {
       toast.success('Memory deleted');
       setDeleting(null);
       await loadNamespaces();
-      if (selected) {
+      if (searchResults !== null) {
+        await runSearch(searchQuery);
+      } else if (selected) {
         await loadEntries(selected);
       }
     } catch (err) {
@@ -245,32 +284,74 @@ export function MemoryListPage() {
         </Card>
       ) : (
         <>
-          <div className="flex items-center gap-2">
-            <Label htmlFor="namespace-select" className="text-sm">
-              Namespace
-            </Label>
-            <Select
-              value={selected ?? undefined}
-              onValueChange={(v) => setSelected(v)}>
-              <SelectTrigger id="namespace-select" className="w-64">
-                <SelectValue placeholder="Select a namespace" />
-              </SelectTrigger>
-              <SelectContent>
-                {namespaces.map((ns) => (
-                  <SelectItem key={ns.namespace} value={ns.namespace}>
-                    {ns.namespace} ({ns.entryCount})
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+          <form
+            className="flex items-center gap-2"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void runSearch(searchQuery);
+            }}>
+            <Input
+              aria-label="Search memories"
+              placeholder="Search memories by meaning…"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="max-w-sm"
+            />
+            <Button type="submit" variant="outline" disabled={searching}>
+              <Search className="mr-2 size-4" />
+              {searching ? 'Searching…' : 'Search'}
+            </Button>
+            {searchResults !== null && (
+              <Button type="button" variant="ghost" onClick={clearSearch}>
+                Clear
+              </Button>
+            )}
+          </form>
 
-          <MemoryEntriesTable
-            entries={entries}
-            loading={entriesLoading}
-            onEdit={openEdit}
-            onDelete={setDeleting}
-          />
+          {searchResults !== null ? (
+            <>
+              <p className="text-muted-foreground text-sm">
+                {searchResults.length} result
+                {searchResults.length === 1 ? '' : 's'} for “{searchQuery}”
+              </p>
+              <MemoryEntriesTable
+                entries={searchResults}
+                loading={searching}
+                showNamespace
+                onEdit={openEdit}
+                onDelete={setDeleting}
+              />
+            </>
+          ) : (
+            <>
+              <div className="flex items-center gap-2">
+                <Label htmlFor="namespace-select" className="text-sm">
+                  Namespace
+                </Label>
+                <Select
+                  value={selected ?? undefined}
+                  onValueChange={(v) => setSelected(v)}>
+                  <SelectTrigger id="namespace-select" className="w-64">
+                    <SelectValue placeholder="Select a namespace" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {namespaces.map((ns) => (
+                      <SelectItem key={ns.namespace} value={ns.namespace}>
+                        {ns.namespace} ({ns.entryCount})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <MemoryEntriesTable
+                entries={entries}
+                loading={entriesLoading}
+                onEdit={openEdit}
+                onDelete={setDeleting}
+              />
+            </>
+          )}
         </>
       )}
 

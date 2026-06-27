@@ -99,6 +99,26 @@ export class AgentMemoryDao extends BaseDao<AgentMemoryEntryEntity> {
   }
 
   /**
+   * Batch-fetch active rows for a project by `(namespace, key)` pairs in a single
+   * query — used to hydrate semantic-search hits without an N+1 `getByKey` loop.
+   * The result order is unspecified (the caller re-orders by relevance); a pair
+   * with no live row is simply absent (the soft-delete filter drops it), which is
+   * how orphan vectors are silently dropped from search results.
+   */
+  async getByKeys(
+    projectId: string,
+    refs: { namespace: string; key: string }[],
+  ): Promise<AgentMemoryEntryEntity[]> {
+    if (refs.length === 0) {
+      return [];
+    }
+    return await this.getAll({
+      projectId,
+      $or: refs.map((ref) => ({ namespace: ref.namespace, key: ref.key })),
+    });
+  }
+
+  /**
    * The mode of a namespace. A namespace's mode is established by convention
    * (save → kv, append → append) and is not constrained at the DB level, so a
    * single-row projection answers it far more cheaply than
