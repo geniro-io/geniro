@@ -9,6 +9,6 @@
     }
   },
   "enabledPlugins": {
-    "geniro-claude-plugin@geniro-claude-harness": true
+    "geniro@geniro-claude-harness": true
   }
 }
